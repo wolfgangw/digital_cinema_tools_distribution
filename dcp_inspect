@@ -1,0 +1,2590 @@
+#!/usr/bin/env ruby
+#
+# dcp_inspect inspects and checks DCP media and directories
+# Copyright 2011-2012 Wolfgang Woehl
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+AppName = File.basename( $0 )
+AppVersion = 'v1.2012.04.06'
+# dcp_inspect is a tool for deep inspection and validation of digital
+# cinema packages (DCP). This includes integrity checks, asset inspection,
+# schema validation, signature and certificate verification and composition
+# summarization. Basically anyone who needs to establish the validity of a
+# digital cinema package can put dcp_inspect to good use.
+#
+# Usage:
+#
+#   dcp_inspect --help
+#   dcp_inspect /path/to/dir
+#   dcp_inspect /path/to/dir --check-hashes
+#
+# Features:
+#
+# - Checks all packages under a given location
+# - Runs schema validation on all infrastructure files and DCSubtitle
+#    Validation errors will be reported but dcp_inspect will still try
+#    to inspect the contents of non-valid files.
+# - Checks and verifies signatures
+#    Signature verification requires a recent Nokogiri version with C14N
+#    support (See Requirements). If the installed version of Nokogiri does
+#    not support C14N dcp_inspect will skip signature verification and
+#    let you know.
+# - Deep-inspects compositions
+#    This includes composition type consistency and completeness checks.
+#    dcp_inspect goes through some lengths to determine a composition's
+#    type (SMPTE/Interop). It does so by collecting all types referenced
+#    and trying to make sense of that list.
+# - Reports in detail all errors encountered
+#
+# Requirements:
+#
+# - asdcplib and its cli tools (http://www.cinecert.com/asdcplib/)
+# - Nokogiri, a ruby wrapper for libxml2
+#    (http://nokogiri.org/tutorials/installing_nokogiri.html)
+#    For signature verification dcp_inspect requires a recent Nokogiri
+#    version with C14N support. See [MISC on Digital Cinema Tools]
+#    (https://github.com/wolfgangw/digital_cinema_tools/wiki/MISC)
+#    for notes on how to install Nokogiri with C14N support from
+#    current git (https://github.com/tenderlove/nokogiri)
+# - dcp_inspect requires xsd/ next to it.
+#    Clone the whole repository to put everything in place:
+#        $ git clone git://github.com/wolfgangw/backports.git
+#
+# Run
+#   $ git pull
+# in backports to keep up-to-date.
+#
+# Couple of todos:
+#
+# - Assetmap options chunks, offsets, volume indices are not handled
+# - Marker lists are not handled
+# - Check Signer.X509IssuerSerial issuer name
+# - Sound present in SMPTE DCP reels?
+#
+# Thanks to Julik for his Timecode library (https://github.com/guerilla-di/timecode).
+#
+# Tested on linux and Mac OS boxes. Thanks to Terrence Meiczinger for trying
+# on a Windows system (it executed but the libxml infrastructure required for
+# schema validation did not work. Wip)
+#
+if RUBY_VERSION <= '1.9'
+  begin
+    require 'rubygems'
+  rescue LoadError
+  end
+end
+require 'nokogiri'
+require 'optparse'
+require 'ostruct'
+require 'pathname'
+require 'shellwords'
+require 'openssl'
+require 'base64'
+require 'stringio'
+
+# Exit codes
+DCP_OK = 0
+DCP_ERROR = 1
+NO_ARG = 2
+TOO_MANY_ARGS = 3
+ARG_NOT_A_DIR = 4
+XML_CATALOG_NOT_FOUND = 5
+XSD_STORE_NOT_FOUND = 6
+
+# Signature counters
+@signed_cpls_count = 0
+@signed_cpls_verified_count = 0
+@signed_pkls_count = 0
+@signed_pkls_verified_count = 0
+
+# lib/options.rb
+class Options
+  def self.parse( args )
+    # defaults
+    options = OpenStruct.new
+    options.check_hashes = FALSE
+    options.validate = TRUE
+    options.as_asset_store = FALSE
+    options.verbosity = 'debug'
+    options.verbosity_choices = [ 'quiet', 'errors', 'info', 'debug', 'trace_func' ]
+    opts = OptionParser.new do |opts|
+      opts.banner = <<BANNER
+#{ AppName } #{ AppVersion }
+Usage: #{ AppName } [options] <location>
+
+BANNER
+      opts.on( '-c', '--check-hashes', 'Compare listed and actual hash values of assets' ) do
+        options.check_hashes = TRUE
+      end
+      opts.on( '--no-schema-checks', 'Skip schema checks' ) do
+        options.validate = FALSE
+      end
+      opts.on( '-s', '--as-asset-store', 'Simulate asset store by merging all collected AM dictionaries to resolve missing assets' ) do
+        options.as_asset_store = TRUE
+      end
+      opts.on( '-v', '--verbosity level', String, 'Use quiet, errors, info, debug or trace_func (Default: debug)' ) do |p|
+        if options.verbosity_choices.include?( p )
+          options.verbosity = p
+        else
+          options.verbosity = "info"
+        end
+      end
+      opts.on_tail( '-h', '--help', 'Display this screen' ) do
+        puts opts
+        exit
+      end
+    end
+    begin
+      opts.parse!( args )
+    rescue Exception => e
+      exit if e.class == SystemExit
+      puts "Options error: #{ e.message }"
+      exit
+    end
+    options
+  end # parse
+end # Options
+
+
+# * lib/logger.rb
+class DLogger
+  def initialize( prefix, options )
+    @prefix = prefix
+    @verbosity = options.verbosity
+    case @verbosity
+    when 'quiet'  then @errors, @info, @debug, @cr = [ FALSE, FALSE, FALSE, FALSE ]
+    when 'errors' then @errors, @info, @debug, @cr = [ TRUE, FALSE, FALSE, FALSE ]
+    when 'info'   then @errors, @info, @debug, @cr = [ TRUE, TRUE, FALSE, TRUE ]
+    when 'debug'  then @errors, @info, @debug, @cr = [ TRUE, TRUE, TRUE, TRUE ]
+    when 'trace_func'
+                       @errors, @info, @debug, @cr = [ FALSE, FALSE, FALSE, FALSE ]
+      set_trace_func proc { |event, file, line, id, binding, classname|
+        printf "%8s %s:%-2d %10s %8s\n", event, file, line, id, classname
+      }
+    end
+  end
+  def errors( text ); to_console( text ) if @errors; end
+  def info( text ); to_console( text ) if @info; end
+  def debug( text ); to_console( text ) if @debug; end
+  def cr( text ); carriage_return( text ) if @cr; end
+  def to_console( text ); printf "%s %s\n", @prefix, text; end
+  def carriage_return( text ); printf "%s %s\r", @prefix, text; end
+end
+
+
+# lib/mxf.rb
+module MxfTools
+  def mxf_inspect( filename )
+    list = Shell.asdcp_mxf_info( filename )
+    if list =~ /EditRate and SampleRate do not match \(24.000, 48.000\)/ and list =~ /File may contain JPEG Interop stereoscopic images/
+      list = Shell.asdcp_mxf_interop_stereoscopic_info( filename )
+    end
+    if list.empty? or list =~ /Program stopped on error/
+      return nil
+    end
+    list = list.split( /\n\s*/ ).collect { |line| line.split( ': ' ) }
+    et = [ 'EssenceType', 
+           case list.first.to_s
+           when /#{ MStr::Stereoscopic_pictures }/
+             MStr::Stereoscopic_pictures
+           when /#{ MStr::Pictures }/
+             MStr::Pictures
+           when /#{ MStr::Mpeg2 }/
+             MStr::Mpeg2
+           when /#{ MStr::Audio }/
+             MStr::Audio
+           when /#{ MStr::Timed_text }/i
+             MStr::Timed_text
+           else
+             nil
+           end
+    ]
+    return Hash[ list << et ]
+  end
+end
+include MxfTools
+
+
+# lib/magic_strings.rb
+module MStr
+  Smpte_am    = 'http://www.smpte-ra.org/schemas/429-9/2007/AM'
+  Smpte_pkl   = 'http://www.smpte-ra.org/schemas/429-8/2007/PKL'
+  Smpte_cpl   = 'http://www.smpte-ra.org/schemas/429-7/2006/CPL'
+  Interop_am  = 'http://www.digicine.com/PROTO-ASDCP-AM-20040311#'
+  Interop_pkl = 'http://www.digicine.com/PROTO-ASDCP-PKL-20040311#'
+  Interop_cpl = 'http://www.digicine.com/PROTO-ASDCP-CPL-20040511#'
+
+  Ns_Xmldsig  = 'http://www.w3.org/2000/09/xmldsig#'
+
+  Schemas = {
+    Smpte_am    => 'SMPTE-429-9-2007-AM.xsd',
+    Smpte_pkl   => 'SMPTE-429-8-2006-PKL.xsd',
+    Smpte_cpl   => 'SMPTE-429-7-2006-CPL.xsd',
+    Interop_am  => 'PROTO-ASDCP-AM-20040311.xsd',
+    Interop_pkl => 'PROTO-ASDCP-PKL-20040311.xsd',
+    Interop_cpl => 'PROTO-ASDCP-CPL-20040511.xsd'
+  }
+
+  # title_kind_aspect_langaudio-langsubs only
+  Naming_re = /([-A-Z0-9]+)_(FTR|FTR-1|FTR-2|TST|TLR|TLR-1|TLR1-2D|TLR1-3D|RTG-F|RTG-T1|TSR|TSR-1|POL|PSA|ADV|SHR|XSN|)_(F|S|C)_([A-Z]{2}-[A-Z]{2})/
+
+  # asdcp-test answers include
+  Stereoscopic_pictures = 'stereoscopic pictures'
+  Pictures              = 'pictures'
+  Mpeg2                 = 'MPEG2 video'
+  Audio                 = 'audio'
+  Timed_text            = 'timed text'
+
+  Tkr_attr = 'x-TKR'
+
+  AssetTypeInterop  = 'Interop'
+  AssetTypeSmpte    = 'SMPTE'
+  AssetTypeUnknown  = 'Unknown'
+end # module MStr
+
+
+# lib/shell_tools.rb
+module Shell
+  class << self
+    def uuid_new
+      `kmuuidgen -n`
+    end
+    def asdcp_mxf_info( filename )
+      `asdcp-test -v -i #{ Shellwords.shellescape filename } 2>&1`.chomp
+    end
+    def asdcp_mxf_interop_stereoscopic_info( filename )
+      `asdcp-test -3 -v -i #{ Shellwords.shellescape filename } 2>&1`.chomp
+    end
+  end
+end
+
+
+# lib/tools.rb
+# date helpers
+require 'date'
+def time_to_datetime( time ) # OpenSSL's ruby bindings return Time objects for certificate validity info
+  DateTime.parse( time.to_s )
+end
+
+def datetime_friendly( dt ) # return something in the form of "Tuesday Nov 30 2010 (18:56)"
+  "#{ DateTime::DAYNAMES[ dt.wday ] } #{ DateTime::ABBR_MONTHNAMES[ dt.month ] } #{ dt.day.to_s } #{ dt.year.to_s } #{ '%02d' % dt.hour.to_s }:#{ '%02d' % dt.min.to_s }"
+end
+
+def yyyymmdd( datetime ) # used in KDM filenames. See http://www.kdmnamingconvention.com/
+  datetime.to_s.split( 'T' ).first.gsub( /-/,'' )
+end
+
+def hours_minutes_seconds_verbose( seconds )
+  t = seconds
+  hrs = ( ( t / 3600 ) ).to_i
+  min = ( ( t / 60 ) % 60 ).to_i
+  sec = t % 60
+  return [
+    hrs > 0 ? hrs.to_s + " hour#{ 's' * ( hrs > 1 ? 1 : 0 ) }" : nil ,
+    min > 0 ? min.to_s + " minute#{ 's' * ( min > 1 ? 1 : 0 ) }" : nil ,
+    sec == 1 ? sec.to_i.to_s + ' second' : sec != 0 ? sec.to_s + ' seconds' : nil ,
+    t > 60 ? "(#{ t } seconds)" : nil
+  ].compact.join( ' ' )
+end
+
+def hms_from_seconds( seconds )
+  hours = ( seconds / 3600.0 ).to_i
+  minutes = ( ( seconds / 60.0 ) % 60 ).to_i
+  secs = seconds % 60
+  return [ hours, minutes, secs ].join( ':' )
+end
+
+def seconds_from_hms( timestring ) # hh:mm:ss.fraction
+  a = timestring.split( ':' )
+  hours = a[ 0 ].to_i
+  minutes = a[ 1 ].to_i
+  secs = a[ 2 ].to_f
+  return ( hours * 3600 + minutes * 60 + secs )
+end
+
+
+# misc helpers
+#
+# plural helper english
+def amount( item, list )
+  "#{ list.size } #{ item }#{ pl list }"
+end
+
+def pl( list )
+  list.size != 1 ? 's' : ''
+end
+
+# Thanks to Rein Henrichs
+def truncate( text, num_words = 6, truncate_string = "..." )
+  if text.nil? then return end
+  arr = text.split( ' ' )
+  arr.length > num_words ? arr[ 0...num_words ].join( ' ' ) + truncate_string : text
+end
+
+# package path helper
+def package( relative_path )
+  File.join( @package_dir, relative_path )
+end
+
+def print_inspection_messages( inspection )
+  inspection[ :errors ].map { |e| @logger.errors [ 'Error', e ].join( ': ' ) }
+  inspection[ :hints ].map { |e| @logger.info [ 'Hint', e ].join( ': ' ) }
+  inspection[ :info ].map { |e| @logger.info [ 'Info', e ].join( ': ' ) }
+end
+
+
+# lib/timecode-ticks_tc.rb (Julik's timecode -- https://github.com/guerilla-di/timecode + parse_with_ticks)
+# Timecode is a convenience object for calculating SMPTE timecode natively. 
+# The promise is that you only have to store two values to know the timecode - the amount
+# of frames and the framerate. An additional perk might be to save the dropframeness,
+# but we avoid that at this point.
+#
+# You can calculate in timecode objects as well as with conventional integers and floats.
+# Timecode is immutable and can be used as a value object. Timecode objects are sortable.
+#
+# Here's how to use it with ActiveRecord (your column names will be source_tc_frames_total and tape_fps)
+#
+#   composed_of :source_tc, :class_name => 'Timecode',
+#     :mapping => [%w(source_tc_frames total), %w(tape_fps fps)]
+
+class Timecode
+  VERSION = '1.0.0'
+
+  include Comparable
+
+  DEFAULT_FPS = 25.0
+
+  #:stopdoc:
+  NTSC_FPS = (30.0 * 1000 / 1001).freeze
+  FILMSYNC_FPS = (24.0 * 1000 / 1001).freeze
+  ALLOWED_FPS_DELTA = (0.001).freeze
+
+  COMPLETE_TC_RE = /^(\d{2}):(\d{2}):(\d{2}):(\d{2})$/
+  COMPLETE_TC_RE_24 = /^(\d{2}):(\d{2}):(\d{2})\+(\d{2})$/
+  DF_TC_RE = /^(\d{1,2}):(\d{1,2}):(\d{1,2});(\d{2})$/
+  FRACTIONAL_TC_RE = /^(\d{2}):(\d{2}):(\d{2})\.(\d{1,8})$/
+  TICKS_TC_RE = /^(\d{2}):(\d{2}):(\d{2}):(\d{3})$/
+
+  WITH_FRACTIONS_OF_SECOND = "%02d:%02d:%02d.%02d"
+  WITH_FRAMES = "%02d:%02d:%02d:%02d"
+  WITH_FRAMES_24 = "%02d:%02d:%02d+%02d"
+
+  #:startdoc:
+
+  # All Timecode lib errors inherit from this
+  class Error < RuntimeError; end
+
+  # Gets raised if timecode is out of range (like 100 hours long)
+  class RangeError < Error; end
+
+  # Gets raised when a timecode cannot be parsed
+  class CannotParse < Error; end
+
+  # Gets raised when you try to compute two timecodes with different framerates together
+  class WrongFramerate < ArgumentError; end
+
+  # Initialize a new Timecode object with a certain amount of frames and a framerate
+  # will be interpreted as the total number of frames
+  def initialize(total = 0, fps = DEFAULT_FPS)
+    raise WrongFramerate, "FPS cannot be zero" if fps.zero?
+
+    # If total is a string, use parse
+    raise RangeError, "Timecode cannot be negative" if total.to_i < 0
+    # Always cast framerate to float, and num of rames to integer
+    @total, @fps = total.to_i, fps.to_f
+    @value = validate!
+    freeze
+  end
+
+  def inspect # :nodoc:
+    "#<Timecode:%s (%dF@%.2f)>" % [to_s, total, fps]
+  end
+
+  class << self
+
+    # Use initialize for integers and parsing for strings
+    def new(from, fps = DEFAULT_FPS)
+      from.is_a?(String) ? parse(from, fps) : super(from, fps)
+    end
+
+    # Parse timecode and return zero if none matched
+    def soft_parse(input, with_fps = DEFAULT_FPS)
+      parse(input) rescue new(0, with_fps)
+    end
+
+    # Parse timecode entered by the user. Will raise if the string cannot be parsed.
+    # The following formats are supported:
+    # * 10h 20m 10s 1f (or any combination thereof) - will be disassembled to hours, frames, seconds and so on automatically
+    # * 123 - will be parsed as 00:00:01:23
+    # * 00:00:00:00 - will be parsed as zero TC
+    def parse(input, with_fps = DEFAULT_FPS)
+      # Drop frame goodbye
+      if (input =~ DF_TC_RE)
+        raise Error, "We do not support drop-frame TC"
+      # 00:00:00:00
+      elsif (input =~ COMPLETE_TC_RE)
+        atoms_and_fps = input.scan(COMPLETE_TC_RE).to_a.flatten.map{|e| e.to_i} + [with_fps]
+        return at(*atoms_and_fps)
+      # 00:00:00+00
+      elsif (input =~ COMPLETE_TC_RE_24)
+        atoms_and_fps = input.scan(COMPLETE_TC_RE_24).to_a.flatten.map{|e| e.to_i} + [24]
+        return at(*atoms_and_fps)
+      # 00:00:00.0
+      elsif input =~ FRACTIONAL_TC_RE
+        parse_with_fractional_seconds(input, with_fps)
+      # 00:00:00:000
+      elsif input =~ TICKS_TC_RE
+        parse_with_ticks(input, with_fps)
+      # 10h 20m 10s 1f 00:00:00:01 - space separated is a sum of parts
+      elsif input =~ /\s/
+        parts = input.gsub(/\s/, ' ').split.reject{|e| e.strip.empty? }
+        raise CannotParse, "No atoms" if parts.empty?
+        parts.map{|part|  parse(part, with_fps) }.inject{|sum, p| sum + p.total }
+      # 10s
+      elsif input =~ /^(\d+)s$/
+        return new(input.to_i * with_fps, with_fps)
+      # 10h
+      elsif input =~ /^(\d+)h$/i
+        return new(input.to_i * 60 * 60 * with_fps, with_fps)
+      # 20m
+      elsif input =~ /^(\d+)m$/i
+        return new(input.to_i * 60 * with_fps, with_fps)
+      # 60f - 60 frames, or 2 seconds and 10 frames
+      elsif input =~ /^(\d+)f$/i
+        return new(input.to_i, with_fps)
+      # Only a bunch of digits, treat 12345 as 00:01:23:45
+      elsif (input =~ /^(\d+)$/)
+        atoms_len = 2 * 4
+        # left-pad input AND truncate if needed
+        padded = input[0..atoms_len].rjust(8, "0")
+        atoms = padded.scan(/(\d{2})/).flatten.map{|e| e.to_i } + [with_fps]
+        return at(*atoms)
+      else
+        raise CannotParse, "Cannot parse #{input} into timecode, unknown format"
+      end
+    end
+
+    # Initialize a Timecode object at this specfic timecode
+    def at(hrs, mins, secs, frames, with_fps = DEFAULT_FPS)
+      validate_atoms!(hrs, mins, secs, frames, with_fps)
+      total = (hrs*(60*60*with_fps) +  mins*(60*with_fps) + secs*with_fps + frames).round
+      new(total, with_fps)
+    end
+
+    # Validate the passed atoms for the concrete framerate
+    def validate_atoms!(hrs, mins, secs, frames, with_fps)
+      case true
+        when hrs > 99
+          raise RangeError, "There can be no more than 99 hours, got #{hrs}"
+        when mins > 59
+          raise RangeError, "There can be no more than 59 minutes, got #{mins}"
+        when secs > 59
+          raise RangeError, "There can be no more than 59 seconds, got #{secs}"
+        when frames > (with_fps - 1)
+          raise RangeError, "There can be no more than #{with_fps - 1} frames @#{with_fps}, got #{frames}"
+      end
+    end
+
+    # Parse a timecode with fractional seconds instead of frames. This is how ffmpeg reports
+    # a timecode
+    def parse_with_fractional_seconds(tc_with_fractions_of_second, fps = DEFAULT_FPS)
+      fraction_expr = /\.(\d+)$/
+      fraction_part = ('.' + tc_with_fractions_of_second.scan(fraction_expr)[0][0]).to_f
+
+      seconds_per_frame = 1.0 / fps.to_f
+      frame_idx = (fraction_part / seconds_per_frame).floor
+
+      tc_with_frameno = tc_with_fractions_of_second.gsub(fraction_expr, ":%02d" % frame_idx)
+
+      parse(tc_with_frameno, fps)
+    end
+
+    # Parse a timecode with ticks of a second instead of frames. A 'tick' is defined as 
+    # 4 msec and has a range of 0 to 249. This format can show up in subtitle files for digital cinema
+    def parse_with_ticks(tc_with_ticks, fps = DEFAULT_FPS)
+      ticks_expr = /(\d{3})$/ 
+      ticks_part = (tc_with_ticks.scan(ticks_expr)[0][0]).to_i
+
+      seconds_per_frame = 1.0 / fps
+      frame_idx = ((ticks_part * 0.004) / seconds_per_frame ).floor
+
+      tc_with_frameno = tc_with_ticks.gsub(ticks_expr, "%02d" % frame_idx)
+
+      parse(tc_with_frameno, fps)
+    end
+
+    # create a timecode from the number of seconds. This is how current time is supplied by
+    # QuickTime and other systems which have non-frame-based timescales
+    def from_seconds(seconds_float, the_fps = DEFAULT_FPS)
+      total_frames = (seconds_float.to_f * the_fps.to_f).to_i
+      new(total_frames, the_fps)
+    end
+
+    # Some systems (like SGIs) and DPX format store timecode as unsigned integer, bit-packed. This method
+    # unpacks such an integer into a timecode.
+    def from_uint(uint, fps = DEFAULT_FPS)
+      tc_elements = (0..7).to_a.reverse.map do | multiplier | 
+        ((uint >> (multiplier * 4)) & 0x0F)
+      end.join.scan(/(\d{2})/).flatten.map{|e| e.to_i}
+
+      tc_elements << fps
+      at(*tc_elements)
+    end
+  end
+
+  def coerce(to)
+    me = case to
+      when String
+        to_s
+      when Integer
+        to_i
+      when Float
+        to_f
+      else
+        self
+    end
+    [me, to]
+  end
+
+  # is the timecode at 00:00:00:00
+  def zero?
+    @total.zero?
+  end
+
+  # get total frame count
+  def total
+    to_f
+  end
+
+  # get FPS
+  def fps
+    @fps
+  end
+
+  # get the number of frames
+  def frames
+    value_parts[3]
+  end
+
+  # get the number of seconds
+  def seconds
+    value_parts[2]
+  end
+
+  # get the number of minutes
+  def minutes
+    value_parts[1]
+  end
+
+  # get the number of hours
+  def hours
+    value_parts[0]
+  end
+
+  # get frame interval in fractions of a second
+  def frame_interval
+    1.0/@fps
+  end
+
+  # get the timecode as bit-packed unsigned 32 bit int (suitable for DPX and SGI)
+  def to_uint
+    elements = (("%02d" * 4) % [hours,minutes,seconds,frames]).split(//).map{|e| e.to_i }
+    uint = 0
+    elements.reverse.each_with_index do | p, i |
+      uint |= p << 4 * i 
+    end
+    uint
+  end
+
+  # get the timecode as a floating-point number of seconds (used in Quicktime)
+  def to_seconds
+    (@total / @fps)
+  end
+
+  # Convert to different framerate based on the total frames. Therefore,
+  # 1 second of PAL video will convert to 25 frames of NTSC (this 
+  # is suitable for PAL to film TC conversions and back).
+  def convert(new_fps)
+    self.class.new(@total, new_fps)
+  end
+
+  # get formatted SMPTE timecode
+  def to_s
+    if (framerate_in_delta(fps, 24))
+      WITH_FRAMES_24 % value_parts
+    else
+      WITH_FRAMES % value_parts
+    end
+  end
+
+  # get total frames as float
+  def to_f
+    @total
+  end
+
+  # get total frames as integer
+  def to_i
+    @total
+  end
+
+  # add number of frames (or another timecode) to this one
+  def +(arg)
+    if (arg.is_a?(Timecode) && framerate_in_delta(arg.fps, @fps))
+      self.class.new(@total+arg.total, @fps)
+    elsif (arg.is_a?(Timecode))
+      raise WrongFramerate, "You are calculating timecodes with different framerates"
+    else
+      self.class.new(@total + arg, @fps)
+    end
+  end
+
+  # Tells whether the passes timecode is immediately to the left or to the right of that one
+  # with a 1 frame difference
+  def adjacent_to?(another)
+    (self.succ == another) || (another.succ == self)
+  end
+
+  # Subtract a number of frames
+  def -(arg)
+    if (arg.is_a?(Timecode) &&  framerate_in_delta(arg.fps, @fps))
+      self.class.new(@total-arg.total, @fps)
+    elsif (arg.is_a?(Timecode))
+      raise WrongFramerate, "You are calculating timecodes with different framerates"
+    else
+      self.class.new(@total-arg, @fps)
+    end
+  end
+
+  # Multiply the timecode by a number
+  def *(arg)
+    raise RangeError, "Timecode multiplier cannot be negative" if (arg < 0)
+    self.class.new(@total*arg.to_i, @fps)
+  end
+
+  # Get the next frame
+  def succ
+    self.class.new(@total + 1, @fps)
+  end
+
+  # Get the number of times a passed timecode fits into this time span (if performed with Timecode) or 
+  # a Timecode that multiplied by arg will give this one
+  def /(arg)
+    arg.is_a?(Timecode) ?  (@total / arg.total) : self.class.new(@total / arg, @fps)
+  end
+
+  # Timecodes can be compared to each other
+  def <=>(other_tc)
+    if framerate_in_delta(fps, other_tc.fps)
+      self.total <=> other_tc.total
+    else 
+      raise WrongFramerate, "Cannot compare timecodes with different framerates"
+    end
+  end
+
+  # FFmpeg expects a fraction of a second as the last element instead of number of frames. Use this
+  # method to get the timecode that adheres to that expectation. The return of this method can be fed
+  # to ffmpeg directly.
+  #  Timecode.parse("00:00:10:24", 25).with_frames_as_fraction #=> "00:00:10.96"
+  def with_frames_as_fraction
+    vp = value_parts.dup
+    vp[-1] = (100.0 / @fps) * vp[-1]
+    WITH_FRACTIONS_OF_SECOND % vp
+  end
+  alias_method :with_fractional_seconds, :with_frames_as_fraction
+
+  # Validate that framerates are within a small delta deviation considerable for floats
+  def framerate_in_delta(one, two)
+    (one.to_f - two.to_f).abs <= ALLOWED_FPS_DELTA
+  end
+
+  private
+
+  # Prepare and format the values for TC output
+  def validate!
+    frames = @total
+    secs = (@total.to_f/@fps).floor
+    frames-=(secs*@fps)
+    mins = (secs/60).floor
+    secs -= (mins*60)
+    hrs = (mins/60).floor
+    mins-= (hrs*60)
+
+    self.class.validate_atoms!(hrs, mins, secs, frames, @fps)
+
+    [hrs, mins, secs, frames]
+  end
+
+  def value_parts
+    @value ||= validate!
+  end
+end # Timecode
+
+
+class DC_Signer_Crypto_Compliance
+  attr_reader :context, :errors, :crypto_context_valid, :type
+  def initialize( certs )
+    crypto_context( certs )
+  end
+
+  def crypto_context( certs )
+    @errors = Hash.new
+    @context, @errors[ :pre_context ] = find_crypto_context( certs )
+    if @errors[ :pre_context ].empty?
+      @errors[ :context ], @types_seen = check_compliance
+      if @errors[ :pre_context ].empty? and @errors[ :context ].values.flatten.empty? and @chain_verified == TRUE
+        if @types_seen.uniq.size == 1
+          @type = @types_seen.first
+          @crypto_context_valid = TRUE
+        else
+          @type = 'Mixed'
+          @crypto_context_valid = FALSE
+        end
+      else
+        @crypto_context_valid = FALSE
+      end
+    else
+      @crypto_context_valid = FALSE
+    end
+  end # crypto_context
+
+  def valid?
+    @crypto_context_valid
+  end
+
+  def messages
+    msgs = Array.new
+    @context.each_with_index do |cert, index|
+      msgs << "Subject: #{ cert.subject.to_s }"
+      msgs << "Issuer:  #{ cert.issuer.to_s }"
+      unless @errors[ :context ].nil?
+        if @errors[ :context ][ cert.subject.to_s ].empty?
+          msgs << 'OK'
+        else
+          msgs << "Not a #{ @types_seen[ index ] } compliant certificate:"
+          @errors[ :context][ cert.subject.to_s ].each do |error|
+            msgs << "\t" + error
+          end
+        end
+      end
+    end
+    msgs << "Chain signatures #{ @chain_verified == TRUE ? 'verified' : 'verification failed' }"
+    if total_errors == 0
+      msgs << "Compliant certificate chain found: #{ @type } (#{ context.to_a.sizmsgs } certificates, 0 errors)"
+    else
+      msgs << "Not a compliant certificate chain: #{ context.to_a.size } certificate#{ context.to_a.size != 1 ? 's' : '' } with #{ total_errors } error#{ total_errors != 1 ? 's' : '' }"
+    end
+    return msgs
+  end
+
+  def find_crypto_context( pems )
+    context = Array.new
+    pre_context_errors = Array.new
+
+    pems.each do |pem|
+      begin
+        cert_obj = OpenSSL::X509::Certificate.new( pem )
+        context << cert_obj
+      rescue
+        # catch all exceptions (scan or CertificateError) and move on
+      end
+    end
+
+    # Find root ca and collect issuers
+    # ruby version of CTP's dsig_cert.py
+    root = NIL
+    issuer_map = Hash.new
+
+    context.each do |cert|
+      if cert.issuer.to_s == cert.subject.to_s
+        if root
+          pre_context_errors << 'Multiple self-signed (root) certificates found'
+          return [], pre_context_errors
+        else
+          root = cert
+        end
+      else
+        issuer_map[ cert.issuer.to_s ] = cert
+      end
+    end
+    if root == NIL
+      pre_context_errors << 'Self-signed root certificate not found'
+      return [], pre_context_errors
+    end
+
+    # sort
+    tmp_list = Array.new
+    tmp_list << root
+    begin
+      key = tmp_list.last.subject.to_s
+      child = issuer_map[ key ]
+      while child
+        tmp_list << child
+        key = tmp_list.last.subject.to_s
+        child = issuer_map[ key ]
+      end
+    rescue
+      nil
+    end # ruby version of CTP's dsig_cert.py
+
+    if tmp_list.size == 1
+      pre_context_errors << 'No issued certificates found'
+      return context, pre_context_errors
+    end
+
+    if context.size != tmp_list.size
+      pre_context_errors << 'Certificates do not form a complete chain'
+      return context, pre_context_errors
+    end
+    # from here on 1st is leaf, 2nd .. n are intermediate ca's, last is self-signed root ca
+    context = tmp_list.reverse
+    return context, pre_context_errors
+  end # find_crypto_context
+
+  def check_compliance
+    context_errors = Hash.new
+    types_seen = Array.new
+    @context.each_with_index do |member, index|
+      cert = member
+      type = NIL
+      errors = Array.new
+      errors << 'Not a X509 certificate' unless cert.is_a?( OpenSSL::X509::Certificate )
+      # ctp sections:
+
+      # 2.1.1 X.509 version 3
+      errors << 'Not X509 version 3' unless cert.version == 2 # sic. versions 1 2 3 -> 0 1 2
+
+      # 2.1.1 Issuer and subject present
+      errors << 'Issuer missing' unless cert.issuer.is_a?( OpenSSL::X509::Name )
+      errors << 'Subject missing' unless cert.subject.is_a?( OpenSSL::X509::Name )
+
+      # * 2.1.2 Signature algorithm
+      case cert.signature_algorithm
+      when 'sha256WithRSAEncryption'
+        type = :smpte
+      when 'sha1WithRSAEncryption'
+        type = :interop
+      else
+        errors << 'Signature algorithm not sha256WithRSAEncryption or sha1WithRSAEncryption'
+      end
+
+      # 2.1.3
+      # Implicitly checked above
+
+      # * 2.1.4 Serial number field non-negative integer less or equal to 64 or 160 bits respectively
+      case type
+      when :smpte
+        errors << 'Serial number not in valid range' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 64
+      when :interop
+        errors << 'Serial number not in valid range' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 160
+      else
+        errors << 'Serial number not checked (Certificate type has not been established)'
+      end
+
+      # 2.1.5 SubjectPublicKeyInfo field modulus 2048 bit and e == 65537
+      errors << 'Modulus not 2048 bits long' unless cert.public_key.n.to_i.size == 256 # 'n' is modulus (as OpenSSL::BN)
+      errors << 'Public exponent not 65537' unless cert.public_key.e == 65537 # 'e' is public exponent (OpenSSL::BN)
+
+      # 2.1.6 Deleted (in CTP 1.1) section
+
+      # 2.1.7 Validity present (not before, not after)
+      #
+      # Note on Ruby version 1.8.7:
+      #
+      # UTC time > jan 19th 2038 is broken in ruby 1.8.7 on 32 bit systems (See https://bugs.ruby-lang.org/issues/5885)
+      # See {"o"=>"DC256.Cinea.Com"} {"ou"=>"Root-CA.DC256.Cinea.Com"} {"cn"=>".Cinea.Root-CA.0"} {"dnq"=>"NFkBZDCGa7KpLK0PhZNCt40dDi8="} {"not_before"=>2006-05-12 16:08:58 UTC} {"not_after"=>2041-05-01 00:00:00 UTC} for a valid X509 cert exceeding 32 bit time_t.
+      # See COFD-3D_FTR-8_C_EN-XX_US_51_2K_20110308_DLB_i3D for a package with NFkBZDCGa7KpLK0PhZNCt40dDi8=.
+      # See DC_Signer_Crypto_Compliance Section 2.1.17 for another spot where this matters.
+      #
+      begin
+        errors << 'Not before field missing' if cert.not_before.nil?
+        errors << 'Not after field missing' if cert.not_after.nil?
+        errors << 'Not before field is not UTC' unless cert.not_before.utc?
+        errors << 'Not after field is not UTC' unless cert.not_after.utc?
+      rescue Exception => e
+        errors << "Internal error: Skip DC_Signer_Crypto_Compliance Section 2.1.7 Validity: RUBY_VERSION #{ RUBY_VERSION } on 32 bit systems broken for UTC times > Jan 19th 2038. Inspect certificate manually." if e.class == ArgumentError
+      end
+
+      # Check X.509 extensions
+      required_oids = %w( basicConstraints keyUsage authorityKeyIdentifier )
+      additional_oids = Array.new
+
+      cert.extensions.each do |x|
+        if required_oids.include?( x.oid )
+          required_oids.delete( x.oid )
+          values = extension_values( x.value )
+
+          case x.oid
+
+          # 2.1.8 AuthorityKeyIdentifier field present
+          when 'authorityKeyIdentifier'
+            nil # 2.1.8 checks for presence only. Omission in CTP?
+
+          # 2.1.9 KeyUsage field
+          when 'keyUsage'
+            if index == 0 # leaf cert
+              errors << 'digitalSignature missing from keyUsage' unless values.include?( 'Digital Signature' )
+              errors << 'keyEncipherment missing from keyUsage' unless values.include?( 'Key Encipherment' )
+            else # ca's
+              errors << 'keyCertSign missing from keyUsage' unless values.include?( 'Certificate Sign' )
+            end
+
+          # * 2.1.10 basicConstraints field
+          when 'basicConstraints'
+            if index == 0 # leaf cert
+              errors << "CA true in potential #{ type } leaf certificate" unless values.include?( 'CA:FALSE' )
+              case type
+              when :smpte
+                if values.find { |v| v.match( /pathlen:[^0]/ ) }
+                  errors << "Pathlen present and non-zero in potential #{ type } leaf certificate"
+                end
+              when :interop
+                if values.find { |v| v.match( /pathlen:[^0]/ ) }
+                  errors << "Pathlen present and non-zero in potential #{ type } leaf certificate"
+                end
+              end
+            else # ca's
+              errors << 'basicConstraints not marked critical' unless x.critical?
+              errors << 'CA false for authority certificate' unless values.include?( 'CA:TRUE' )
+              if ! values.find { |v| v.match( /pathlen:\d+/ ) }
+                # FIXME If the value in pathlen is negative the regexp above will not match
+                # and thus trigger the error but the message will be misleading
+                errors << 'Pathlen missing for authority certificate'
+              end
+            end
+          end # case oid
+        else
+          additional_oids << x # see 2.1.15 checks
+        end # required oid
+      end # extensions
+      errors << "Extensions #{ required_oids.join( ', ' ) } missing" unless required_oids.empty?
+
+      # 2.1.11 Public key thumbprint dnQualifier
+      #
+      # This works for rubies < 1.9.3:
+      #   asn1 = Base64.decode64( cert.public_key.to_pem.split( "\n" )[ 1 .. -2 ].join )
+      #   dnq_calc = Base64.encode64( OpenSSL::Digest.new( 'sha1', asn1 ).digest ).chomp
+      #
+      # rubies >= 1.9.3 changed the default encoding of public key so do this instead:
+      #
+      pkey_der = OpenSSL::ASN1::Sequence( [ OpenSSL::ASN1::Integer( cert.public_key.n ), OpenSSL::ASN1::Integer( cert.public_key.e ) ] ).to_der
+      dnq_calc = Base64.encode64( OpenSSL::Digest.new( 'sha1', pkey_der ).digest ).chomp
+      #
+      field_dnq = find_field( 'dnQualifier', cert.subject )
+      if field_dnq.empty?
+        errors << 'dnQualifier field missing in subject name'
+      elsif field_dnq.size > 1
+        errors << 'More than 1 dnQualifier field present'
+      else
+        dnq_cert = field_dnq.first[ 1 ]
+        if dnq_cert.empty?
+          errors << 'dnQualifier missing in subject name'
+        end
+        if dnq_calc != dnq_cert
+          errors << 'dnQualifier mismatch'
+        end
+      end
+
+      # 2.1.12 OrganizationName field present in issuer and subject and identical
+      field_o_issuer = find_field( 'O', cert.issuer )
+      field_o_subject = find_field( 'O', cert.subject )
+      if field_o_issuer.empty?
+        errors << 'Organization name field missing in issuer name'
+      elsif field_o_issuer.size > 1
+        errors << 'More than 1 Organization name field present in issuer name'
+      else
+        o_issuer = field_o_issuer.first[ 1 ]
+      end
+      if field_o_subject.empty?
+        errors << 'Organization name missing in subject name'
+      elsif field_o_subject.size > 1
+        errors << 'More than 1 Organization name field present in subject name'
+      else
+        o_subject = field_o_subject.first[ 1 ]
+      end
+      unless o_issuer.nil? and o_subject.nil?
+        if o_issuer != o_subject
+          errors << 'Organization name issuer/subject mismatch'
+        end
+      end
+
+      # 2.1.13 OrganizationUnitName field
+      field_ou_issuer = find_field( 'OU', cert.issuer )
+      field_ou_subject = find_field( 'OU', cert.subject )
+      if field_ou_issuer.empty?
+        errors << 'OrganizationUnit field missing in issuer name'
+      elsif field_ou_issuer.size > 1
+        errors << 'More than 1 OrganizationUnit fields present in issuer name'
+      else
+        ou_issuer = field_ou_issuer.first[ 1 ]
+      end
+      if field_ou_subject.empty?
+        errors << 'OrganizationUnit field missing in subject name'
+      elsif field_ou_subject.size > 1
+        errors << 'More than 1 OrganizationUnit fields present in subject name'
+      else
+        ou_subject = field_ou_subject.first[ 1 ]
+      end
+      if ou_issuer.nil?
+        errors << 'OrganizationUnit name of issuer empty'
+      end
+      if ou_subject.nil?
+        errors << 'OrganizationUnit name of subject empty'
+      end
+
+      # 2.1.14 Entity name and roles field
+      field_cn_issuer = find_field( 'CN', cert.issuer )
+      field_cn_subject = find_field( 'CN', cert.subject )
+      if field_cn_issuer.empty?
+        errors << 'CommonName field missing in issuer name'
+      elsif field_cn_issuer.size > 1
+        errors << 'More than 1 CommonName field present in issuer name'
+      else
+        cn_issuer = field_cn_issuer.first[ 1 ]
+      end
+      if field_cn_subject.empty?
+        errors << 'CommonName field missing in subject name'
+      elsif field_cn_subject.size > 1
+        errors << 'More than 1 CommonName field present in subject name'
+      else
+        cn_subject = field_cn_subject.first[ 1 ]
+        cn_subject_roles = cn_subject.split( /\..+/ )
+        if cn_subject_roles.empty?
+          roles = NIL
+        else
+          roles = cn_subject_roles.first.split( ' ' )
+        end
+      end
+
+      if index == 0 # leaf
+        case type
+        when :smpte
+          if cn_subject_roles.empty?
+            errors << 'Role title missing in CommonName field of leaf certificate subject name'
+          else
+            errors << 'CS role missing in CommonName field of leaf certificate subject name' unless roles.include?( 'CS' )
+            errors << 'Superfluous roles present in CommonName field of leaf certificate subject name' unless roles.size == 1 and roles[ 0 ] == 'CS'
+          end
+        when :interop
+          # lax rules noop
+        end
+      else # ca's
+        errors << 'Role title present in CommonName field of authority certificate' unless roles.nil?
+      end
+
+      # 2.1.15 unrecognized x509v3 extensions not marked critical
+      additional_oids.each do |x|
+        errors << 'Additional, non-required X.509v3 extension is marked critical' if x.critical?
+      end
+
+      context_errors[ cert.subject.to_s ] = errors
+      types_seen << type
+    end # @context.each
+
+    # 2.1.16 signature verification. verify chain
+    @chain_verified, context_errors = verify_cert_chain( @context, context_errors )
+
+    # 2.1.17 Chain complete? Validity period of child cert contained within validity of parent? Root ca valid?
+    # The chain completeness and root ca checks are implicit in crypto_context() which leaves validity containment checks:
+    @context.each_with_index do |cert, index|
+      break if index == @context.size - 1 # root ca
+      begin
+        if ! ( cert.not_before >= @context[ index + 1 ].not_before and cert.not_after <= @context[ index + 1 ].not_after )
+          context_errors[ cert.subject.to_s ] << "Validity period not contained within parent certificate's validity period"
+        end
+      rescue Exception => e
+        context_errors[ cert.subject.to_s ] << "Internal error: Skip DC_Signer_Crypto_Compliance Section 2.1.17 Chain completeness: RUBY_VERSION #{ RUBY_VERSION } on 32 bit systems broken for UTC times > Jan 19th 2038. Inspect certificate manually." if e.class == ArgumentError
+      end
+    end
+    return context_errors, types_seen
+  end # check_compliance
+
+  # Verify a sorted certificate chain
+  def verify_cert_chain( certs, context_errors )
+    certs = certs.reverse
+    verification = Array.new
+    certs.each_with_index do |cert, index|
+      if index == 0 then issuer = cert else issuer = certs[ index - 1 ] end
+      begin
+        check = cert.verify issuer.public_key
+        context_errors[ cert.subject.to_s ] << 'Verification with issuer public key failed' if check == FALSE
+        verification << check
+      rescue Exception => e
+        verification << e
+      end
+    end
+    if verification.uniq.size == 1 and verification.first == TRUE
+      return TRUE, context_errors
+    else
+      return FALSE, context_errors
+    end
+  end
+
+  def find_field( fieldname, x509_name )
+    x509_name.to_a.find_all { |e| e.first.match '^' + fieldname + '$' }
+  end
+
+  def extension_values( string )
+    string.split( ', ' )
+  end
+
+  def each
+    @context.each {|f| yield( f ) }
+  end
+
+  def to_a
+    @context.dup
+  end
+
+  def total_errors
+    @errors[ :context ].values.flatten.size
+  end
+end # DC_Signer_Crypto_Compliance
+
+
+class DC_Signature_Verification
+  attr_reader :messages, :signer_node, :signature_node, :crypto, :reference_digests_check, :signature_value_check
+
+  def initialize( doc )
+    @messages = Array.new
+    @signer_node = nil
+    @signature_node = nil
+    @crypto = nil
+    @reference_digests_check = false
+    @signature_value_check = false
+    evaluation_complete = signature_verify( doc )
+    report
+  end
+
+  def verified?
+    @verified
+  end
+
+  def signer_name
+    @crypto.context.first.subject.to_s
+  end
+  def signer_issuer
+    @crypto.context.first.issuer.to_s
+  end
+
+  def report
+    if @signature_node.size == 1
+      case @reference_digests_check
+      when TRUE
+        @messages << 'Document and SignedInfo match'
+        case @signature_value_check
+        when TRUE
+          @messages << 'Signature value and SignedInfo match'
+        when FALSE
+          @messages << 'Signature value and SignedInfo do not match'
+        end
+
+      when FALSE
+        @messages << 'Document and SignedInfo do not match'
+        case @signature_value_check
+        when TRUE
+          @messages << 'Signature value and SignedInfo match'
+        when FALSE
+          @messages << 'Signature value and SignedInfo do not match'
+        end
+      end
+
+      if @reference_digests_check and @signature_value_check
+        @verified = true
+        @messages << 'Signature check: OK'
+      else
+        @verified = false
+        @messages << 'Signature check: Verification failure'
+      end
+    end
+  end
+
+  def namespace_prefix( doc, ns )
+    doc_ns = doc.collect_namespaces
+    if RUBY_VERSION < '1.9'
+      if doc_ns.index( ns )
+        prefix = doc_ns.index( ns ).split( 'xmlns:' ).last
+      end
+    else
+      if doc_ns.key( ns )
+        prefix = doc_ns.key( ns ).split( 'xmlns:' ).last
+      end
+    end
+    return prefix ||= 'xmlns'
+  end
+
+  def signature_namespace_and_prefix( doc )
+    # If Signature's namespace is not in doc's namespace collection then it will be either
+    #   * in Ns_Xmldsig declared as default namespace for Signature scope
+    #   * or whacked beyond recognition
+    doc_ns = doc.collect_namespaces
+    if RUBY_VERSION < '1.9'
+      # Hash#index will be deprecated in the ruby 1.9.x series. Is in here for 1.8.x
+      if doc_ns.index( MStr::Ns_Xmldsig )
+        prefix = doc_ns.index( MStr::Ns_Xmldsig ).split( 'xmlns:' ).last
+      else
+        prefix = 'xmlns'
+      end
+    else
+      if doc_ns.key( MStr::Ns_Xmldsig )
+        prefix = doc_ns.key( MStr::Ns_Xmldsig ).split( 'xmlns:' ).last
+      else
+        prefix = 'xmlns'
+      end
+    end
+    sig_ns = { prefix => MStr::Ns_Xmldsig }
+    return sig_ns, prefix
+  end
+
+  # Will return true/false for completing the evaluation
+  # Actual verification results implied by @reference_digests_check and @signature_value_check
+  def signature_verify( doc )
+    # 1. Figure out signature namespace prefix
+    sig_ns, prefix = signature_namespace_and_prefix( doc )
+
+    # 2.a Signer present?
+    @signer_node = doc.xpath( "//#{ namespace_prefix( doc, doc.root.namespace.href ) }:Signer" )
+    if @signer_node.size != 1
+      @messages << "#{ @signer_node.size == 0 ? 'No' : @signer_node.size } Signer node#{ @signer_node.size > 1 ? 's' : '' } found"
+    end
+
+    # 2.b Signature present?
+    @signature_node = doc.xpath( "//#{ prefix }:Signature", sig_ns )
+    if @signature_node.size != 1
+      @messages << "#{ @signature_node.size == 0 ? 'No' : @signature_node.size } Signature node#{ @signature_node.size > 1 ? 's' : '' } found"
+    end
+
+    # 2.c Abort if none or more than 1 Signer or Signature node
+    return FALSE if ( @signer_node.size != 1 or @signature_node.size != 1 )
+
+    # 3. Extract and check signer certs
+    certs = extract_certs( doc, sig_ns, prefix )
+    @crypto = DC_Signer_Crypto_Compliance.new( certs )
+
+    if ! @crypto.valid?
+      if ! @crypto.errors[ :pre_context ].empty?
+        @crypto.errors[ :pre_context ].each do |e|
+          @messages << e
+        end
+        return FALSE
+      else
+        # Compliance issues in the extracted certs.
+        # List those errors but then try to continue anyway,
+        # thus allowing for inspection of compliance issues and signature in context.
+        @crypto.messages.each do |e|
+          @messages << e
+        end
+      end
+    else # cc is valid
+      @messages << "Certificate chain is complete and compliant (#{ @crypto.type })"
+    end
+
+    # 3.a Might check here whether the signer chain is known, trustworthy etc.
+    #
+    # See 3 for @crypto validity hop-over
+    #
+
+    # 4. Get signer's public key
+    pub_k = @crypto.context.first.public_key
+
+    # 5. Check references and signature value
+    @reference_digests_check = check_references( doc, sig_ns, prefix )
+    @signature_value_check = check_signature_value( doc, sig_ns, prefix, pub_k )
+
+    return TRUE
+  end # signature_verify
+
+  def check_signature_value( doc, sig_ns, prefix, pub_k )
+    sig_algo = doc_signature_method_algorithm( doc, sig_ns, prefix )
+    sig_digest_algo = sig_algo.split( 'rsa-' ).last
+    signature_value_doc = extract_signature_value( doc, sig_ns, prefix )
+    if signature_value_doc.size != pub_k.n.to_i.size
+      @messages << "Invalid signature: sig_doc: #{ signature_value_doc.size } octets (RSA modulus: #{ pub_k.n.to_i.size } octets)"
+      return FALSE
+    end
+    signed_info_c14n_xml = signed_info_c14n( doc, sig_ns, prefix )
+
+    signed_info_digest_calc = b64_enc( digest( sig_digest_algo, signed_info_c14n_xml ) )
+    signed_info_digest_doc  = b64_enc( decode_sig_value( signature_value_doc, sig_digest_algo, pub_k ) )
+    @messages << "SignedInfo Digest calc:    #{ signed_info_digest_calc } (SignatureMethod Algorithm=#{ sig_algo })"
+    @messages << "SignedInfo Digest decoded: #{ signed_info_digest_doc  } (SignatureMethod Algorithm=#{ sig_algo })"
+
+    return ( signed_info_digest_calc == signed_info_digest_doc )
+  end
+
+  def check_references( doc, sig_ns, prefix )
+    check = TRUE
+    references = doc_references( doc, sig_ns, prefix )
+    check = FALSE if references.size == 0
+    @messages << "Found #{ references.size } reference#{ references.size != 1 ? 's' : '' }"
+    references.each do |ref|
+      digest_algo = doc_reference_digest_method_algorithm( ref, sig_ns, prefix )
+      digest_doc = doc_reference_digest_value( ref, sig_ns, prefix )
+      if ref.attributes.size == 1 and ref.attributes[ 'URI' ]
+        uri = ref.attributes[ 'URI' ].value
+        case uri
+        when ""
+          ref_xml = strip_signature( doc.dup, sig_ns, prefix ).canonicalize
+        else
+          if uri =~ /^#ID_/
+            ref_xml = extract_uri( doc, uri ).canonicalize
+          else
+            @messages << 'Reference URI not valid'
+            check = FALSE
+            next
+          end
+        end
+        digest_calc = b64_enc( digest( digest_algo, ref_xml ) )
+        @messages << "URI=#{ uri.empty? ? '""' : uri } Digest calc: #{ digest_calc } (DigestMethod Algorithm=#{ digest_algo })"
+        @messages << "URI=#{ uri.empty? ? '""' : uri } Digest doc:  #{ digest_doc  } (DigestMethod Algorithm=#{ digest_algo })"
+        if digest_calc == digest_doc
+          @messages << 'Reference digest value correct'
+        else
+          @messages << 'Reference digest value not correct'
+          check = FALSE
+        end
+      else
+        # not reached if doc was validated against schema
+        @messages << 'Reference has more than 1 attribute'
+      end
+    end
+    return check
+  end
+
+  def attribute_value( element, attr_name )
+    element.attributes[ attr_name ].text
+  end
+
+  def doc_signature_method_algorithm( doc, sig_ns, prefix )
+    signature_method_algorithm( attribute_value( doc.at_xpath( "//#{ prefix }:SignatureMethod", sig_ns ), 'Algorithm' ) )
+  end
+
+  def doc_references( doc, sig_ns, prefix )
+    doc.xpath( "//#{ prefix }:SignedInfo/#{ prefix }:Reference", sig_ns )
+  end
+
+  def doc_reference_digest_method_algorithm( reference, sig_ns, prefix )
+    digest_method_algorithm( attribute_value( reference.at_xpath( "#{ prefix }:DigestMethod", sig_ns ), 'Algorithm' ) )
+  end
+
+  def doc_reference_digest_value( reference, sig_ns, prefix )
+    reference.at_xpath( "#{ prefix }:DigestValue", sig_ns ).text
+  end
+
+  def signed_info_c14n( doc, sig_ns, prefix )
+    doc.at_xpath( "//#{ prefix }:SignedInfo", sig_ns ).canonicalize
+  end
+
+  def digest( hash_id, m )
+    OpenSSL::Digest.new( hash_id, m ).digest
+  end
+
+  def signature_method_algorithm( id )
+    {
+      'http://www.w3.org/2000/09/xmldsig#rsa-sha1' => 'rsa-sha1',
+      'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256' => 'rsa-sha256'
+    }[ id ]
+  end
+
+  def digest_method_algorithm( id )
+    {
+      'http://www.w3.org/2000/09/xmldsig#sha1' => 'sha1',
+      'http://www.w3.org/2001/04/xmlenc#sha256' => 'sha256'
+    }[ id ]
+  end
+
+  def emsa_pkcs1_v1_5_decode( hash_id, m )
+    hash_size = digest( hash_id, '' ).size
+    m[ m.size - hash_size, hash_size ]
+  end
+
+  # See rsa gem
+  def os2ip( octet_string )
+    octet_string.bytes.inject( 0 ) { |n, b| ( n << 8 ) + b }
+  end
+
+  # See rsa gem
+  def i2osp( x, len = nil )
+    raise ArgumentError, 'integer too large' if len && x >= 256 ** len
+    StringIO.open do |buffer|
+      while x > 0
+        b = ( x & 0xFF ).chr
+        x >>= 8
+        buffer << b
+      end
+      s = buffer.string
+      # FIXME
+      if s.respond_to?( :force_encoding )
+        s.force_encoding( Encoding::BINARY )
+      end
+      s.reverse!
+      s = len ? s.rjust( len, "\0" ) : s
+    end
+  end
+
+  # See rsa gem. note the bn modification here
+  def modpow( base, exponent, modulus )
+    result = 1
+    while exponent > 0
+      result = ( base * result ) % modulus unless ( ! exponent.bit_set? 0 )
+      base = ( base * base ) % modulus
+      exponent >>= 1
+    end
+    result
+  end
+
+  def rsavp1( pub_k, s )
+    modpow( s, pub_k.e, pub_k.n )
+  end
+
+  def extract_certs( doc, sig_ns, prefix )
+    certs = Array.new
+    doc.xpath( "//#{ prefix }:X509Certificate", sig_ns ).each do |c|
+      begin
+        pem = pemify( c.text )
+        certs << OpenSSL::X509::Certificate.new( pem )
+      rescue Exception => e
+        @messages << e.inspect
+      end
+    end
+    certs
+  end
+
+  def pemify( string )
+    [
+      '-----BEGIN CERTIFICATE-----',
+      string.gsub( /[\r ]+/, '' ).split( "\n" ).join.split( /(.{64})/ ).reject { |e| e.empty? },
+      '-----END CERTIFICATE-----'
+    ].flatten.join( "\n" )
+  end
+
+  def decode_sig_value( value, sig_digest_algo, pub_k )
+    m = rsavp1( pub_k, os2ip( value ) )
+    emsa_pkcs1_v1_5_decode( sig_digest_algo, i2osp( m, pub_k.n.to_i.size ) )
+  end
+
+  def strip_signature( doc, sig_ns, prefix )
+    signature_element = doc.at_xpath( "//#{ prefix }:Signature", sig_ns )
+    signature_element.remove
+    doc
+  end
+
+  def extract_uri( doc, uri )
+    # See kdms/kdm_19400_8a1ace55-3953-4a6a-9f74-becc1d42af69_97f83429b5258215db5f96e79c8cbb4c1f2c8c8d.xml,
+    # a dolby KDM with prefixed children, like "etm:AuthenticatedPublic".
+    # Iterating children to pick up uri because I don't know a simpler way for now
+    requested_node_name = uri.split( '#ID_' ).last
+    doc.root.children.each do |child|
+      if child.node_name and child.node_name == requested_node_name
+        prefix = child.namespace.prefix
+        return doc.at_xpath( "//#{ prefix.nil? ? 'xmlns:' : prefix + ':' }#{ requested_node_name }[ @Id = '#{ uri[ 1 .. -1 ] }' ]" )
+      end
+    end
+  end
+
+  def b64_enc( octet_string )
+    Base64.encode64( octet_string ).chomp
+  end
+  def b64_dec( string )
+    Base64.decode64 string
+  end
+
+  def extract_signature_value( doc, sig_ns, prefix )
+    b64_dec( doc.at_xpath( "//#{ prefix }:SignatureValue", sig_ns ).text.split( "\n" ).join )
+  end
+
+end # DC_Signature_Verification
+
+
+class Numeric
+  TERA = 1099511627776.0
+  GIGA = 1073741824.0
+  MEGA = 1048576.0
+  KILO = 1024.0
+  def to_k
+    case
+    when self == 1 then '1 Byte'
+    when self < KILO then "%d Bytes" % self
+    when self < MEGA then "%.3f KB" % ( self / KILO )
+    when self < GIGA then "%.3f MB" % ( self / MEGA )
+    when self < TERA then "%.3f GB" % ( self / GIGA )
+    else "%.3f TB" % ( self / TERA )
+    end
+  end
+end
+
+
+class Eta
+  attr_reader :percentage, :eta, :elapsed
+  def initialize( title, width, looks_like, terminal_size, options )
+    @title = title
+    @total = 100
+    @scaling = width.to_f / @total
+    @left, @major, @fill, @right = looks_like.scan( /./ )
+    @terminal_size = terminal_size
+    @output = DLogger.new( prefix = '', options )
+    @start = Time.now
+  end
+
+  def update( percentage )
+    @percentage = percentage
+    update_eta
+  end
+
+  def update_eta
+    return if @percentage == 0
+    @elapsed = Time.now - @start
+    @eta = @elapsed * @total / @percentage - @elapsed
+  end
+
+  def update_terminal( percentage )
+    update( percentage )
+    line = bar
+    if @terminal_size and line.length > @terminal_size[ :columns ]
+      line = ' [...] ' + line[ line.length - @terminal_size[ :columns ] + 9 .. -1 ]
+    end
+    @output.cr( "%s\r" % line )
+  end
+
+  def clear_terminal
+    @output.cr( "%s\r" % ( ' ' * bar.size ) )
+  end
+
+  def preserve_terminal
+    @output.info ''
+  end
+
+  def preserve_terminal_title_with_message( message )
+    clear_terminal
+    @output.info [ @title, message ].join( ' ' )
+  end
+
+  private
+
+  def bar
+    [ @title, percentage_pad, inner_bar, tail ].join( ' ' )
+  end
+
+  def percentage_pad
+    "%3s%" % @percentage
+  end
+
+  def inner_bar
+    @left + @major * ( @percentage * @scaling ).ceil + @fill * ( ( @total - @percentage ) * @scaling ).floor + @right
+  end
+
+  def tail
+    [ time_string( 'ETA', @eta ), time_string( 'Elapsed', @elapsed ) ].join( ' ' )
+  end
+
+  def time_string( head, t )
+    return "%s --:--:--" % head if t.nil?
+    t = t.to_i; s = t % 60; m  = ( t / 60 ) % 60; h = t / 3600
+    "%s %02d:%02d:%02d" % [ head, h, m, s ]
+  end
+end # Eta
+
+
+def command_exists?( command )
+  ENV[ 'PATH' ].split( File::PATH_SEPARATOR ).any? { |d| File.exists? File.join( d, command ) }
+end
+
+def detect_terminal_size
+  if command_exists?( 'tput' )
+    { :columns => `tput cols`.to_i, :lines => `tput lines`.to_i }
+  else
+    nil
+  end
+end
+
+def with_etabar( args, options, etabar_title, etabar_pbar_width, etabar_looks_like, &block )
+  eta = Eta.new( etabar_title, etabar_pbar_width, etabar_looks_like, detect_terminal_size, options )
+  chunks_per_percent = args.size / 100 + 1
+  index = 0
+  result = Array.new
+  ( 0 .. 100 ).each do |percentage|
+    chunks_per_percent.times do
+      break if index == args.size
+      result << yield( args[ index ] )
+      index += 1
+    end
+    eta.update_terminal percentage
+  end
+  eta.preserve_terminal_title_with_message "Done"
+  return result.reject { |e| e.nil? }
+end
+
+def digest_with_etabar( digest_algorithm, title, file, pbar_width, looks_like, options )
+  size = File.size file
+  chunksize = 4096
+  chunks = size / chunksize + ( size % chunksize > 0 ? 1 : 0 )
+  chunks_per_percent = chunks / 100 + 1
+
+  dgst = OpenSSL::Digest.new( digest_algorithm )
+  io = File.open file
+  eta = Eta.new( title, pbar_width, looks_like, detect_terminal_size, options )
+
+  ( 0 .. 100 ).each do |percentage|
+    # read 1 % of chunks
+    chunks_per_percent.times do
+      chunk = io.read( chunksize )
+      dgst.update chunk if chunk
+    end
+    eta.update_terminal percentage
+  end
+
+  return dgst.digest, eta
+end
+
+def namespace_prefix( doc, ns )
+  doc_ns = doc.collect_namespaces
+  if RUBY_VERSION < '1.9'
+    if doc_ns.index( ns )
+      prefix = doc_ns.index( ns ).split( 'xmlns:' ).last
+    end
+  else
+    if doc_ns.key( ns )
+      prefix = doc_ns.key( ns ).split( 'xmlns:' ).last
+    end
+  end
+  return prefix ||= 'xmlns'
+end
+
+# lib/xml.rb
+def validate_xml( xml, file )
+  errors = Array.new
+  asdcp_type = xml.root.node_name
+  # find schema match
+  case asdcp_type
+    # special handling as DCSubtitle files are not namespaced
+  when 'DCSubtitle'
+    xsd_file = 'DCSubtitle.v1.mattsson.xsd'
+  else
+    case asdcp_type
+    when 'AssetMap'
+      # see fhg
+      xsd_file = ( MStr::Schemas[ xml.namespaces[ 'xmlns' ] ] or MStr::Schemas[ xml.namespaces[ 'xmlns:am' ] ] )
+    else
+      xsd_file = ( MStr::Schemas[ xml.namespaces[ 'xmlns' ] ] )
+    end
+  end
+  xsd = Nokogiri::XML::Schema( open File.join( XSDDir, xsd_file ) )
+  validation_errors = xsd.validate( xml )
+  if validation_errors.empty?
+    return TRUE, errors
+  else
+    validation_errors.each do |e|
+      errors << "Schema check: #{ File.basename xsd_file } #{ file }: #{ e }"
+    end
+    return FALSE, errors
+  end
+end
+
+def validation( errors, xml, source_file )
+  valid, validation_errors = validate_xml( xml, source_file )
+  if valid == FALSE
+    validation_errors.each do |e|
+      errors << e
+    end
+  end
+  return valid, errors
+end
+
+def check_signature( xml )
+  signature_result = DC_Signature_Verification.new( xml )
+end
+
+def errors_signature_verification( errors, signature_result, asset, file )
+  if signature_result.signature_node.empty?
+    return errors
+  end
+  if signature_result.verified?
+    # While the signature might verify there could be problems
+    # with dc specific certificate properties. Report those.
+    if ! signature_result.crypto.errors[ :context ].values.flatten.empty?
+      errors << "Signature: #{ asset }: #{ file }: #{ signature_result.crypto.errors[ :context ].inspect }"
+    end
+  else
+    signature_result.messages.each do |message|
+      errors << "Signature: #{ asset }: #{ file }: #{ message }"
+    end
+  end
+  return errors
+end
+
+# returns xml or false.
+# in addition to xml all kinds of stuff will be examined here
+# hence the hoopla to skip expected errors from non-xml.
+# still: what an appalling method
+def get_xml_of_type( asdcp_type, file )
+  begin
+    xml = Nokogiri::XML( open file )
+  rescue Exception => e
+    @logger.info "#{ file }: #{ e.message }"
+    return FALSE
+  end
+  unless xml.errors.empty?
+    xml.errors.each do |error|
+      # expected errors from non-xml
+      next if error.message =~ /Start tag expected/ or error.message =~ /Document is empty/
+      @logger.info "Syntax error: #{ file }: #{ error }"
+    end
+    return FALSE
+  end
+
+  case xml.root.node_name
+  when asdcp_type
+    return xml
+  else
+    return FALSE
+  end
+end
+
+def xml?( file )
+  begin
+    xml = Nokogiri::XML( open file )
+  rescue Exception => e
+    return FALSE
+  end
+  if xml.root.nil?
+    return FALSE
+  else
+    xml
+  end
+end
+
+# FIXME Rather brittle mechanism here. I'd like to have infrastructure types show up (CompositionPlaylist, PackingList, DCSubtitle, DCMetadata)
+def get_asset_uuid( file )
+  id = NIL
+  if File.exists?( file )
+    xml = xml?( file )
+    if xml
+      xml.remove_namespaces!
+
+      # FIXME how to find the first child level Id only?
+      ids = xml.xpath( '//Id' )
+      if ids.size > 0
+        id = ids.first.text.split( ':' ).last
+      else
+        id = xml.xpath( '//SubtitleID' ).text # DCSubtitle
+        if id.empty?
+          id = xml.xpath( '//MetadataID' ).text # PCF, DCMetadata
+        end
+      end
+
+    else # not xml
+      meta = MxfTools.mxf_inspect( file )
+      if meta
+        id = meta[ 'AssetUUID' ]
+      end
+    end
+
+  end
+  return id
+end
+
+# Returns subject, issuer and serial (from signing certificate) and x509serialnumber (from Signer..X509SerialNumber)
+def signer_info( xml, sig )
+  sig_info = Hash.new
+  if ! sig.signature_node.empty?
+    sig_info[ :signer_name ] = sig.signer_name
+    sig_info[ :signer_issuer_name ] = sig.signer_issuer
+    if ! sig.signer_node.empty?
+      signer_ns_prefix = namespace_prefix( xml, MStr::Ns_Xmldsig )
+      sig_info[ :x509serialnumber ] = sig.signer_node.first.xpath( "//#{ signer_ns_prefix }:X509SerialNumber", signer_ns_prefix => MStr::Ns_Xmldsig ).first.text.to_i
+      sig_info[ :cert_serial ] = sig.crypto.context.first.serial.to_i
+    end
+  end
+  return sig_info
+end
+
+# lib/cpl.rb
+def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signature_result )
+  ns = xml.collect_namespaces
+  report = Array.new
+  cpl_referenced_assets = Array.new
+  cpl_referenced_assets_types = Array.new
+  cpl_reels_references_complete = Array.new
+
+  cpl_ns_prefix = namespace_prefix( xml, xml.root.namespace.href )
+  cpl_id = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Id" ).text.split( ':' ).last
+  cpl_file = dict[ cpl_id ]
+  case ns[ cpl_ns_prefix ]
+  when MStr::Smpte_cpl
+    cpl_type = 'SMPTE'
+  when MStr::Interop_cpl
+    cpl_type = 'Interop'
+  else
+    cpl_type = 'Unknown'
+    errors << "CPL #{ cpl_id }: Default namespace unknown: #{ ns[ cpl_ns_prefix ] }: #{ package dict[ cpl_id ] }"
+  end
+  cpl_referenced_assets_types << cpl_type
+
+  if signature_result and ! signature_result.signature_node.empty?
+    @signed_cpls_count += 1
+    sig_info = signer_info( xml, signature_result )
+    report << "Signer:           #{ sig_info[ :signer_name ] }" if sig_info[ :signer_name ]
+    report << "Signer issuer:    #{ sig_info[ :signer_issuer_name ] }" if sig_info[ :signer_issuer_name ]
+
+    # Todo: Compare names in Signer and certificate
+    #
+
+    # Check Signer.X509Data.X509IssuerSerial info vs signer certificate
+    # See e.g. dcp_2/V174* for a serial mismatch
+    if ! signature_result.signer_node.empty? and sig_info[ :x509serialnumber ] and sig_info[ :cert_serial ]
+      if sig_info[ :x509serialnumber ] != sig_info[ :cert_serial ]
+        report << "Signer serial mismatch: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
+        errors << "CPL #{ cpl_id }: Signer serial mismatch: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
+      end
+    else
+      report << 'Signer info :x509serialnumber or :cert_serial could not be retrieved'
+      errors << "CPL #{ cpl_id }: Signer info :x509serialnumber or :cert_serial could not be retrieved"
+    end
+  end
+
+  report << "CPL Id:           #{ cpl_id }"
+  report << "CPL file:         #{ cpl_file }"
+  report << "CPL type:         #{ cpl_type } (#{ ns[ cpl_ns_prefix ] })"
+  content_title_text = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ContentTitleText" ).text
+  report << "ContentTitleText: #{ content_title_text }"
+  if content_title_text =~ MStr::Naming_re
+    matchdata = content_title_text.match( MStr::Naming_re )
+    if matchdata
+      if matchdata[ 4 ] # langaudio-langsubs
+        report << "\tLanguage audio and subtitles: #{ matchdata[ 4 ] }"
+      end
+    end
+  end
+  report << "AnnotationText:   #{ xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:AnnotationText" ).text }"
+  report << "ContentKind:      #{ xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ContentKind" ).text }"
+  dt = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:IssueDate" ).text
+  dt_friendly = datetime_friendly( DateTime.parse dt )
+  report << "IssueDate:        #{ dt } (#{ dt_friendly })"
+  # TKR? (Todo: Check URL scheme)
+  issuer = xml.at_xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Issuer" )
+  if issuer
+    if issuer.attributes[ 'language' ] and issuer.attributes[ 'language' ].value == MStr::Tkr_attr
+      report << "TKR Base URL:     #{ issuer.text }"
+    else
+      report << "Issuer:           #{ issuer.text }"
+    end
+  end
+  report << "Creator:          #{ xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Creator" ).text }"
+
+  # Metadata
+  if ns.keys.include?( 'xmlns:meta' )
+    cma = xml.xpath( '//meta:CompositionMetadataAsset/meta:*', ns )
+    if cma
+      report << 'CompositionMetadataAsset:'
+      cma.each do |e|
+        report << "                  #{ e.node_name }: #{ e.text }"
+      end
+    end
+  end
+
+  reels = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ReelList/#{ cpl_ns_prefix }:Reel" )
+  report << "Number of Reels:  #{ reels.size }"
+  total_duration = 0
+  composition_edit_rate = 0
+  #
+  # A composition can be "incomplete" in different ways:
+  #   - referenced assets can exist outside of a given package (ok case)
+  #   - referenced assets can be invalid/damaged/missing (fail case)
+  # Collecting fail case id's in broken_assets to later on figure out
+  # which case we're looking at.
+  #
+  broken_assets = Array.new
+  reels_references = Array.new
+
+  reels.each_with_index do |reel, index|
+    report << "Reel #{ index + 1 }:"
+    reels_references[ index ] = Hash.new
+    durations = Array.new
+    edit_rates = Array.new
+    assets_labels = Array.new
+    assets = reel.xpath( "#{ cpl_ns_prefix }:AssetList/*" )
+
+    assets.each do |asset|
+      next if asset.node_name == 'CompositionMetadataAsset'
+
+      # Collect reel referenced EssenceTypes (mainly to check for SMPTE reel completeness)
+      case asset.node_name
+      when 'MainPicture', 'MainStereoscopicPicture'
+        reels_references[ index ][ :picture ] = TRUE
+      when 'MainSound'
+        reels_references[ index ][ :sound ] = TRUE
+      when 'MainSubtitle'
+        reels_references[ index ][ :subtitle ] = TRUE
+      when 'ClosedCaption'
+        reels_references[ index ][ :caption ] = TRUE
+      end
+
+      asset_ns = asset.namespaces
+      asset_id = asset.xpath( "#{ cpl_ns_prefix }:Id", asset_ns ).text.split( ':' ).last
+      duration = asset.xpath( "#{ cpl_ns_prefix }:Duration", asset_ns ).text.to_i
+      n, d = asset.xpath( "#{ cpl_ns_prefix }:EditRate", asset_ns ).text.split( ' ' ).map { |n| n.to_i }
+      if n and d then edit_rate = Rational( n, d ) else edit_rate = 0 end
+      durations << duration
+      edit_rates << edit_rate
+
+      if dict
+        if dict[ asset_id ]
+          asset_file = package dict[ asset_id ]
+
+          if File.exists?( asset_file )
+
+            # MXF?
+            meta = MxfTools.mxf_inspect( asset_file )
+            if meta
+
+              case meta[ 'Label Set Type' ]
+              when 'MXF Interop'
+                cpl_referenced_assets << { asset_id => TRUE }
+                cpl_referenced_assets_types << MStr::AssetTypeInterop
+              when 'SMPTE'
+                cpl_referenced_assets << { asset_id => TRUE }
+                cpl_referenced_assets_types << MStr::AssetTypeSmpte
+              else
+                broken_assets << asset_id
+                cpl_referenced_assets << { asset_id => FALSE }
+                cpl_referenced_assets_types << MStr::AssetTypeUnknown
+              end
+
+              meta_report = [
+                meta[ 'Label Set Type' ] || 'Label Set Type:' + MStr::AssetTypeUnknown,
+                meta[ 'ContainerDuration' ] ? Timecode.new( meta[ 'ContainerDuration' ].to_i, edit_rate ).to_s : 'ContainerDuration:' + MStr::AssetTypeUnknown,
+                meta[ 'EncryptedEssence' ] ? meta[ 'EncryptedEssence' ] == 'Yes' ? 'encrypted' : 'unencrypted' : 'Encrypted:' + MStr::AssetTypeUnknown,
+                asset.node_name =~ /Picture/ ? ( meta[ 'StoredWidth' ] || 'StoredWidth:' + MStr::AssetTypeUnknown ) + 'x' + ( meta[ 'StoredHeight' ] || 'StoredHeight:' + MStr::AssetTypeUnknown ) : '',
+                asset.node_name =~ /Sound/ ? ( meta[ 'ChannelCount' ] || 'ChannelCount' + MStr::AssetTypeUnknown ) + ' channels' : '',
+                meta[ 'EssenceType' ] || 'EssenceType:' + MStr::AssetTypeUnknown
+              ].reject { |e| e.nil? or e.empty? }.join( ', ' )
+
+            else # DCSubtitle?
+              # DCSubtitle?
+              xml = get_xml_of_type( 'DCSubtitle', asset_file )
+              if xml
+
+                cpl_referenced_assets << { asset_id => TRUE }
+                cpl_referenced_assets_types << MStr::AssetTypeInterop
+
+                if options.validate
+                  valid, errors = validation( errors, xml, asset_file )
+                  @logger.debug( "DCSubtitle Schema check: #{ valid ? 'OK' : 'Errors (See below)' }: #{ asset_id }: #{ asset_file }"  )
+                end
+
+                xml.remove_namespaces!
+                if ( subtitles = xml.xpath( '//Subtitle' ) and subtitles.size > 0 )
+
+                  # scan all subtitles to find actual first_time_in and last_time_out
+                  # last subtitle is not necessarily the last displayed
+                  first_time_in = subtitles.first.attributes[ 'TimeIn' ].value
+                  last_time_out = subtitles.last.attributes[ 'TimeOut' ].value
+                  first_time_in_text = truncate( ( subtitles[ 0 ].at_xpath( '*/Text|Text' ) || subtitles[ 0 ].at_xpath( '*/Image|Image' ) ).text, 3 )
+                  last_time_out_text = truncate( ( subtitles[ -1 ].at_xpath( '*/Text|Text' ) || subtitles[ -1 ].at_xpath( '*/Image|Image' ) ).text, 3 )
+                  if subtitles.size > 1
+                    subtitles[ 1 .. -1 ].each do |sub|
+                      break if first_time_in < sub.attributes[ 'TimeIn' ].value
+                      first_time_in = sub.attributes[ 'TimeIn' ].value
+                    end
+                    subtitles.reverse[ 1 .. -1 ].each do |sub|
+                      break if last_time_out > sub.attributes[ 'TimeOut' ].value
+                      last_time_out = sub.attributes[ 'TimeOut' ].value
+                    end
+                  end
+                  first_time_in = Timecode.parse_with_ticks( first_time_in, edit_rate )
+                  last_time_out = Timecode.parse_with_ticks( last_time_out, edit_rate )
+
+                  # Check for empty elements. Thanks to Mattias Mattsson for the field feedback
+                  empty_subtitles = 0
+                  subtitles.each do |subtitle|
+                    if subtitle.children.empty? or ( subtitle.children.size == 1 and subtitle.children.first.is_a? Nokogiri::XML::Text )
+                      empty_subtitles += 1
+                      errors << "Empty Subtitle element: CPL #{ cpl_id }: #{ cpl_file }: Reel #{ index + 1 }: DCSubtitle #{ asset_id }: #{ asset_file }#{ subtitle.attributes[ 'SpotNumber' ] ? ': SpotNumber ' + subtitle.attributes[ 'SpotNumber' ].value : '' }"
+                    end
+                  end
+
+                  meta_report = "DCSubtitle, #{ first_time_in } '#{ first_time_in_text }' - #{ last_time_out } '#{ last_time_out_text }'#{ empty_subtitles > 0 ? ' Error: ' + empty_subtitles.to_s + ' empty Subtitle element' + ( empty_subtitles > 1 ? 's' : '' ) : '' }"
+
+                else
+                  meta_report = 'DCSubtitle, no Subtitle found'
+                end
+
+              else
+                broken_assets << asset_id
+                cpl_referenced_assets << { asset_id => FALSE }
+                cpl_referenced_assets_types << MStr::AssetTypeUnknown
+                meta_report = 'Asset file found but not AS-DCP MXF'
+              end
+            end
+
+          else
+            broken_assets << asset_id
+            cpl_referenced_assets << { asset_id => FALSE }
+            cpl_referenced_assets_types << MStr::AssetTypeUnknown
+            meta_report = "Referenced asset file missing: #{ dict[ asset_id ] }"
+          end # File.exists?
+
+        else # ok case: Supplemental/VF/External
+          cpl_referenced_assets << { asset_id => FALSE }
+          cpl_referenced_assets_types << MStr::AssetTypeUnknown
+          meta_report = 'Referenced asset file not listed in Assetmap dictionary: Supplemental/VF/External'
+          hint_info = [
+            'CPL ' + cpl_id,
+            asset_id,
+            'Reel ' + ( index + 1 ).to_s,
+            asset.node_name
+          ].join( ': ' )
+          hints << "Referenced asset file not listed in Assetmap dictionary: Supplemental/VF/External: #{ hint_info }"
+        end # if dict[ asset_id ]
+      end # if dict
+
+      report << "#{ "%6s" % duration }  #{ edit_rate == 0 ? 'EditRate funk' : Timecode.new( duration, edit_rate ) } @ #{ edit_rate }  #{ asset_id }  #{ asset.node_name }\t(#{ meta_report })"
+
+    end # assets.each
+
+    if durations.uniq.size != 1
+      report << "\tDuration mismatch"
+      errors << "Duration mismatch: CPL #{ cpl_id }: #{ cpl_file }: Reel #{ index + 1 }"
+    else
+      if edit_rates.min > 0 and durations.first.to_i / edit_rates.min.to_i < 1 # ugh, but hey, re-write is in the works
+        report << "\tReel duration minimum violated (< 1 second)"
+        errors << "Reel duration minimum violated (< 1 second): CPL #{ cpl_id }: #{ cpl_file }: Reel #{ index + 1 }"
+      end
+    end
+    if edit_rates.uniq.size != 1
+      report << "\tEditRate mismatch"
+      errors << "EditRate mismatch: CPL #{ cpl_id }: #{ cpl_file }: Reel #{ index + 1 }"
+    end
+
+    total_duration += durations.min # FIXME ugh
+    composition_edit_rate = edit_rates.min
+  end # reels.each_with_index
+
+  report << 'Total duration:'
+  report << "#{ "%6s" % total_duration }  #{ composition_edit_rate == 0 ? 'EditRate funk' : Timecode.new( total_duration, composition_edit_rate ) } @ #{ composition_edit_rate }" # FIXME edit_rate
+
+  # Check if this is a SMPTE composition and reels reference both picture and sound (required in SMPTE CPL)
+  if cpl_referenced_assets_types.uniq.size == 1 and cpl_referenced_assets_types.uniq.first == MStr::AssetTypeSmpte
+    reels_references.each_with_index do |reel_refs, index|
+      if reel_refs[ :picture ] and reel_refs[ :sound ]
+        cpl_reels_references_complete << TRUE
+      else
+        assets_missing_refs = Array.new
+        assets_missing_refs << 'Picture' if ! reel_refs[ :picture ]
+        assets_missing_refs << 'Sound' if ! reel_refs[ :sound ]
+        report << "SMPTE Reel #{ index + 1 }: #{ assets_missing_refs.join( ', ' ) }: Missing reference#{ assets_missing_refs.size > 1 ? 's' : '' }"
+        errors << "#{ report.last }: CPL #{ cpl_id }: #{ cpl_file }"
+        cpl_reels_references_complete << FALSE
+      end
+    end
+  end
+
+  # Composition type
+  assets_status_list = cpl_referenced_assets.map { |e| e.values }.flatten
+  if cpl_referenced_assets_types.uniq.size == 1 and assets_status_list.uniq.size == 1 and assets_status_list.uniq.first == TRUE
+    report << "Composition type: #{ cpl_referenced_assets_types.uniq.first }"
+  else
+    # FIXME Composition type Mixed error or hint?
+    stab = ( cpl_referenced_assets_types.include?( MStr::AssetTypeUnknown ) ? 'Undetermined' : assets_status_list.include?( FALSE ) ? 'Undetermined' : 'Mixed' )
+    report << "Composition type: #{ stab }: #{ cpl_referenced_assets_types.inspect }"
+    if broken_assets.size != 0
+      errors << "Composition type: #{ stab }: Broken assets: CPL #{ cpl_id }: #{ cpl_file }: #{ broken_assets.inspect }"
+    else
+      hints << "Composition type: #{ stab }: Supplemental/VF/External: CPL #{ cpl_id }: #{ cpl_file }: #{ cpl_referenced_assets_types.inspect }"
+    end
+  end
+
+  # Composition completeness
+  if assets_status_list.include?( FALSE )
+    if broken_assets.size != 0
+      report << "Composition incomplete: Broken assets: #{ broken_assets.inspect }"
+      errors << "Composition incomplete: Broken assets: CPL #{ cpl_id }: #{ cpl_file }: #{ broken_assets.inspect }"
+    else
+      report << "Composition incomplete: Supplemental/VF/External"
+      hints << "Composition incomplete: Supplemental/VF/External: CPL #{ cpl_id }: #{ cpl_file }"
+    end
+  # FIXME cpl_reels_references_complete.size == reels.size (and thus > 0) only in all-SMPTE CPLs
+  elsif cpl_reels_references_complete.include?( FALSE )
+    incomplete_reels = Array.new
+    cpl_reels_references_complete.each_with_index do |e, i| incomplete_reels << ( i + 1 ).to_s if e == FALSE end
+    report << "Composition incomplete: SMPTE reels require both MainPicture and MainSound: Reel#{ incomplete_reels.size != 1 ? 's' : '' } #{ incomplete_reels.join( ', ' ) } incomplete"
+    errors << "#{ report.last }: CPL #{ cpl_id }: #{ cpl_file }"
+  else
+    report << 'Composition complete'
+  end
+
+  return report, errors, hints, info
+end
+
+def dcp_inspect( options, arg )
+  errors = Array.new
+  hints = Array.new
+  hints << 'Schema checks were skipped' unless options.validate
+  info = Array.new
+  uuid_re = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
+  uuid_rfc4122_re = /^[0-9a-f]{8}-[0-9a-f]{4}-([1-5])[0-9a-f]{3}-[8-9a-b][0-9a-f]{3}-[0-9a-f]{12}$/
+
+  # Nokogiri git master (2012.01.11) implements interface to libxml2's C14N
+  if Nokogiri::XML::Document.new.respond_to?( 'canonicalize' )
+    @c14n_available = TRUE
+  else
+    hints << 'Installed version of Nokogiri does not support C14N which is required for signature verification'
+    hints << 'See https://github.com/wolfgangw/digital_cinema_tools/wiki/MISC for notes on how to install Nokogiri with C14N support from current git (https://github.com/tenderlove/nokogiri)'
+    @c14n_available = FALSE
+  end
+
+  # collect all files
+  # see http://stackoverflow.com/a/2370805 for a portable and generic way to get at a tree's contents
+  @package_dir = arg
+  package_dir_tree = Array.new
+  Dir.chdir( @package_dir ) { |d| package_dir_tree = Dir[ "**/*" ] }
+
+  # Find files called what Assetmap(s) would be called.
+  # Don't assume they're actually Assetmaps before checking.
+  # am_candidates = with_etabar( package_dir_tree, options, 'Looking for Assetmap candidates:', 20, '[= ]' ) { |e| ( File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/ ) ? e : nil }
+  am_candidates = package_dir_tree.select { |e| File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/ }.sort
+  am_candidates = am_candidates.sort
+  if am_candidates.empty?
+    errors << 'No Assetmap candidates found' 
+  else
+    @logger.debug( "Found #{ amount( 'Assetmap candidate', am_candidates ) }: #{ am_candidates.inspect }" )
+  end
+
+  # Check XML for Assetmap content
+  unless am_candidates.empty?
+    am_candidates_tmp = am_candidates.dup
+    am_candidates.each do |am_candidate|
+      am_file = package( am_candidate )
+      xml = get_xml_of_type( 'AssetMap', am_file )
+      if xml
+
+        if options.validate
+          valid, errors = validation( errors, xml, am_file )
+          @logger.debug( "AM Schema check: #{ valid ? 'OK' : 'Errors (See below)' }: #{ am_file }" )
+        end
+
+      else
+        @logger.debug "Assetmap candidate: #{ am_file }: Not XML"
+        am_candidates_tmp.delete( am_candidate )
+      end
+    end
+    am_candidates = am_candidates_tmp.dup
+  end
+  am_files = am_candidates
+  @logger.debug ''
+  # info about multiple Assetmaps found
+  info << "Found #{ am_files.size } Assetmaps" unless am_files.size == 1
+
+  # Process all Assetmaps
+  @logger.info( "Found #{ amount( 'Assetmap', am_files ) }" )
+  dict = Array.new # list of dictionaries/hashes
+  pkls = Array.new
+  pkls_missing = Array.new
+  ams = Array.new
+  am_files.each_with_index do |am_file, index|
+    dict << Hash.new
+    pkls << Array.new
+    pkls_missing << Array.new
+    am_base = File.dirname am_file
+    xml = xml?( package am_file )
+    # FIXME
+    xml.remove_namespaces!
+    am_id = get_asset_uuid( package am_file )
+    if am_id
+      ams << am_id
+    else
+      ams << NIL
+      errors << "Assetmap '#{ am_file }' has no Id"
+    end
+    # collect all asset nodes
+    assets = xml.xpath( '//Asset' )
+
+    @logger.debug( "Assetmap #{ am_id }: #{ am_file }"  )
+    @logger.debug( "Assetmap #{ am_id } lists #{ amount( 'asset', assets ) }:" )
+
+    # Store asset info in a dictionary (uuid => path, relative to package root)
+    # look for PackingList(s)
+    assets.each do |asset|
+
+      listed_id = asset.xpath( 'Id' ).text.split( ':' ).last
+      # FIXME ChunkList.size == 1 is an assumption and wrong at that. Could be > 1
+      path = asset.xpath( 'ChunkList/Chunk/Path' ).text.split( /file:\/+/ ).last
+      # using AM listed path for listing message, not package path, because this is what we're looking at right now:
+      errors << "Listed in Assetmap: Not an RFC-4122 UUID: #{ listed_id }: #{ path }" unless listed_id =~ uuid_rfc4122_re
+      if path.nil? # example: mc t28 ASSETMAP.xml
+        errors << "No path for asset: #{ listed_id }: AM #{ am_id }: #{ am_file }"
+      else
+
+        # Assetmap dictionary
+        dict[ index ][ listed_id ] = Pathname( File.join( am_base, path ) ).cleanpath.to_s
+        @logger.debug( "#{ listed_id }: #{ dict[ index ][ listed_id ] }#{ File.exists?( package dict[ index ][ listed_id ] ) ? '' : ' (missing)' }" )
+
+        # Check listed_id vs actual asset_id
+        asset_file = package dict[ index ][ listed_id ]
+        if File.exists?( asset_file )
+          asset_id = get_asset_uuid( asset_file )
+          if asset_id
+            unless asset_id =~ uuid_rfc4122_re
+              errors << "Asset UUID: Not an RFC-4122 UUID: #{ asset_file }: #{ asset_id }"
+            end
+            if listed_id.downcase != asset_id.downcase
+              errors << "UUID mismatch: AM #{ am_id } #{ am_file }: #{ asset_file }: Listed: #{ listed_id } Asset: #{ asset_id }" 
+            else
+              if listed_id != asset_id
+                hints << "UUID case mismatch: AM #{ am_id } #{ am_file }: #{ asset_file }: Listed: #{ listed_id } Asset: #{ asset_id }"
+              end
+            end
+          end
+        else
+          errors << "Listed asset file missing: AM #{ am_id } #{ am_file }: #{ path }: #{ asset_file }"
+        end
+      end
+
+      # PackingList?
+      unless asset.xpath( 'PackingList' ).empty?
+        pkls[ index ] << listed_id
+      end
+
+      # Check if possible uuid component in the asset filename matches the actual asset uuid
+      if dict[ index ][ listed_id ]
+        file_basename = File.basename( dict[ index ][ listed_id ] )
+        if file_basename =~ uuid_re
+          unless file_basename.match( uuid_re )[ 0 ] == listed_id
+            hints << "Asset UUID and filename UUID component mismatch: #{ listed_id } -> #{ file_basename }"
+          end
+        end
+      end
+
+    end # assets.each
+
+    # List this Assetmap's PKLs
+    @logger.debug( "Assetmap #{ am_id } lists #{ amount( 'PKL', pkls[ index ] ) }:" )
+    pkls[ index ].map { |pkl_id|
+      pkl_file = package dict[ index ][ pkl_id ]
+      if File.exists?( pkl_file )
+        @logger.debug "PKL file present: #{ pkl_id }: #{ pkl_file }"
+      else
+        pkls_missing[ index ] << pkl_id
+        errors << "PKL file missing: #{ pkl_id }: #{ pkl_file }"
+        @logger.debug errors.last
+      end
+    }
+    pkls_missing[ index ].map { |pkl_id| pkls[ index ].delete pkl_id }
+    @logger.debug nil
+
+  end # am_files.each
+
+  #
+  # Experimental option --as-asset-store
+  #
+  # This will merge all collected dictionaries and flatten pkls accordingly.
+  # Naive merge, though, for now. No asset normalization either.
+  #
+  # Also composition completeness info won't hint at the "use"
+  # of external assets. Use if you know what you are doing.
+  #
+  # Can be used to simulate ingest and completeness checks for VF compositions.
+  #
+  if options.as_asset_store
+    dict_tmp = Array.new << Hash.new
+    dict.map { |d| dict_tmp.first.merge!( d ) { |k, v1, v2| hints << "Experimental option --as-asset-store: Duplicate key: #{ k } => #{ v1 == v2 ? 'v1 == v2' : "\n\t\tv1: #{ v1 || 'nil' }\n\t\tv2: #{ v2 || 'nil' }" }"; v1 || v2 } }
+    dict = dict_tmp
+    pkls = Array.new << pkls.flatten
+  end
+
+  # List all found PKLs
+  @logger.info( "Found #{ amount( 'Package', pkls.flatten ) }" )
+  pkls.each_with_index do |am_pkls, index|
+    am_pkls.each do |pkl_id|
+      if dict[ index ][ pkl_id ]
+        pkl_file = package dict[ index ][ pkl_id ]
+        @logger.debug( "PKL file#{ File.exists?( pkl_file ) ? '' : ' not' } present: #{ [ pkl_id, pkl_file ].join( ': ' ) }" )
+      end
+    end
+  end
+  @logger.debug ''
+
+  cpls = Array.new
+  cpls_missing = Array.new
+  packages_size_listed = 0
+  packages_size_actual = 0
+
+  pkls.each_with_index do |am_pkls, index|
+    cpls << Array.new
+    cpls_missing << Array.new
+    am_pkls.each do |pkl_id|
+      pkl_file = package dict[ index ][ pkl_id ]
+      xml = get_xml_of_type( 'PackingList', pkl_file )
+      if xml
+
+        @logger.debug( "PKL #{ pkl_id }: #{ pkl_file }" )
+
+        if options.validate
+          begin
+            valid, errors = validation( errors, xml, pkl_file )
+            @logger.debug( "PKL #{ pkl_id }: Schema check: #{ valid ? 'OK' : 'Errors (See below)' }" )
+          rescue Exception => e
+            errors << "Exception in Schema check: PKL #{ pkl_id }: #{ pkl_file }: #{ e.message }"
+            @logger.debug errors.last
+          end
+        end
+
+        if @c14n_available
+          signature_result = check_signature( xml )
+          if signature_result.verified? and signature_result.crypto.errors[ :context ].values.flatten.empty?
+            @signed_pkls_verified_count += 1
+          end
+          errors = errors_signature_verification( errors, signature_result, pkl_id, pkl_file )
+          @logger.debug( "PKL #{ pkl_id }: #{ signature_result.messages.last }" )
+          if signature_result and ! signature_result.signature_node.empty?
+            @signed_pkls_count += 1
+            sig_info = signer_info( xml, signature_result )
+            @logger.debug "Signer:        #{ sig_info[ :signer_name ] }" if sig_info[ :signer_name ]
+            @logger.debug "Signer issuer: #{ sig_info[ :signer_issuer_name ] }" if sig_info[ :signer_issuer_name ]
+
+            # Todo: Compare names in Signer and certificate
+            #
+
+            # Check Signer.X509Data.X509IssuerSerial info vs signer certificate
+            # See e.g. dcp_2/V174* for a serial mismatch
+            if ! signature_result.signer_node.empty? and sig_info[ :x509serialnumber ] and sig_info[ :cert_serial ]
+              if sig_info[ :x509serialnumber ] != sig_info[ :cert_serial ]
+                errors << "Signer serial mismatch: PKL #{ pkl_id }: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
+                @logger.debug errors.last
+              end
+            else
+              errors << "Signer info :x509serialnumber or :cert_serial could not be retrieved: PKL #{ pkl_id }"
+              @logger.debug errors.last
+            end
+          end
+        else
+          signature_result = nil
+        end
+
+        # FIXME
+        xml.remove_namespaces!
+        pkl_assets = xml.xpath( '//Asset' )
+        package_size_listed = 0
+        package_size_actual = 0
+        pkl_cpls = Array.new
+
+        @logger.debug( "PKL #{ pkl_id } lists #{ amount( 'asset', pkl_assets ) }" )
+
+        pkl_assets.each do |asset|
+          id = asset.xpath( 'Id' ).text.split( ':' ).last
+          type = asset.xpath( 'Type' ).text
+          # List all assets listed in PKL and report AM mapping status
+          @logger.debug( "#{ id }: #{ type }: #{ dict[ index ][ id ] ? File.exists?( package dict[ index ][ id ] ) ? dict[ index ][ id ] : dict[ index ][ id ] + ' (missing)' : 'Asset UUID not in assetmap dictionary' }" )
+
+          if dict[ index ].keys.include?( id )
+            asset_file = package dict[ index ][ id ]
+            size_listed = asset.xpath( 'Size' ).text.to_i
+
+            if File.exists?( asset_file )
+              # Plug in checks here. we might be skipping validation hence the tag test
+              #
+              # Check listed and actual asset size
+              if size_listed
+                size_asset = File.size( asset_file )
+                errors << "Size mismatch: #{ id }: #{ asset_file }: PKL: #{ size_listed } Asset: #{ size_asset }" unless size_listed == size_asset
+                package_size_listed += size_listed
+                package_size_actual += size_asset
+              else
+                errors << "PKL: Size tag missing or bad content: #{ id }: #{ asset_file }: #{ type }"
+              end
+
+              # Check listed and actual digests
+              if ( hash_listed = asset.xpath( 'Hash' ).text )
+                if options.check_hashes
+                  etabar_title = "#{ id }: Checking hash value:"
+                  hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options )
+                  hash_check = Base64.encode64( hash_check ).chomp
+                  if hash_listed != hash_check
+                    eta.preserve_terminal_title_with_message( 'Mismatch' )
+                    errors << "Hash mismatch: #{ id }: #{ asset_file }: PKL: #{ hash_listed } Asset: #{ hash_check }"
+                  else
+                    eta.preserve_terminal_title_with_message( 'OK' )
+                    info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
+                  end
+                end
+              else
+                errors << "PKL: Hash tag missing or bad content: #{ asset_file }: #{ type }: #{ id }"
+              end
+
+              # Pick CPLs
+              if type =~ /text\/xml/
+                xml = get_xml_of_type( 'CompositionPlaylist', asset_file )
+                if xml
+                  pkl_cpls << id
+                  cpls[ index ] << id
+                end
+              end
+              #
+              #
+            else
+              # asset_file does not exist
+              package_size_listed += size_listed
+              package_size_actual += 0
+            end
+
+          else
+            # For some reason the listed id in PackingList is not in assetmap dictionary
+            # Possibly been tampered with
+            errors << "Asset UUID not in assetmap dictionary: PKL #{ pkl_id }: #{ id } (#{ type })"
+          end
+
+        end
+        @logger.debug( "PKL #{ pkl_id }: Package size: #{ package_size_actual == package_size_listed ? package_size_actual.to_k : package_size_actual.to_k + ' (Listed: ' + package_size_listed.to_k + ')' }" )
+        # List this PKLs CPLs
+        @logger.debug( "PKL #{ pkl_id } lists #{ amount( 'composition', pkl_cpls ) }" )
+        pkl_cpls.map { |cpl_id|
+          cpl_file = package dict[ index ][ cpl_id ]
+          if File.exists?( cpl_file )
+            @logger.debug "CPL file present: #{ cpl_id }: #{ cpl_file }"
+          else
+            cpls_missing[ index ] << cpl_id
+            errors << "CPL file missing: #{ cpl_id }: #{ cpl_file }"
+            @logger.debug errors.last
+          end
+        }
+        cpls_missing[ index ].map { |cpl_id| cpls[ index ].delete cpl_id }
+      else
+        errors << "Not a PackingList: #{ pkl_file }"
+      end
+      packages_size_listed += package_size_listed
+      packages_size_actual += package_size_actual
+      @logger.debug ''
+    end # am_pkls.each
+  end # pkls.each
+
+  info << "Found #{ amount( 'Package', pkls.flatten ) } with total size #{ packages_size_actual == packages_size_listed ? packages_size_actual.to_k : packages_size_actual.to_k + ' (Listed: ' + packages_size_listed.to_k + ')' }"
+
+  # List all found CPLs
+  if cpls.flatten.size > 0
+    @logger.info( "Found #{ amount( 'Composition', cpls.flatten ) }" )
+    dict.each_with_index do |dictionary, index|
+      cpls[ index ].each do |cpl_id|
+        cpl_file = package dictionary[ cpl_id ]
+        if File.exists? cpl_file
+          @logger.debug "CPL file present: #{ cpl_id }: #{ cpl_file }"
+        else
+          errors << "CPL file missing: #{ cpl_id }: #{ cpl_file }"
+          @logger.debug errors.last
+        end
+      end
+    end
+  else
+    @logger.info( 'Found no compositions' )
+  end
+  @logger.debug ''
+
+  # Inspect CPLs
+  # FIXME and all over again ...
+  dict.each_with_index do |dictionary, index|
+    cpls[ index ].each do |cpl_id|
+      if dictionary.include?( cpl_id )
+        cpl_file = package dictionary[ cpl_id ]
+        if File.exists?( cpl_file )
+          xml = xml?( cpl_file )
+          if xml
+
+            if options.validate
+              begin
+                valid, errors = validation( errors, xml, cpl_file )
+                @logger.debug( "CPL #{ cpl_id }: Schema check: #{ valid ? 'OK' : 'Errors (See below)' }" )
+              rescue Exception => e
+                errors << "Exception in Schema check: CPL #{ cpl_id }: #{ cpl_file }: #{ e.message }"
+                @logger.debug errors.last
+              end
+            end
+
+            if @c14n_available
+              signature_result = check_signature( xml )
+              if signature_result.verified? and signature_result.crypto.errors[ :context ].values.flatten.empty?
+                @signed_cpls_verified_count += 1
+              end
+              errors = errors_signature_verification( errors, signature_result, cpl_id, cpl_file )
+              @logger.debug( "CPL #{ cpl_id }: #{ signature_result.messages.last }" )
+            else
+              signature_result = nil
+            end
+
+            report, errors, hints, info = cpl_inspect_xml( xml, dictionary, @package_dir, errors, hints, info, options, signature_result )
+          else
+            errors << "PKL listed CPL is not XML: #{ cpl_file }: #{ cpl_id }"
+          end
+        else
+          report << "CPL file missing: #{ cpl_file }"
+        end
+        report.map { |line| @logger.debug line }
+        @logger.debug ''
+      end
+    end
+  end
+
+  info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls.flatten ) } (#{ @signed_pkls_count } signed/#{ @signed_pkls_verified_count } verified), #{ amount( 'Composition', cpls.flatten ) } (#{ @signed_cpls_count } signed/#{ @signed_cpls_verified_count } verified)"
+  info << "#{ amount( 'Error', errors ) }, #{ amount( 'Hint', hints ) }"
+
+  return { :errors => errors, :hints => hints, :info => info, :am_files => am_files, :pkls => pkls, :cpls => cpls, :pkls_missing => pkls_missing, :cpls_missing => cpls_missing }
+end
+
+
+#
+options = Options.parse( ARGV )
+args = ARGV
+@logger = DLogger.new( prefix = '', options )
+@logger.debug( "#{ AppName } #{ AppVersion }: #{ args } #{ options.validate ? '' : ': Schema checks will be skipped' }" )
+
+# Set up local XML Catalog and patch its xml:base
+AppDir = File.dirname( Pathname.new( __FILE__ ).realpath )
+XSDDir = File.join( AppDir, 'xsd' )
+local_xml_catalog = File.join( XSDDir, 'catalog.xml' )
+if File.exists?( XSDDir ) and File.ftype( XSDDir ) == 'directory'
+  if File.exists? local_xml_catalog
+    c = File.read local_xml_catalog
+    m = c.match( /xml:base="file:\/\/(.+)">/ )
+    if m[ 1 ] != File.join( XSDDir, '' )
+      File.open( local_xml_catalog, 'w' ) { |f| f.write c.gsub( m[ 1 ], File.join( XSDDir, '' ) ); f.close }
+    end
+  else
+    @logger.info "Local XML Catalog #{ local_xml_catalog } not found"
+    exit XML_CATALOG_NOT_FOUND
+  end
+else
+  @logger.info "Local XSD store #{ XSDDir } not found"
+  exit XSD_STORE_NOT_FOUND
+end
+ENV[ 'XML_CATALOG_FILES' ] = local_xml_catalog
+
+# main
+if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( args[ 0 ] ).realpath )
+  inspection = dcp_inspect( options, args[ 0 ] )
+  print_inspection_messages( inspection ) unless options.verbosity == 'quiet'
+  case inspection[ :errors ].size
+  when 0
+    exit DCP_OK
+  else
+    exit DCP_ERROR
+  end
+elsif args.size == 0
+  @logger.info( "No volume or directory given. See #{ AppName } --help" )
+  exit NO_ARG
+elsif args.size > 1
+  @logger.info( "Too many arguments. See #{ AppName } --help" )
+  exit TOO_MANY_ARGS
+else
+  @logger.info( "Not a volume or directory. See #{ AppName } --help" )
+  exit ARG_NOT_A_DIR
+end
+
