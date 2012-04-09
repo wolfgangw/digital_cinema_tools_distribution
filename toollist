@@ -8,3 +8,4 @@ signature_check.rb
 x509_extract.rb
 x509_inspect.rb
 xsd-check.rb
+digital-cinema-tools-setup
