@@ -1,0 +1,477 @@
+#!/usr/bin/env bash
+#
+# Usage:
+#   * For an initial setup run
+#       wget http://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
+#     in a terminal
+#
+#   * For updates or re-runs run
+#       digital-cinema-tools-setup
+#     in a terminal
+#
+# This setup script will install everything required (batteries included) to run
+#
+#   * cinemaslides: Build plaintext/encrypted digital cinema packages (DCPs)
+#                   and generate key delivery messages (KDMs)
+#                   See https://github.com/wolfgangw/digital_cinema_tools/wiki/Cinemaslides
+#
+#   * dcp_inspect:  Inspect and validate digital cinema packages (DCPs)
+#                   See https://github.com/wolfgangw/backports#readme
+#
+# and a number of other digital cinema-related tools:
+#
+#   * dc_crypto_context.rb:         Check certificate chains for digital cinema compliance
+#   * kdm-decrypt.rb:               Decrypt Interop/SMPTE KDMs
+#   * make-dc-certificate-chain.rb: Generate an example digital cinema compliant certificate chain
+#   * public_key_thumbprint.rb:     Compute dnQualifier/public key thumbprint of a X.509 certificate
+#   * signature_check.rb:           Check XML signatures of digital cinema documents
+#   * x509_extract.rb:              Extract X.509 certificates from digital cinema documents
+#   * x509_inspect.rb:              Inspect X.509 certificates
+#   * xsd-check.rb:                 Validate XML documents against Schema definitions
+#
+# This installer runs on Ubuntu (and probably on other Debian-derivatives as well)
+# and needs a working network connection.
+#
+# It tries hard not to break anything. You can run it multiple times, should anything
+# go wrong during an install run (network problems etc.)
+#
+# Wolfgang Woehl 2012
+#
+installer_version='v1.2012.04.09'
+echo "Digital Cinema Tools Installer $installer_version"
+set -e
+
+bashrc=$HOME/.bashrc
+bash_profile=$HOME/.bash_profile
+script_runner=$(whoami)
+
+basedir=$HOME/.digital_cinema_tools
+libdir=$basedir/.lib
+bindir=$basedir/.bin
+
+# Ruby version management: rbenv
+rbenv_url="git://github.com/sstephenson/rbenv.git"
+export RBENV_ROOT=$libdir/.rbenv
+rbenv_dir=$RBENV_ROOT
+rbenv_plugins_dir=$rbenv_dir/plugins
+
+# Ruby build system: ruby-build
+ruby_build_url="git://github.com/sstephenson/ruby-build.git"
+ruby_build_dir=$rbenv_plugins_dir/ruby-build
+ruby_version='1.9.3-p125'
+gemrc=$HOME/.gemrc
+
+# XML engine: Nokogiri
+nokogiri_url="git://github.com/tenderlove/nokogiri.git"
+nokogiri_dir=$libdir/nokogiri
+
+# Handle SMPTE and Interop trackfiles: ASDCPLib
+cinecert='www.cinecert.com'
+asdcplib_version='1.9.45'
+asdcplib_version_tarball_md5='a9086d85e6b8bdf5f57640a207a7e8ff'
+asdcplib_tarball="asdcplib-$asdcplib_version.tar.gz"
+asdcplib_tarball_url="http://$cinecert/asdcplib/$asdcplib_tarball"
+asdcplib_dir=$libdir/asdcplib
+asdcplib_build_dir="$asdcplib_dir/asdcplib-$asdcplib_version"
+asdcplib_install_dir=$bindir/asdcplib
+
+# Digital cinema tools distribution: cinemaslides, dcp_inspect etc.
+dist_url="git://github.com/wolfgangw/digital_cinema_tools_distribution.git"
+dist_dir=$libdir/digital_cinema_tools_distribution
+
+errors=()
+exec_shell_required=false
+
+command_exists() {
+  type "$1" &> /dev/null
+}
+
+location_exists() {
+  [ -e "$1" ]
+}
+
+string_includes() {
+  [[ "$1" =~ "$2" ]]
+}
+
+echo_last() {
+  local arr=("${!1}")
+  echo ${arr[${#arr[@]}-1]}
+}
+
+remove_if_exists() {
+  if location_exists $1 ; then
+    rm -rf $1
+  fi
+}
+
+# Only linux systems in mind for now
+if [[ ! $MACHTYPE = *linux* ]] ; then
+  echo "This installer supports only linux systems"
+  exit 1
+fi
+
+# Check and bail out if the installer is run with root privileges
+if [ $script_runner == "root" ] ; then
+  echo
+  echo 'Do not run this installer as root'
+  echo 'Do not run this installer via sudo'
+  echo 'This Installer will ask for privileges if and when required'
+  echo
+  exit 1
+fi
+
+# Check basic requirements
+packages=()
+for package in build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox openjpeg-tools git ; do
+  if dpkg-query -s $package > /dev/null ; then
+    echo "$package: OK"
+  else
+    echo "$package: Installation required"
+    packages+=($package)
+  fi
+done
+if [ ${#packages[@]} -gt 0 ] ; then
+  echo
+  echo "These packages will be installed: ${packages[@]}"
+  echo
+  echo 'Please enter your root password (In Ubuntu this is your password)'
+  sleep 1
+  if ! sudo apt-get -y install "${packages[@]}"; then
+    errors+=("apt-get: Failed to install basic requirements") && echo_last errors[@]
+    sudo -K # drop sudo privileges
+    exit 1
+  else
+    echo 'apt-get: OK'
+  fi
+  sudo -K
+fi
+
+# set up directories for tools and tmp
+if ! location_exists $basedir ; then
+  mkdir $basedir
+fi
+if ! location_exists $libdir ; then
+  mkdir $libdir
+fi
+if ! location_exists $bindir ; then
+  mkdir $bindir
+fi
+
+# source .bash_profile from .bashrc
+if grep -P '^(source|\.) .*/.bash_profile' $bashrc ; then
+  echo 'bashrc: OK'
+else
+  echo 'bashrc: Adding .bash_profile'
+  echo '' >> $bashrc
+  echo '# Use .bash_profile to read rbenv environment' >> $bashrc
+  echo 'source $HOME/.bash_profile' >> $bashrc
+  exec_shell_required=true
+fi
+
+# Check for ~/bin and inclusion in PATH
+if string_includes $PATH "$bindir" ; then
+  echo "PATH: $bindir available in PATH"
+else
+  if grep -P "export PATH=$bindir:" $bashrc ; then
+    echo "bashrc: $bindir already included. OK"
+  else
+    echo "PATH: Adding $bindir to PATH"
+    echo '' >> $bashrc
+    echo "# Add ~/bin to PATH" >> $bashrc
+    echo "export PATH=$bindir:"'$PATH' >> $bashrc
+  fi
+  exec_shell_required=true
+fi
+
+source $bashrc
+
+# rbenv
+if command_exists rvm ; then
+  echo
+  echo "Sorry. This installer insists on using rbenv for Ruby version management."
+  echo "You have RVM installed and those 2 won't co-exist peacefully, so there."
+  echo "If you want to continue remove RVM from your system an re-run this installer."
+  echo
+  exit 1
+fi
+if command_exists rbenv ; then
+  echo "rbenv: OK"
+else
+  if location_exists $rbenv_dir && location_exists $rbenv_dir/.git ; then
+    echo "rbenv: Repository exists"
+    if string_includes $PATH "$rbenv_dir/bin" ; then
+      echo "rbenv: PATH includes rbenv bin dir"
+    else
+      errors+=("rbenv: PATH does not include rbenv bin dir") && echo_last errors[@]
+    fi
+  else
+    echo "rbenv: Installing"
+    remove_if_exists $rbenv_dir
+    if ! git clone $rbenv_url $rbenv_dir ; then
+      errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
+    fi
+
+    echo "export RBENV_ROOT=$rbenv_dir" >> $bash_profile
+    echo "export PATH=$rbenv_dir/bin:"'$PATH' >> $bash_profile
+    echo 'eval "$(rbenv init -)"' >> $bash_profile
+    source $bash_profile
+    exec_shell_required=true
+
+    if command_exists rbenv ; then
+      echo "rbenv: OK"
+    else
+      echo "rbenv: Command 'rbenv' not found"
+      exit 1
+    fi
+  fi
+fi
+
+# gems: ri/rdoc switches
+if [ -e $gemrc ] ; then
+  if grep -P '^gem: --no-ri --no-rdoc' $gemrc ; then
+    echo 'gemrc: OK'
+  else
+    echo 'gemrc: Keeping changed gemrc (--no-ri/rdoc switches will not be added)'
+  fi
+else
+  echo 'gem: --no-ri --no-rdoc' > $gemrc
+fi
+
+# ruby-build (as rbenv plugin)
+if location_exists $rbenv_dir ; then
+  if ! location_exists $rbenv_plugins_dir; then
+    mkdir $rbenv_plugins_dir
+  fi
+else
+  mkdir -p $rbenv_plugins_dir
+fi
+cd $rbenv_plugins_dir
+if location_exists $ruby_build_dir && location_exists $ruby_build_dir/.git ; then
+  echo 'ruby-build: OK'
+else
+  remove_if_exists $ruby_build_dir
+  echo 'ruby-build: Installing'
+  if ! git clone $ruby_build_url ; then
+    errors+=("ruby-build: Failed to clone repository. Try again later") && echo_last errors[@]
+  else
+    echo 'ruby-build: OK'
+  fi
+fi
+
+# Try to install a ruby version
+# Explicitly set global $ruby_version
+if ! rbenv global $ruby_version ; then
+  echo 'rbenv: Required ruby not installed'
+fi
+if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby ; then
+  echo "Ruby: OK"
+else
+  echo "Ruby: Installing ... This will take a while (~5 minutes)"
+  if ! rbenv install $ruby_version ; then
+    errors+=("Ruby: Failed to install requested version") && echo_last errors[@]
+  else
+    rbenv global $ruby_version
+    rbenv rehash
+    echo "Ruby: $( rbenv version )"
+    echo 'Ruby: OK'
+  fi
+fi
+
+# Nokogiri (with c14n)
+cd $libdir
+if gem list -i nokogiri > /dev/null ; then
+  echo 'Nokogiri: OK'
+else
+  echo 'Nokogiri: Installing ...'
+  remove_if_exists nokogiri
+  if ! git clone $nokogiri_url ; then
+    errors+=("Nokogiri: Failed to clone repository. Try again later") && echo_last errors[@]
+  else
+    cd $nokogiri_dir
+    echo 'Nokogiri: Installing required gems hoe, rake-compiler, racc, rexical, minitest'
+    if ! gem install hoe rake-compiler racc rexical minitest ; then
+      errors+=("Nokogiri: Failed to install required gems hoe, rake-compiler, racc, rexical, minitest") && echo_last errors[@]
+    else
+      rbenv rehash
+      echo 'Nokogiri: Installing required gem rake 0.9.2' # Quite possible that this is outdated
+      if ! gem install rake -v=0.9.2 ; then
+        errors+=("Nokogiri: Failed to install required gem rake") && echo_last errors[@]
+      else
+        rbenv rehash
+        echo 'Nokogiri: Building ...'
+        if rake && rake install_gem && sleep 10 && rbenv rehash ; then
+          if gem list -i nokogiri ; then
+            echo 'Nokogiri: OK'
+          else
+            errors+=("Nokogiri: Gem nokogiri not found") && echo_last errors[@]
+          fi
+        else
+          errors+=("Nokogiri: Failed to build and/or install gem nokogiri") && echo_last errors[@]
+        fi
+      fi
+    fi
+  fi
+fi
+
+# asdcplib
+cd $libdir
+if command_exists asdcp-info ; then
+  echo 'asdcplib: OK'
+else
+  echo 'asdcplib: Installing'
+  if location_exists $asdcplib_dir ; then
+    cd $asdcplib_dir
+  else
+    mkdir $asdcplib_dir && cd $asdcplib_dir
+  fi
+
+  remove_if_exists $asdcplib_build_dir
+  if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]] ; then
+    echo "asdcplib: $asdcplib_version_tarball_md5: MD5 OK"
+  else
+    if [ -e $asdcplib_tarball ] ; then
+      rm $asdcplib_tarball
+    fi
+    echo "asdcplib: Downloading tarball $asdcplib_tarball_url"
+    if wget $asdcplib_tarball_url ; then
+      echo 'asdcplib: Download OK'
+      if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]] ; then
+        echo "asdcplib: $asdcplib_version_tarball_md5: MD5 OK"
+      else
+        errors+=("asdcplib: Failed to verify tarball: $asdcplib_dir/$asdcplib_tarball") && echo_last errors[@]
+      fi
+    else
+      if ! ping -c 1 $cinecert ; then
+        errors+=("asdcplib: $cinecert seems to be down") && echo_last errors[@]
+      fi
+      errors+=("asdcplib: Failed to download tarball. Try again later") && echo_last errors[@]
+    fi
+  fi
+  if tar xzf $asdcplib_tarball ; then
+    cd $asdcplib_build_dir
+    if ./configure --with-expat=yes LDFLAGS="-L/usr/lib/i386-linux-gnu" LIBS="-lexpat" --prefix=$asdcplib_install_dir && make -j3 && make install ; then
+      echo 'asdcplib: Build OK'
+    else
+      errors+=("asdcplib: Failed to configure, build and install") && echo_last errors[@]
+    fi
+  else
+    errors+=("asdcplib: Failed to extract tarball at $asdcplib_dir") && echo_last errors[@]
+  fi
+fi
+
+cd $bindir
+for tool in $asdcplib_install_dir/bin/* ; do
+  if [ -e $bindir/$(basename ${tool}) ] ; then
+    echo "asdcplib: $(basename ${tool}) OK"
+  else
+    echo "asdcplib: Add to $bindir: $(basename ${tool})"
+    ln -s $tool .
+  fi
+done # asdcplib
+
+# Digital Cinema Tools distribution
+cd $libdir
+if location_exists $dist_dir && location_exists $dist_dir/.git ; then
+  cd $dist_dir
+  echo "Digital cinema tools distribution: Pulling updates ..."
+  if ! git pull ; then
+    errors+=("Digital cinema tools distribution: Failed to pull updates. Try again later") && echo_last errors[@]
+  fi
+else
+  remove_if_exists $dist_dir
+  if ! git clone $dist_url ; then
+    errors+=("Digital cinema tools distribution: Failed to clone repository. Try again later") && echo_last errors[@]
+  else
+    echo 'Digital cinema tools distribution: Repository OK'
+  fi
+  # highline (for cinemaslides)
+  if ! gem install highline && rbenv rehash ; then
+    errors+=("cinemaslides: Failed to install required gem highline. Try again later") && echo_last errors[@]
+  else
+    echo 'cinemaslides: Required gem highline OK'
+  fi
+fi
+# read list of provided tools for symlinking
+cd $dist_dir
+tools=( $( cat toollist ) )
+cd $bindir
+for tool in ${tools[@]} ; do
+  if [ -e $bindir/$tool ] ; then
+    echo "Digital cinema tools distribution: $tool OK"
+  else
+    echo "Digital cinema tools distribution: Add to $bindir: $tool"
+    ln -s $dist_dir/$tool .
+  fi
+done
+
+# cinemaslidesdir (will be created on-demand by cinemaslides)
+cinemaslidesdir=$basedir/CINEMASLIDESDIR
+if grep -P "export CINEMASLIDESDIR=$cinemaslidesdir" $bashrc ; then
+  echo 'bashrc: CINEMASLIDESDIR is set. OK'
+else
+  echo 'bashrc: Setting CINEMASLIDESDIR'
+  echo '' >> $bashrc
+  echo "# Location of cinemaslides' working directory" >> $bashrc
+  echo "export CINEMASLIDESDIR=$cinemaslidesdir" >> $bashrc
+  exec_shell_required=true
+fi
+
+# Local certificate store and example certificates
+certstore=$basedir/CERTSTORE
+if grep -P "export CINEMACERTSTORE=$certstore" $bashrc ; then
+  echo 'bashrc: CINEMACERTSTORE is set. OK'
+else
+  echo '' >> $bashrc
+  echo '# Location of local example cinema certificates' >> $bashrc
+  echo "export CINEMACERTSTORE=$certstore" >> $bashrc
+  exec_shell_required=true
+fi
+if location_exists $certstore ; then
+  cd $certstore
+  if [ -f leaf.key ] && [ -f leaf.signed.pem ] && [ -f intermediate.key ] && [ -f intermediate.signed.pem ] && [ -f ca.key ] && [ -f ca.self-signed.pem ] && [ -f dc-certificate-chain ] ; then
+    echo 'Local certificate store: Required certificates found'
+  else
+    echo 'Local certificate store: Generating example certificates ...'
+    $bindir/make-dc-certificate-chain.rb
+  fi
+else
+  mkdir $certstore && cd $certstore
+  $bindir/make-dc-certificate-chain.rb
+fi
+if $bindir/dc_crypto_context.rb $certstore ; then
+  echo 'Local certificate store: OK'
+else
+  echo 'Local certificate store: Failed to find valid certificate chain'
+fi
+
+# Done
+echo
+
+if [ ${#errors[@]} -gt 0 ] ; then
+  echo 'There were errors:'
+  for e in "${errors[@]}" ; do
+    echo "Error: $e"
+  done
+  echo
+fi
+
+# FIXME On re-runs in already working environments this is mis-leading
+if $exec_shell_required ; then
+  echo ' ---------------------------------------------------'
+  echo '|                                                   |'
+  echo '|  To finish the installation run                   |'
+  echo '|                                                   |'
+  echo '|    exec $SHELL                                    |'
+  echo '|                                                   |'
+  echo '|  in this terminal now (mind the "$" in "$SHELL")  |'
+  echo '|                                                   |'
+  echo ' ---------------------------------------------------'
+  echo
+fi
+
+echo 'Digital Cinema Tools Installer: Done'
+echo
+
+exit 0
+
