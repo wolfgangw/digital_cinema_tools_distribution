@@ -38,7 +38,7 @@
 # Wolfgang Woehl 2012
 #
 installer_version='v1.2012.04.09'
-echo "Digital Cinema Tools Installer $installer_version"
+echo "digital-cinema-tools-setup $installer_version"
 set -e
 
 bashrc=$HOME/.bashrc
@@ -119,6 +119,25 @@ if [ $script_runner == "root" ] ; then
   echo 'This Installer will ask for privileges if and when required'
   echo
   exit 1
+fi
+
+# Remove installer script (will be replaced with repo copy)
+if [ -e digital-cinema-tools-setup ] ; then
+  echo 'digital-cinema-tools-setup: Move self out of the way'
+  rm digital-cinema-tools-setup
+else
+  errors+=("digital-cinema-tools-setup: Self not found") && echo_last errors[@]
+fi
+
+# While we're at it: Fastpath for tab-completion
+if [ -e $HOME/.inputrc ] ; then
+  if grep -P 'set show-all-if-ambiguous on' $HOME/.inputrc ; then
+    echo 'inputrc: OK'
+  fi
+else
+  echo 'inputrc: Adding fastpath for tab-completion'
+  echo 'set show-all-if-ambiguous on' >> $HOME/.inputrc
+  exec_shell_required=true
 fi
 
 # Check basic requirements
@@ -458,19 +477,19 @@ fi
 
 # FIXME On re-runs in already working environments this is mis-leading
 if $exec_shell_required ; then
-  echo ' ---------------------------------------------------'
-  echo '|                                                   |'
-  echo '|  To finish the installation run                   |'
-  echo '|                                                   |'
-  echo '|    exec $SHELL                                    |'
-  echo '|                                                   |'
-  echo '|  in this terminal now (mind the "$" in "$SHELL")  |'
-  echo '|                                                   |'
-  echo ' ---------------------------------------------------'
+  echo '  ---------------------------------------------------'
+  echo ' |                                                   |'
+  echo ' |  To finish the installation run                   |'
+  echo ' |                                                   |'
+  echo ' |    exec $SHELL                                    |'
+  echo ' |                                                   |'
+  echo ' |  in this terminal now (mind the "$" in "$SHELL")  |'
+  echo ' |                                                   |'
+  echo '  ---------------------------------------------------'
   echo
 fi
 
-echo 'Digital Cinema Tools Installer: Done'
+echo 'digital-cinema-tools-setup: Done'
 echo
 
 exit 0
