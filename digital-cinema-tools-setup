@@ -125,8 +125,6 @@ fi
 if [ -e digital-cinema-tools-setup ] ; then
   echo 'digital-cinema-tools-setup: Move self out of the way'
   rm digital-cinema-tools-setup
-else
-  errors+=("digital-cinema-tools-setup: Self not found") && echo_last errors[@]
 fi
 
 # While we're at it: Fastpath for tab-completion
