@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Usage:
-#   * For an initial setup run
+#
+#   * Run
 #       wget http://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
 #     in a terminal
 #
@@ -367,7 +368,7 @@ else
   fi
   if tar xzf $asdcplib_tarball ; then
     cd $asdcplib_build_dir
-    if ./configure --with-expat=yes LDFLAGS="-L/usr/lib/i386-linux-gnu" LIBS="-lexpat" --prefix=$asdcplib_install_dir && make -j3 && make install ; then
+    if ./configure --with-expat=yes LDFLAGS="-L/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)" LIBS="-lexpat" --prefix=$asdcplib_install_dir && make -j3 && make install ; then
       echo 'asdcplib: Build OK'
     else
       errors+=("asdcplib: Failed to configure, build and install") && echo_last errors[@]
