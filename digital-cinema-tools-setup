@@ -490,7 +490,7 @@ fi
 
 # Keep downloaded setup script around if distribution setup failed (which would have it included)
 if location_exists $bindir ; then
-  if command_exists $setup_basename ; then
+  if command_exists $bindir/$setup_basename ; then
     echo "$setup_basename: Removing $setup_fullpath (Not needed anymore)"
     rm $setup_fullpath
     echo "$setup_basename: $( type $setup_basename ). OK"
@@ -499,7 +499,7 @@ if location_exists $bindir ; then
       rm $bindir/$setup_basename
     fi
     echo "$setup_basename: Keep downloaded setup script around ($setup_fullpath => $bindir/$setup_basename"
-    mv $setup_fullpath $bindir/$setup_basename
+    chmod u+x $setup_fullpath && mv $setup_fullpath $bindir/$setup_basename
     if command_exists $setup_basename ; then
       echo "$setup_basename: OK"
     else
