@@ -498,6 +498,10 @@ fi
 if [ -x $bindir/$setup_basename ] && [ -L $bindir/$setup_basename ] && [[ $( readlink -f $bindir/$setup_basename ) == $dist_dir/$setup_basename ]] ; then
   # I am installation
   echo "$setup_basename: OK"
+  echo "$setup_basename: Removing ad-hoc self"
+  if [[ $setup_dirname != $bindir ]] ; then
+    rm $setup_fullpath
+  fi
 elif [ -x $bindir/$setup_basename ] ; then
   # I am ad-hoc
   echo "$setup_basename: Keep downloaded setup"
