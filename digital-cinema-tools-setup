@@ -425,8 +425,10 @@ if location_exists $dist_dir ; then
   cd $bindir
   for tool in ${tools[@]} ; do
     if [ -e $bindir/$tool ] && command_exists $tool ; then
-      # Special case: setup might be hanging around here from a previous run. Replace with repo version
-      if [[ $tool =~ $setup_basename ]] ; then
+      # Special case: setup might be hanging around here from a previous run:
+      # When distribution setup would have failed and the downloaded setup been moved to $bindir.
+      # Replace with repo version
+      if [[ $tool =~ $setup_basename ]] && [ ! -L $setup_fullpath ] ; then
         echo "Digital cinema tools distribution: Replacing setup with repo version"
         rm $bindir/$tool
         ln -s $dist_dir/$tool .
@@ -489,25 +491,21 @@ fi
 # Done: Digital Cinemas Tools Distribution
 
 # Keep downloaded setup script around if distribution setup failed (which would have it included)
-if location_exists $bindir ; then
-  if command_exists $bindir/$setup_basename ; then
-    echo "$setup_basename: Removing $setup_fullpath (Not needed anymore)"
-    rm $setup_fullpath
-    echo "$setup_basename: $( type $setup_basename ). OK"
+if [ -x $bindir/$setup_basename ] && [ -L $bindir/$setup_basename ] && [[ $( readlink -f $bindir/$setup_basename ) == $dist_dir/$setup_basename ]] ; then
+  # I am installation
+  echo "$setup_basename: OK"
+elif [ -x $bindir/$setup_basename ] ; then
+  # I am ad-hoc
+  echo "$setup_basename: Keep downloaded setup"
+  rm $bindir/$setup_basename
+  chmod u+x $setup_fullpath && mv $setup_fullpath $bindir/$setup_basename
+  if command_exists $setup_basename ; then
+    echo "$setup_basename: Keeper OK"
   else
-    if [ -e $bindir/$setup_basename ] ; then # it shouldn't
-      rm $bindir/$setup_basename
-    fi
-    echo "$setup_basename: Keep downloaded setup script around ($setup_fullpath => $bindir/$setup_basename"
-    chmod u+x $setup_fullpath && mv $setup_fullpath $bindir/$setup_basename
-    if command_exists $setup_basename ; then
-      echo "$setup_basename: OK"
-    else
-      errors+=("$setup_basename: Not in PATH\n\t($PATH)") && echo_last errors[@]
-    fi
+    echo "$setup_basename: Fail"
   fi
 else
-  errors+=("$setup_basename: $bindir does not exist. It should") && echo_last errors[@]
+  errors+=("$setup_basename: Still alpha borked") && echo_last errors[@]
 fi
 
 # Setup done
