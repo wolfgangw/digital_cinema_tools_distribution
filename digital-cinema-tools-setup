@@ -182,6 +182,10 @@ else
   echo '' >> $bashrc
   echo '# Use .bash_profile to read rbenv environment' >> $bashrc
   echo 'source $HOME/.bash_profile' >> $bashrc
+  if ! [ -f $bash_profile ] ; then
+    touch $bash_profile
+    echo 'bash_profile: Touched'
+  fi
   exec_shell_required=true
 fi
 
