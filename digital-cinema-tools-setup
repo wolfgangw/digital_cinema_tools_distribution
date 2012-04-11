@@ -38,8 +38,12 @@
 #
 # Wolfgang Woehl 2012
 #
-installer_version='v1.2012.04.09'
-echo "digital-cinema-tools-setup $installer_version"
+# Location of self
+setup_dirname=$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
+setup_basename=$(basename ${BASH_SOURCE[0]})
+setup_fullpath="$setup_dirname/$setup_basename"
+setup_version='v1.2012.04.11'
+echo "$setup_basename $setup_version"
 set -e
 
 bashrc=$HOME/.bashrc
@@ -122,13 +126,7 @@ if [ $script_runner == "root" ] ; then
   exit 1
 fi
 
-# Remove installer script (will be replaced with repo copy)
-if [ -e digital-cinema-tools-setup ] ; then
-  echo 'digital-cinema-tools-setup: Move self out of the way'
-  rm digital-cinema-tools-setup
-fi
-
-# While we're at it: Fastpath for tab-completion
+# Fastpath for tab-completion
 if [ -e $HOME/.inputrc ] ; then
   if grep -P 'set show-all-if-ambiguous on' $HOME/.inputrc ; then
     echo 'inputrc: OK'
@@ -194,7 +192,7 @@ else
   if grep -P "export PATH=$bindir:" $bashrc ; then
     echo "bashrc: $bindir already included. OK"
   else
-    echo "PATH: Adding $bindir to PATH"
+    echo "bashrc: Adding $bindir to PATH"
     echo '' >> $bashrc
     echo "# Add ~/bin to PATH" >> $bashrc
     echo "export PATH=$bindir:"'$PATH' >> $bashrc
@@ -302,34 +300,50 @@ if gem list -i nokogiri > /dev/null ; then
   echo 'Nokogiri: OK'
 else
   echo 'Nokogiri: Installing ...'
-  remove_if_exists nokogiri
-  if ! git clone $nokogiri_url ; then
-    errors+=("Nokogiri: Failed to clone repository. Try again later") && echo_last errors[@]
-  else
+  if location_exists $nokogiri_dir && location_exists $nokogiri_dir/.git ; then
     cd $nokogiri_dir
-    echo 'Nokogiri: Installing required gems hoe, rake-compiler, racc, rexical, minitest'
-    if ! gem install hoe rake-compiler racc rexical minitest ; then
-      errors+=("Nokogiri: Failed to install required gems hoe, rake-compiler, racc, rexical, minitest") && echo_last errors[@]
+    echo 'Nokogiri: Pulling updates ...'
+    git checkout master
+    if ! git pull ; then
+      errors+=("Nokogiri: Failed to pull updates. Try again later") && echo_last errors[@]
+    fi
+  else
+    echo 'location_exists $nokogiri_dir && location_exists $nokogiri_dir/.git == false'
+    exit 1
+    remove_if_exists nokogiri
+    if ! git clone $nokogiri_url ; then
+      errors+=("Nokogiri: Failed to clone repository. Try again later") && echo_last errors[@]
+    else
+      echo 'Nokogiri: Repository OK'
+    fi
+  fi
+fi
+if location_exists $nokogiri_dir && ! gem list -i nokogiri ; then
+  cd $nokogiri_dir
+  echo 'Nokogiri: Installing required gems hoe, rake-compiler, racc, rexical, minitest'
+  if ! gem install hoe rake-compiler racc rexical minitest ; then
+    errors+=("Nokogiri: Failed to install required gems hoe, rake-compiler, racc, rexical, minitest") && echo_last errors[@]
+  else
+    rbenv rehash
+    echo 'Nokogiri: Installing required gem rake 0.9.2' # Quite possible that this is outdated
+    if ! gem install rake -v=0.9.2 ; then
+      errors+=("Nokogiri: Failed to install required gem rake") && echo_last errors[@]
     else
       rbenv rehash
-      echo 'Nokogiri: Installing required gem rake 0.9.2' # Quite possible that this is outdated
-      if ! gem install rake -v=0.9.2 ; then
-        errors+=("Nokogiri: Failed to install required gem rake") && echo_last errors[@]
-      else
-        rbenv rehash
-        echo 'Nokogiri: Building ...'
-        if rake && rake install_gem && sleep 10 && rbenv rehash ; then
-          if gem list -i nokogiri ; then
-            echo 'Nokogiri: OK'
-          else
-            errors+=("Nokogiri: Gem nokogiri not found") && echo_last errors[@]
-          fi
+      echo 'Nokogiri: Building ...'
+      if rake && rake install_gem && sleep 10 && rbenv rehash ; then
+        if gem list -i nokogiri ; then
+          echo 'Nokogiri: OK'
         else
-          errors+=("Nokogiri: Failed to build and/or install gem nokogiri") && echo_last errors[@]
+          errors+=("Nokogiri: Gem nokogiri not found") && echo_last errors[@]
         fi
+      else
+        errors+=("Nokogiri: Failed to build and/or install gem nokogiri") && echo_last errors[@]
       fi
     fi
   fi
+else
+  errors+=("Nokogiri: Failed to setup repository") && echo_last errors[@]
 fi
 
 # asdcplib
@@ -403,27 +417,37 @@ else
   else
     echo 'Digital cinema tools distribution: Repository OK'
   fi
-  # highline (for cinemaslides)
-  if ! gem install highline && rbenv rehash ; then
-    errors+=("cinemaslides: Failed to install required gem highline. Try again later") && echo_last errors[@]
-  else
-    echo 'cinemaslides: Required gem highline OK'
-  fi
 fi
-# read list of provided tools for symlinking
-cd $dist_dir
-tools=( $( cat toollist ) )
-cd $bindir
-for tool in ${tools[@]} ; do
-  if [ -e $bindir/$tool ] ; then
-    echo "Digital cinema tools distribution: $tool OK"
-  else
-    echo "Digital cinema tools distribution: Add to $bindir: $tool"
-    ln -s $dist_dir/$tool .
-  fi
-done
-
-# cinemaslidesdir (will be created on-demand by cinemaslides)
+# Update $bindir entries for distribution
+if location_exists $dist_dir ; then
+  cd $dist_dir
+  tools=( $( cat toollist ) )
+  cd $bindir
+  for tool in ${tools[@]} ; do
+    if [ -e $bindir/$tool ] && command_exists $tool ; then
+      # Special case: setup might be hanging around here from a previous run. Replace with repo version
+      if [[ $tool =~ $setup_basename ]] ; then
+        echo "Digital cinema tools distribution: Replacing setup with repo version"
+        rm $bindir/$tool
+        ln -s $dist_dir/$tool .
+      else
+        echo "Digital cinema tools distribution: $tool OK"
+      fi
+    else
+      echo "Digital cinema tools distribution: Add to $bindir: $tool"
+      ln -s $dist_dir/$tool .
+    fi
+  done
+else
+  errors+=("Digital cinema tools distribution: Failed to update $bindir. Repository missing") && echo_last errors[@]
+fi
+# cinemaslides: gem highline required
+if ! gem install highline && rbenv rehash ; then
+  errors+=("cinemaslides: Failed to install required gem highline. Try again later") && echo_last errors[@]
+else
+  echo 'cinemaslides: Required gem highline OK'
+fi
+# cinemaslides: env CINEMASLIDESDIR (will be created on-demand by cinemaslides)
 cinemaslidesdir=$basedir/CINEMASLIDESDIR
 if grep -P "export CINEMASLIDESDIR=$cinemaslidesdir" $bashrc ; then
   echo 'bashrc: CINEMASLIDESDIR is set. OK'
@@ -462,8 +486,31 @@ if $bindir/dc_crypto_context.rb $certstore ; then
 else
   echo 'Local certificate store: Failed to find valid certificate chain'
 fi
+# Done: Digital Cinemas Tools Distribution
 
-# Done
+# Keep downloaded setup script around if distribution setup failed (which would have it included)
+if location_exists $bindir ; then
+  if command_exists $setup_basename ; then
+    echo "$setup_basename: Removing $setup_fullpath (Not needed anymore)"
+    rm $setup_fullpath
+    echo "$setup_basename: $( type $setup_basename ). OK"
+  else
+    if [ -e $bindir/$setup_basename ] ; then # it shouldn't
+      rm $bindir/$setup_basename
+    fi
+    echo "$setup_basename: Keep downloaded setup script around ($setup_fullpath => $bindir/$setup_basename"
+    mv $setup_fullpath $bindir/$setup_basename
+    if command_exists $setup_basename ; then
+      echo "$setup_basename: OK"
+    else
+      errors+=("$setup_basename: Not in PATH\n\t($PATH)") && echo_last errors[@]
+    fi
+  fi
+else
+  errors+=("$setup_basename: $bindir does not exist. It should") && echo_last errors[@]
+fi
+
+# Setup done
 echo
 
 if [ ${#errors[@]} -gt 0 ] ; then
@@ -488,7 +535,7 @@ if $exec_shell_required ; then
   echo
 fi
 
-echo 'digital-cinema-tools-setup: Done'
+echo "$setup_basename: Done"
 echo
 
 exit 0
