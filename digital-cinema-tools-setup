@@ -300,7 +300,7 @@ fi
 
 # Nokogiri (with c14n)
 cd $libdir
-if gem list -i nokogiri > /dev/null ; then
+if gem list -i nokogiri &> /dev/null ; then
   echo 'Nokogiri: OK'
 else
   echo 'Nokogiri: Installing ...'
@@ -448,10 +448,14 @@ else
   errors+=("Digital cinema tools distribution: Failed to update $bindir. Repository missing") && echo_last errors[@]
 fi
 # cinemaslides: gem highline required
-if ! gem install highline && rbenv rehash ; then
-  errors+=("cinemaslides: Failed to install required gem highline. Try again later") && echo_last errors[@]
-else
+if gem list -i highline &> /dev/null ; then
   echo 'cinemaslides: Required gem highline OK'
+else
+  if ! gem install highline && rbenv rehash ; then
+    errors+=("cinemaslides: Failed to install required gem highline. Try again later") && echo_last errors[@]
+  else
+    echo 'cinemaslides: Required gem highline OK'
+  fi
 fi
 # cinemaslides: env CINEMASLIDESDIR (will be created on-demand by cinemaslides)
 cinemaslidesdir=$basedir/CINEMASLIDESDIR
