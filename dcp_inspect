@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2012.04.06'
+AppVersion = 'v1.2012.04.11'
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
 # schema validation, signature and certificate verification and composition
@@ -114,7 +114,7 @@ class Options
   def self.parse( args )
     # defaults
     options = OpenStruct.new
-    options.check_hashes = FALSE
+    options.check_hashes = TRUE
     options.validate = TRUE
     options.as_asset_store = FALSE
     options.verbosity = 'debug'
@@ -125,10 +125,10 @@ class Options
 Usage: #{ AppName } [options] <location>
 
 BANNER
-      opts.on( '-c', '--check-hashes', 'Compare listed and actual hash values of assets' ) do
-        options.check_hashes = TRUE
+      opts.on( '--no-hash', 'Skip asset hash checks' ) do
+        options.check_hashes = FALSE
       end
-      opts.on( '--no-schema-checks', 'Skip schema checks' ) do
+      opts.on( '--no-schema', 'Skip schema checks' ) do
         options.validate = FALSE
       end
       opts.on( '-s', '--as-asset-store', 'Simulate asset store by merging all collected AM dictionaries to resolve missing assets' ) do
