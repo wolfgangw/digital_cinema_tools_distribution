@@ -342,8 +342,10 @@ if location_exists $nokogiri_dir && ! gem list -i nokogiri ; then
       fi
     fi
   fi
-else
+elif ! location_exists $nokogiri_dir ; then
   errors+=("Nokogiri: Failed to setup repository") && echo_last errors[@]
+elif location_exists $nokogiri_dir && gem list -i nokogiri ; then
+  echo 'Nokogiri: OK'
 fi
 
 # asdcplib
@@ -481,10 +483,10 @@ else
   mkdir $certstore && cd $certstore
   $bindir/make-dc-certificate-chain.rb
 fi
-if $bindir/dc_crypto_context.rb $certstore ; then
+if $bindir/dc_crypto_context.rb --quiet $certstore ; then
   echo 'Local certificate store: OK'
 else
-  echo 'Local certificate store: Failed to find valid certificate chain'
+  echo "Local certificate store: Failed to find valid certificate chain in $certstore"
 fi
 # Done: Digital Cinemas Tools Distribution
 
