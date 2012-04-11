@@ -308,8 +308,6 @@ else
       errors+=("Nokogiri: Failed to pull updates. Try again later") && echo_last errors[@]
     fi
   else
-    echo 'location_exists $nokogiri_dir && location_exists $nokogiri_dir/.git == false'
-    exit 1
     remove_if_exists nokogiri
     if ! git clone $nokogiri_url ; then
       errors+=("Nokogiri: Failed to clone repository. Try again later") && echo_last errors[@]
