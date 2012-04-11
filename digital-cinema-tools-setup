@@ -140,7 +140,7 @@ fi
 # Check basic requirements
 packages=()
 for package in build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox openjpeg-tools git ; do
-  if dpkg-query -s $package > /dev/null ; then
+  if dpkg-query -s $package &> /dev/null ; then
     echo "$package: OK"
   else
     echo "$package: Installation required"
