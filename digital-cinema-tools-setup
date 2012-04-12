@@ -138,29 +138,34 @@ else
 fi
 
 # Check basic requirements
-packages=()
-for package in build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox openjpeg-tools git ; do
-  if dpkg-query -s $package &> /dev/null ; then
-    echo "$package: OK"
-  else
-    echo "$package: Installation required"
-    packages+=($package)
+if command_exists dpkg-query && command_exists apt-get ; then
+  packages=()
+  for package in build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox openjpeg-tools git ; do
+    if dpkg-query -s $package &> /dev/null ; then
+      echo "$package: OK"
+    else
+      echo "$package: Installation required"
+      packages+=($package)
+    fi
+  done
+  if [ ${#packages[@]} -gt 0 ] ; then
+    echo
+    echo "These packages will be installed: ${packages[@]}"
+    echo
+    echo 'Please enter your root password (In Ubuntu this is your password)'
+    sleep 1
+    if ! sudo apt-get -y install "${packages[@]}"; then
+      errors+=("apt-get: Failed to install basic requirements") && echo_last errors[@]
+      sudo -K # drop sudo privileges
+      exit 1
+    else
+      echo 'apt-get: OK'
+    fi
+    sudo -K
   fi
-done
-if [ ${#packages[@]} -gt 0 ] ; then
-  echo
-  echo "These packages will be installed: ${packages[@]}"
-  echo
-  echo 'Please enter your root password (In Ubuntu this is your password)'
-  sleep 1
-  if ! sudo apt-get -y install "${packages[@]}"; then
-    errors+=("apt-get: Failed to install basic requirements") && echo_last errors[@]
-    sudo -K # drop sudo privileges
-    exit 1
-  else
-    echo 'apt-get: OK'
-  fi
-  sudo -K
+else
+  errors+=("$setup_basename: Required packager tools not found: dpkg-query/apt-get. This means you're probably not running a Debian/Ubuntu system. Exiting") && echo_last errors[@]
+  exit 1
 fi
 
 # set up directories for tools and tmp
@@ -353,6 +358,7 @@ fi
 # asdcplib
 cd $libdir
 if command_exists asdcp-info ; then
+  # FIXME Quite optimistic right there
   echo 'asdcplib: OK'
 else
   echo 'asdcplib: Installing'
