@@ -42,7 +42,7 @@
 setup_dirname=$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
 setup_basename=$(basename ${BASH_SOURCE[0]})
 setup_fullpath="$setup_dirname/$setup_basename"
-setup_version='v1.2012.04.11'
+setup_version='v1.2012.04.12'
 echo "$setup_basename $setup_version"
 set -e
 
@@ -465,23 +465,23 @@ else
 fi
 # cinemaslides: env CINEMASLIDESDIR (will be created on-demand by cinemaslides)
 cinemaslidesdir=$basedir/CINEMASLIDESDIR
-if grep -P "export CINEMASLIDESDIR=$cinemaslidesdir" $bashrc ; then
-  echo 'bashrc: CINEMASLIDESDIR is set. OK'
+if grep -P "export CINEMASLIDESDIR=$cinemaslidesdir" $bashrc $bash_profile &> /dev/null ; then
+  echo 'cinemaslides: CINEMASLIDESDIR is set. OK'
 else
-  echo 'bashrc: Setting CINEMASLIDESDIR'
+  echo 'cinemaslides: Setting CINEMASLIDESDIR'
   echo '' >> $bashrc
-  echo "# Location of cinemaslides' working directory" >> $bashrc
+  echo "# cinemaslides: Location of cinemaslides' working directory" >> $bashrc
   echo "export CINEMASLIDESDIR=$cinemaslidesdir" >> $bashrc
   exec_shell_required=true
 fi
 
 # Local certificate store and example certificates
 certstore=$basedir/CERTSTORE
-if grep -P "export CINEMACERTSTORE=$certstore" $bashrc ; then
-  echo 'bashrc: CINEMACERTSTORE is set. OK'
+if grep -P "export CINEMACERTSTORE=$certstore" $bashrc $bash_profile &> /dev/null ; then
+  echo 'cinemaslides: CINEMACERTSTORE is set. OK'
 else
   echo '' >> $bashrc
-  echo '# Location of local example cinema certificates' >> $bashrc
+  echo '# cinemaslides: Location of local example cinema certificates' >> $bashrc
   echo "export CINEMACERTSTORE=$certstore" >> $bashrc
   exec_shell_required=true
 fi
