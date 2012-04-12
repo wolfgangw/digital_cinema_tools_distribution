@@ -238,7 +238,7 @@ else
       errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
     fi
 
-    echo "# $setup_basename: rbenv environment" >> 
+    echo "# $setup_basename: rbenv environment" >> $bash_profile
     echo "export RBENV_ROOT=$rbenv_dir" >> $bash_profile
     echo "export PATH=$rbenv_dir/bin:"'$PATH' >> $bash_profile
     echo 'eval "$(rbenv init -)"' >> $bash_profile
@@ -466,8 +466,13 @@ else
   fi
 fi
 # cinemaslides: env CINEMASLIDESDIR (will be created on-demand by cinemaslides)
-cinemaslidesdir=$basedir/CINEMASLIDESDIR
-if grep -P "export CINEMASLIDESDIR=$cinemaslidesdir" $bashrc $bash_profile &> /dev/null ; then
+if [ -z "$CINEMASLIDESDIR" ] ; then
+  cinemaslidesdir=$basedir/CINEMASLIDESDIR
+else
+  cinemaslidesdir="$CINEMASLIDESDIR"
+fi
+# FIXME Check for $cinemaslidesdir, there might be already another path exported for CINEMASLIDESDIR
+if grep -P "export CINEMASLIDESDIR=" $bashrc $bash_profile &> /dev/null ; then
   echo 'cinemaslides: CINEMASLIDESDIR is set. OK'
 else
   echo 'cinemaslides: Setting CINEMASLIDESDIR'
@@ -479,7 +484,7 @@ fi
 
 # Local certificate store and example certificates
 certstore=$basedir/CERTSTORE
-if grep -P "export CINEMACERTSTORE=$certstore" $bashrc $bash_profile &> /dev/null ; then
+if grep -P "export CINEMACERTSTORE=" $bashrc $bash_profile &> /dev/null ; then
   echo 'cinemaslides: CINEMACERTSTORE is set. OK'
 else
   echo '' >> $bashrc
