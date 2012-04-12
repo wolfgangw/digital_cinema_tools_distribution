@@ -140,7 +140,7 @@ fi
 # Check basic requirements
 if command_exists dpkg-query && command_exists apt-get ; then
   packages=()
-  for package in build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox openjpeg-tools git ; do
+  for package in build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox openjpeg-tools git-core ; do
     if dpkg-query -s $package &> /dev/null ; then
       echo "$package: OK"
     else
