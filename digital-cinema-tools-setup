@@ -523,7 +523,7 @@ elif [ -x $bindir/$setup_basename ] ; then
     echo "$setup_basename: Fail"
   fi
 else
-  errors+=("$setup_basename: Still alpha borked") && echo_last errors[@]
+  errors+=("$setup_basename: Keeper still borked") && echo_last errors[@]
 fi
 
 # Setup done
