@@ -133,6 +133,7 @@ if [ -e $HOME/.inputrc ] ; then
   fi
 else
   echo 'inputrc: Adding fastpath for tab-completion'
+  echo "# $setup_basename: This will make completions show up after 1 TAB hit" >> $HOME/.inputrc
   echo 'set show-all-if-ambiguous on' >> $HOME/.inputrc
   exec_shell_required=true
 fi
@@ -185,7 +186,7 @@ if grep -P '^(source|\.) .*/.bash_profile' $bashrc ; then
 else
   echo 'bashrc: Adding .bash_profile'
   echo '' >> $bashrc
-  echo '# Use .bash_profile to read rbenv environment' >> $bashrc
+  echo "# $setup_basename: Use .bash_profile to read rbenv environment" >> $bashrc
   echo 'source $HOME/.bash_profile' >> $bashrc
   if ! [ -f $bash_profile ] ; then
     touch $bash_profile
@@ -198,12 +199,12 @@ fi
 if string_includes $PATH "$bindir" ; then
   echo "PATH: $bindir available in PATH"
 else
-  if grep -P "export PATH=$bindir:" $bashrc ; then
+  if grep -P "export PATH=$bindir:" $bashrc $bash_profile ; then
     echo "bashrc: $bindir already included. OK"
   else
     echo "bashrc: Adding $bindir to PATH"
     echo '' >> $bashrc
-    echo "# Add ~/bin to PATH" >> $bashrc
+    echo "# $setup_basename: Add $bindir to PATH" >> $bashrc
     echo "export PATH=$bindir:"'$PATH' >> $bashrc
   fi
   exec_shell_required=true
@@ -237,6 +238,7 @@ else
       errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
     fi
 
+    echo "# $setup_basename: rbenv environment" >> 
     echo "export RBENV_ROOT=$rbenv_dir" >> $bash_profile
     echo "export PATH=$rbenv_dir/bin:"'$PATH' >> $bash_profile
     echo 'eval "$(rbenv init -)"' >> $bash_profile
@@ -470,7 +472,7 @@ if grep -P "export CINEMASLIDESDIR=$cinemaslidesdir" $bashrc $bash_profile &> /d
 else
   echo 'cinemaslides: Setting CINEMASLIDESDIR'
   echo '' >> $bashrc
-  echo "# cinemaslides: Location of cinemaslides' working directory" >> $bashrc
+  echo "# $setup_basename: Location of cinemaslides' working directory" >> $bashrc
   echo "export CINEMASLIDESDIR=$cinemaslidesdir" >> $bashrc
   exec_shell_required=true
 fi
@@ -481,7 +483,7 @@ if grep -P "export CINEMACERTSTORE=$certstore" $bashrc $bash_profile &> /dev/nul
   echo 'cinemaslides: CINEMACERTSTORE is set. OK'
 else
   echo '' >> $bashrc
-  echo '# cinemaslides: Location of local example cinema certificates' >> $bashrc
+  echo "# $setup_basename: Location of local example cinema certificates" >> $bashrc
   echo "export CINEMACERTSTORE=$certstore" >> $bashrc
   exec_shell_required=true
 fi
