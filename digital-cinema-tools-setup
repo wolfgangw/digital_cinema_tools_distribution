@@ -12,12 +12,12 @@
 #
 # This setup script will install everything required (batteries included) to run
 #
+#   * dcp_inspect:  Inspect and validate digital cinema packages (DCPs)
+#                   See https://github.com/wolfgangw/backports#readme
+#
 #   * cinemaslides: Build plaintext/encrypted digital cinema packages (DCPs)
 #                   and generate key delivery messages (KDMs)
 #                   See https://github.com/wolfgangw/digital_cinema_tools/wiki/Cinemaslides
-#
-#   * dcp_inspect:  Inspect and validate digital cinema packages (DCPs)
-#                   See https://github.com/wolfgangw/backports#readme
 #
 # and a number of other digital cinema-related tools:
 #
