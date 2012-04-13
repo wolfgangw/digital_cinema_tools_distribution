@@ -2,8 +2,12 @@
 #
 # Usage:
 #
-#   * Run
+#   * Ubuntu: Run
 #       wget http://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
+#     in a terminal
+#
+#   * Fedora: Run
+#       curl -sLO http://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
 #     in a terminal
 #
 #   * For updates or re-runs run
@@ -30,24 +34,26 @@
 #   * x509_inspect.rb:              Inspect X.509 certificates
 #   * xsd-check.rb:                 Validate XML documents against Schema definitions
 #
-# This installer runs on Ubuntu (and probably on other Debian-derivatives as well)
-# and needs a working network connection.
+# This installer supports Debian/Ubuntu/Fedora systems
+# Needs a working network connection
 #
-# It tries hard not to break anything. You can run it multiple times, should anything
-# go wrong during an install run (network problems etc.)
+# It tries hard not to break anything and to respect the existing environment.
+# You can run it multiple times, should anything go wrong during a setup run (network problems etc.)
 #
 # Wolfgang Woehl 2012
 #
+set -e
+setup_version='v1.2012.04.13'
+
 # Location of self
 setup_dirname=$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
 setup_basename=$(basename ${BASH_SOURCE[0]})
 setup_fullpath="$setup_dirname/$setup_basename"
-setup_version='v1.2012.04.12'
 echo "$setup_basename $setup_version"
-set -e
 
 bashrc=$HOME/.bashrc
 bash_profile=$HOME/.bash_profile
+inputrc=$HOME/.inputrc
 script_runner=$(whoami)
 
 basedir=$HOME/.digital_cinema_tools
@@ -61,14 +67,24 @@ rbenv_dir=$RBENV_ROOT
 rbenv_plugins_dir=$rbenv_dir/plugins
 
 # Ruby build system: ruby-build
-ruby_build_url="git://github.com/sstephenson/ruby-build.git"
-ruby_build_dir=$rbenv_plugins_dir/ruby-build
+rubybuild_url="git://github.com/sstephenson/ruby-build.git"
+rubybuild_dir=$rbenv_plugins_dir/ruby-build
 ruby_version='1.9.3-p125'
 gemrc=$HOME/.gemrc
 
 # XML engine: Nokogiri
 nokogiri_url="git://github.com/tenderlove/nokogiri.git"
 nokogiri_dir=$libdir/nokogiri
+
+# JPEG2000 codec: OpenJPEG
+# http://openjpeg.googlecode.com/files/openjpeg-1.5.0.tar.gz
+opj_googlecode='openjpeg.googlecode.com'
+openjpeg_version='1.5.0'
+openjpeg_tarball="openjpeg-$openjpeg_version.tar.gz"
+openjpeg_tarball_url="http://$opj_googlecode/files/$openjpeg_tarball"
+openjpeg_dir=$libdir/openjpeg
+openjpeg_build_dir="$openjpeg_dir/openjpeg-$openjpeg_version"
+openjpeg_install_dir=$bindir/openjpeg
 
 # Handle SMPTE and Interop trackfiles: ASDCPLib
 cinecert='www.cinecert.com'
@@ -111,6 +127,10 @@ remove_if_exists() {
   fi
 }
 
+location_is_git_repo() {
+  location_exists "$1" && location_exists "$1/.git" && [ -d "$1/.git" ]
+}
+
 # Only linux systems in mind for now
 if [[ ! $MACHTYPE = *linux* ]]
 then
@@ -129,53 +149,91 @@ then
   exit 1
 fi
 
-# Fastpath for tab-completion
-if [ -e $HOME/.inputrc ]
+# Which OS distribution are we on?
+if [ -f /etc/fedora-release ]
 then
-  if grep -P 'set show-all-if-ambiguous on' $HOME/.inputrc
-  then
-    echo 'inputrc: OK'
-  fi
-else
-  echo 'inputrc: Adding fastpath for tab-completion'
-  echo "# $setup_basename: This will make completions show up after 1 TAB hit" >> $HOME/.inputrc
-  echo 'set show-all-if-ambiguous on' >> $HOME/.inputrc
-  exec_shell_required=true
+  os_dist=redhat
+elif [ -f /etc/redhat-release ]
+then
+  os_dist=redhat
+elif [ -f /etc/lsb-release ] && grep -P 'Ubuntu' /etc/lsb-release &> /dev/null
+then
+  os_dist=ubuntu
 fi
+echo "OS: $os_dist"
+
+case $os_dist in
+  ubuntu)
+    query='dpkg-query'
+    query_params='-s'
+    packager='apt-get'
+    packager_params='-y install'
+    # build-essential odd ..
+    packages_required=( build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox git-core libtiff4-dev libpng12-dev )
+    ;;
+  redhat)
+    query='rpm'
+    query_params='--query'
+    packager='yum'
+    packager_params='-y install'
+    packages_required=( make automake gcc gcc-c++ wget libxslt-devel expat-devel xmlsec1 xmlsec1-openssl readline-devel zlib-devel openssl-devel ImageMagick mplayer sox git libtiff-devel libpng-devel )
+    ;;
+esac
 
 # Check basic requirements
-if command_exists dpkg-query && command_exists apt-get
+if command_exists $query && command_exists $packager
 then
-  packages=()
-  for package in build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox openjpeg-tools git-core
+  packages_missing=()
+  for package in ${packages_required[@]}
   do
-    if dpkg-query -s $package &> /dev/null
+    if $query $query_params $package &> /dev/null
     then
       echo "$package: OK"
     else
       echo "$package: Installation required"
-      packages+=($package)
+      packages_missing+=($package)
     fi
   done
-  if [ ${#packages[@]} -gt 0 ]
+  if [ ${#packages_missing[@]} -gt 0 ]
   then
     echo
-    echo "These packages will be installed: ${packages[@]}"
+    echo "$setup_basename: ${#packages_missing[@]} packages missing"
+    echo "$setup_basename: ${packages_missing[@]}"
     echo
-    echo 'Please enter your root password (In Ubuntu this is your password)'
-    sleep 1
-    if ! sudo apt-get -y install "${packages[@]}"
+    case $os_dist in
+      ubuntu)
+        echo "Please enter your root password. In Ubuntu this is your ($script_runner) password" ;;
+      redhat)
+        echo 'Please enter your root password' ;;
+    esac
+
+    # Installation
+    # Special case Fedora/MPlayer: Provided by RPMFusion repository. Add the repo
+    # See repo keys and fingerprints on http://rpmfusion.org/keys
+    case $os_dist in
+      redhat)
+        rpmfusion_free='http://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-stable.noarch.rpm'
+        rpmfusion_nonfree='http://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-stable.noarch.rpm'
+        if ! sudo $packager -y localinstall $rpmfusion_free $rpmfusion_nonfree
+        then
+          errors+=("$os_dist: Failed to add RPMFusion repository (required for mplayer)") && echo_last errors[@]
+        else
+          echo "$os_dist: RPMFusion repository (required for mplayer) OK"
+        fi
+        ;;
+    esac
+    if ! sudo $packager $packager_params "${packages_missing[@]}"
     then
-      errors+=("apt-get: Failed to install basic requirements") && echo_last errors[@]
+      errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
       sudo -K # drop sudo privileges
       exit 1
     else
-      echo 'apt-get: OK'
+      echo "$packager: OK"
     fi
     sudo -K
   fi
 else
-  errors+=("$setup_basename: Required packager tools not found: dpkg-query/apt-get. This means you're probably not running a Debian/Ubuntu system. Exiting") && echo_last errors[@]
+  errors+=("$setup_basename: Required packager tools not found: $query/$packager. Exiting") && echo_last errors[@]
   exit 1
 fi
 
@@ -189,16 +247,20 @@ if grep -P '^(source|\.) .*/.bash_profile' $bashrc
 then
   echo 'bashrc: OK'
 else
-  echo 'bashrc: Adding .bash_profile'
-  echo '' >> $bashrc
-  echo "# $setup_basename: Use .bash_profile to read rbenv environment" >> $bashrc
-  echo 'source $HOME/.bash_profile' >> $bashrc
-  if ! [ -f $bash_profile ]
+  # Fedora sources ~/.bashrc from ~/.bash_profile so we loop source if we add the following
+  if [ $os_dist = 'ubuntu' ]
   then
-    touch $bash_profile
-    echo 'bash_profile: Touched'
+    echo "$setup_basename: Source ~/.bash_profile from ~/.bashrc"
+    echo '' >> $bashrc
+    echo "# $setup_basename: Use .bash_profile to read rbenv environment" >> $bashrc
+    echo 'source $HOME/.bash_profile' >> $bashrc
+    if ! [ -f $bash_profile ]
+    then
+      touch $bash_profile
+      echo 'bash_profile: Touched'
+    fi
+    exec_shell_required=true
   fi
-  exec_shell_required=true
 fi
 
 # Check for ~/bin and inclusion in PATH
@@ -251,11 +313,18 @@ else
       errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
     fi
 
-    echo "# $setup_basename: rbenv environment" >> $bash_profile
-    echo "export RBENV_ROOT=$rbenv_dir" >> $bash_profile
-    echo "export PATH=$rbenv_dir/bin:"'$PATH' >> $bash_profile
-    echo 'eval "$(rbenv init -)"' >> $bash_profile
-    source $bash_profile
+    case $os_dist in
+      ubuntu)
+        env_target=$bash_profile ;;
+      redhat)
+        env_target=$bashrc ;;
+    esac
+    echo '' >> $env_target
+    echo "# $setup_basename: rbenv environment" >> $env_target
+    echo "export RBENV_ROOT=$rbenv_dir" >> $env_target
+    echo "export PATH=$rbenv_dir/bin:"'$PATH' >> $env_target
+    echo 'eval "$(rbenv init -)"' >> $env_target
+    source $env_target
     exec_shell_required=true
 
     if command_exists rbenv
@@ -292,13 +361,13 @@ else
   mkdir -p $rbenv_plugins_dir
 fi
 cd $rbenv_plugins_dir
-if location_exists $ruby_build_dir && location_exists $ruby_build_dir/.git
+if location_is_git_repo $rubybuild_dir
 then
   echo 'ruby-build: OK'
 else
-  remove_if_exists $ruby_build_dir
+  remove_if_exists $rubybuild_dir
   echo 'ruby-build: Installing'
-  if ! git clone $ruby_build_url
+  if ! git clone $rubybuild_url
   then
     errors+=("ruby-build: Failed to clone repository. Try again later") && echo_last errors[@]
   else
@@ -335,7 +404,7 @@ then
   echo 'Nokogiri: OK'
 else
   echo 'Nokogiri: Installing ...'
-  if location_exists $nokogiri_dir && location_exists $nokogiri_dir/.git
+  if location_is_git_repo $nokogiri_dir
   then
     cd $nokogiri_dir
     echo 'Nokogiri: Pulling updates ...'
@@ -391,6 +460,62 @@ then
   echo 'Nokogiri: OK'
 fi
 
+# openjpeg
+cd $libdir
+if command_exists image_to_j2k
+then
+  echo 'openjpeg: OK'
+else
+  echo 'openjpeg: Installing ...'
+  if location_exists $openjpeg_dir
+  then
+    cd $openjpeg_dir
+  else
+    mkdir $openjpeg_dir && cd $openjpeg_dir
+  fi
+
+  remove_if_exists $openjpeg_build_dir
+  if [ -e $openjpeg_tarball ]
+  then
+    echo "openjpeg: Tarball exists"
+  else
+    echo "openjpeg: Downloading tarball $openjpeg_tarball_url"
+    if wget $openjpeg_tarball_url
+    then
+      echo "openjpeg: Download OK"
+    else
+      if ! ping -c 1 $opj_googlecode
+      then
+        errors+=("openjpeg: $opj_googlecode seems to be down") && echo_last errors[@]
+      fi
+      errors+=("openjpeg: Failed to download tarball. Try again later") && echo_last errors[@]
+    fi
+  fi
+  if tar xzf $openjpeg_tarball
+  then
+    cd $openjpeg_build_dir
+    if ./configure --disable-doc --prefix=$openjpeg_install_dir && make -j3 && make install
+    then
+      echo "openjpeg: Build OK"
+    else
+      errors+=("openjpeg: Failed to configure, build and install") && echo_last errors[@]
+    fi
+  else
+    errors+=("Failed to extract tarball at $openjpeg_dir") && echo_last errors[@]
+  fi
+fi
+cd $bindir
+for tool in $openjpeg_install_dir/bin/*
+do
+  if [ -e $bindir/$(basename ${tool}) ]
+  then
+    echo "openjpeg: $(basename ${tool}) OK"
+  else
+    echo "openjpeg: Add to $bindir: $(basename ${tool})"
+    ln -s $tool .
+  fi
+done # openjpeg
+
 # asdcplib
 cd $libdir
 if command_exists asdcp-info
@@ -398,7 +523,7 @@ then
   # FIXME Quite optimistic right there
   echo 'asdcplib: OK'
 else
-  echo 'asdcplib: Installing'
+  echo 'asdcplib: Installing ...'
   if location_exists $asdcplib_dir
   then
     cd $asdcplib_dir
@@ -436,7 +561,13 @@ else
   if tar xzf $asdcplib_tarball
   then
     cd $asdcplib_build_dir
-    if ./configure --with-expat=yes LDFLAGS="-L/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)" LIBS="-lexpat" --prefix=$asdcplib_install_dir && make -j3 && make install
+    case $os_dist in
+      ubuntu)
+        export LDFLAGS="-L/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)" ;;
+      redhat)
+        export LDFLAGS='' ;;
+    esac
+    if ./configure --with-expat=yes LIBS="-lexpat" --prefix=$asdcplib_install_dir && make -j3 && make install
     then
       echo 'asdcplib: Build OK'
     else
@@ -446,7 +577,6 @@ else
     errors+=("asdcplib: Failed to extract tarball at $asdcplib_dir") && echo_last errors[@]
   fi
 fi
-
 cd $bindir
 for tool in $asdcplib_install_dir/bin/*
 do
@@ -461,7 +591,7 @@ done # asdcplib
 
 # Digital Cinema Tools distribution
 cd $libdir
-if location_exists $dist_dir && location_exists $dist_dir/.git
+if location_is_git_repo $dist_dir
 then
   cd $dist_dir
   echo "Digital cinema tools distribution: Pulling updates ..."
@@ -571,8 +701,27 @@ else
 fi
 # Done: Digital Cinemas Tools Distribution
 
+# Fastpath for tab-completion
+if [ -e $inputrc ]
+then
+  # Leave any existing setting untouched
+  if grep -P "^set show-all-if-ambiguous on$" $inputrc
+  then
+    echo 'Tab completion: Fastpath set to on. Leaving untouched. OK'
+  elif grep -P "^set show-all-if-ambiguous off$" $inputrc
+  then
+    echo 'Tab completion: Fastpath set to off. Leaving untouched. OK'
+  fi
+else
+  touch $inputrc
+  echo 'Tab completion: Setting fastpath to on'
+  echo "# $setup_basename: This will make completions show up after 1 TAB hit" >> $inputrc
+  echo 'set show-all-if-ambiguous on' >> $inputrc
+  exec_shell_required=true
+fi
+
 # Keep downloaded setup script around if distribution setup failed (which would have it included)
-if [ -x $bindir/$setup_basename ] && [ -L $bindir/$setup_basename ] && [[ $( readlink -f $bindir/$setup_basename ) == $dist_dir/$setup_basename ]]
+if [ -x "$bindir/$setup_basename" -a -L "$bindir/$setup_basename" ] && [[ $( readlink -f "$bindir/$setup_basename" ) = "$dist_dir/$setup_basename" ]]
 then
   # I am installation
   echo "$setup_basename: OK"
