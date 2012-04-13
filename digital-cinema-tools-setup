@@ -105,19 +105,22 @@ echo_last() {
 }
 
 remove_if_exists() {
-  if location_exists $1 ; then
+  if location_exists $1
+  then
     rm -rf $1
   fi
 }
 
 # Only linux systems in mind for now
-if [[ ! $MACHTYPE = *linux* ]] ; then
+if [[ ! $MACHTYPE = *linux* ]]
+then
   echo "This installer supports only linux systems"
   exit 1
 fi
 
 # Check and bail out if the installer is run with root privileges
-if [ $script_runner == "root" ] ; then
+if [ $script_runner == "root" ]
+then
   echo
   echo 'Do not run this installer as root'
   echo 'Do not run this installer via sudo'
@@ -127,8 +130,10 @@ if [ $script_runner == "root" ] ; then
 fi
 
 # Fastpath for tab-completion
-if [ -e $HOME/.inputrc ] ; then
-  if grep -P 'set show-all-if-ambiguous on' $HOME/.inputrc ; then
+if [ -e $HOME/.inputrc ]
+then
+  if grep -P 'set show-all-if-ambiguous on' $HOME/.inputrc
+  then
     echo 'inputrc: OK'
   fi
 else
@@ -139,23 +144,28 @@ else
 fi
 
 # Check basic requirements
-if command_exists dpkg-query && command_exists apt-get ; then
+if command_exists dpkg-query && command_exists apt-get
+then
   packages=()
-  for package in build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox openjpeg-tools git-core ; do
-    if dpkg-query -s $package &> /dev/null ; then
+  for package in build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox openjpeg-tools git-core
+  do
+    if dpkg-query -s $package &> /dev/null
+    then
       echo "$package: OK"
     else
       echo "$package: Installation required"
       packages+=($package)
     fi
   done
-  if [ ${#packages[@]} -gt 0 ] ; then
+  if [ ${#packages[@]} -gt 0 ]
+  then
     echo
     echo "These packages will be installed: ${packages[@]}"
     echo
     echo 'Please enter your root password (In Ubuntu this is your password)'
     sleep 1
-    if ! sudo apt-get -y install "${packages[@]}"; then
+    if ! sudo apt-get -y install "${packages[@]}"
+    then
       errors+=("apt-get: Failed to install basic requirements") && echo_last errors[@]
       sudo -K # drop sudo privileges
       exit 1
@@ -170,25 +180,21 @@ else
 fi
 
 # set up directories for tools and tmp
-if ! location_exists $basedir ; then
-  mkdir $basedir
-fi
-if ! location_exists $libdir ; then
-  mkdir $libdir
-fi
-if ! location_exists $bindir ; then
-  mkdir $bindir
-fi
+if ! location_exists $basedir ; then mkdir $basedir ; fi
+if ! location_exists $libdir ; then mkdir $libdir ; fi
+if ! location_exists $bindir ; then mkdir $bindir ; fi
 
 # source .bash_profile from .bashrc
-if grep -P '^(source|\.) .*/.bash_profile' $bashrc ; then
+if grep -P '^(source|\.) .*/.bash_profile' $bashrc
+then
   echo 'bashrc: OK'
 else
   echo 'bashrc: Adding .bash_profile'
   echo '' >> $bashrc
   echo "# $setup_basename: Use .bash_profile to read rbenv environment" >> $bashrc
   echo 'source $HOME/.bash_profile' >> $bashrc
-  if ! [ -f $bash_profile ] ; then
+  if ! [ -f $bash_profile ]
+  then
     touch $bash_profile
     echo 'bash_profile: Touched'
   fi
@@ -196,10 +202,12 @@ else
 fi
 
 # Check for ~/bin and inclusion in PATH
-if string_includes $PATH "$bindir" ; then
+if string_includes $PATH "$bindir"
+then
   echo "PATH: $bindir available in PATH"
 else
-  if grep -P "export PATH=$bindir:" $bashrc $bash_profile ; then
+  if grep -P "export PATH=$bindir:" $bashrc $bash_profile
+  then
     echo "bashrc: $bindir already included. OK"
   else
     echo "bashrc: Adding $bindir to PATH"
@@ -213,7 +221,8 @@ fi
 source $bashrc
 
 # rbenv
-if command_exists rvm ; then
+if command_exists rvm
+then
   echo
   echo "Sorry. This installer insists on using rbenv for Ruby version management."
   echo "You have RVM installed and those 2 won't co-exist peacefully, so there."
@@ -221,12 +230,15 @@ if command_exists rvm ; then
   echo
   exit 1
 fi
-if command_exists rbenv ; then
+if command_exists rbenv
+then
   echo "rbenv: OK"
 else
-  if location_exists $rbenv_dir && location_exists $rbenv_dir/.git ; then
+  if location_exists $rbenv_dir && location_exists $rbenv_dir/.git
+  then
     echo "rbenv: Repository exists"
-    if string_includes $PATH "$rbenv_dir/bin" ; then
+    if string_includes $PATH "$rbenv_dir/bin"
+    then
       echo "rbenv: PATH includes rbenv bin dir"
     else
       errors+=("rbenv: PATH does not include rbenv bin dir") && echo_last errors[@]
@@ -234,7 +246,8 @@ else
   else
     echo "rbenv: Installing"
     remove_if_exists $rbenv_dir
-    if ! git clone $rbenv_url $rbenv_dir ; then
+    if ! git clone $rbenv_url $rbenv_dir
+    then
       errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
     fi
 
@@ -245,7 +258,8 @@ else
     source $bash_profile
     exec_shell_required=true
 
-    if command_exists rbenv ; then
+    if command_exists rbenv
+    then
       echo "rbenv: OK"
     else
       echo "rbenv: Command 'rbenv' not found"
@@ -255,8 +269,10 @@ else
 fi
 
 # gems: ri/rdoc switches
-if [ -e $gemrc ] ; then
-  if grep -P '^gem: --no-ri --no-rdoc' $gemrc ; then
+if [ -e $gemrc ]
+then
+  if grep -P '^gem: --no-ri --no-rdoc' $gemrc
+  then
     echo 'gemrc: OK'
   else
     echo 'gemrc: Keeping changed gemrc (--no-ri/rdoc switches will not be added)'
@@ -266,20 +282,24 @@ else
 fi
 
 # ruby-build (as rbenv plugin)
-if location_exists $rbenv_dir ; then
-  if ! location_exists $rbenv_plugins_dir; then
+if location_exists $rbenv_dir
+then
+  if ! location_exists $rbenv_plugins_dir
+  then
     mkdir $rbenv_plugins_dir
   fi
 else
   mkdir -p $rbenv_plugins_dir
 fi
 cd $rbenv_plugins_dir
-if location_exists $ruby_build_dir && location_exists $ruby_build_dir/.git ; then
+if location_exists $ruby_build_dir && location_exists $ruby_build_dir/.git
+then
   echo 'ruby-build: OK'
 else
   remove_if_exists $ruby_build_dir
   echo 'ruby-build: Installing'
-  if ! git clone $ruby_build_url ; then
+  if ! git clone $ruby_build_url
+  then
     errors+=("ruby-build: Failed to clone repository. Try again later") && echo_last errors[@]
   else
     echo 'ruby-build: OK'
@@ -288,14 +308,17 @@ fi
 
 # Try to install a ruby version
 # Explicitly set global $ruby_version
-if ! rbenv global $ruby_version ; then
+if ! rbenv global $ruby_version
+then
   echo 'rbenv: Required ruby not installed'
 fi
-if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby ; then
+if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby
+then
   echo "Ruby: OK"
 else
   echo "Ruby: Installing ... This will take a while (~5 minutes)"
-  if ! rbenv install $ruby_version ; then
+  if ! rbenv install $ruby_version
+  then
     errors+=("Ruby: Failed to install requested version") && echo_last errors[@]
   else
     rbenv global $ruby_version
@@ -307,41 +330,50 @@ fi
 
 # Nokogiri (with c14n)
 cd $libdir
-if gem list -i nokogiri &> /dev/null ; then
+if gem list -i nokogiri &> /dev/null
+then
   echo 'Nokogiri: OK'
 else
   echo 'Nokogiri: Installing ...'
-  if location_exists $nokogiri_dir && location_exists $nokogiri_dir/.git ; then
+  if location_exists $nokogiri_dir && location_exists $nokogiri_dir/.git
+  then
     cd $nokogiri_dir
     echo 'Nokogiri: Pulling updates ...'
     git checkout master
-    if ! git pull ; then
+    if ! git pull
+    then
       errors+=("Nokogiri: Failed to pull updates. Try again later") && echo_last errors[@]
     fi
   else
     remove_if_exists nokogiri
-    if ! git clone $nokogiri_url ; then
+    if ! git clone $nokogiri_url
+    then
       errors+=("Nokogiri: Failed to clone repository. Try again later") && echo_last errors[@]
     else
       echo 'Nokogiri: Repository OK'
     fi
   fi
 fi
-if location_exists $nokogiri_dir && ! gem list -i nokogiri ; then
+if location_exists $nokogiri_dir && ! gem list -i nokogiri
+then
   cd $nokogiri_dir
   echo 'Nokogiri: Installing required gems hoe, rake-compiler, racc, rexical, minitest'
-  if ! gem install hoe rake-compiler racc rexical minitest ; then
+  if ! gem install hoe rake-compiler racc rexical minitest
+  then
     errors+=("Nokogiri: Failed to install required gems hoe, rake-compiler, racc, rexical, minitest") && echo_last errors[@]
   else
     rbenv rehash
     echo 'Nokogiri: Installing required gem rake 0.9.2' # Quite possible that this is outdated
-    if ! gem install rake -v=0.9.2 ; then
+    if ! gem install rake -v=0.9.2
+    then
       errors+=("Nokogiri: Failed to install required gem rake") && echo_last errors[@]
     else
       rbenv rehash
       echo 'Nokogiri: Building ...'
-      if rake && rake install_gem && sleep 10 && rbenv rehash ; then
-        if gem list -i nokogiri ; then
+      if rake && rake install_gem && sleep 10 && rbenv rehash
+      then
+        if gem list -i nokogiri
+        then
           echo 'Nokogiri: OK'
         else
           errors+=("Nokogiri: Gem nokogiri not found") && echo_last errors[@]
@@ -351,50 +383,61 @@ if location_exists $nokogiri_dir && ! gem list -i nokogiri ; then
       fi
     fi
   fi
-elif ! location_exists $nokogiri_dir ; then
+elif ! location_exists $nokogiri_dir
+then
   errors+=("Nokogiri: Failed to setup repository") && echo_last errors[@]
-elif location_exists $nokogiri_dir && gem list -i nokogiri ; then
+elif location_exists $nokogiri_dir && gem list -i nokogiri
+then
   echo 'Nokogiri: OK'
 fi
 
 # asdcplib
 cd $libdir
-if command_exists asdcp-info ; then
+if command_exists asdcp-info
+then
   # FIXME Quite optimistic right there
   echo 'asdcplib: OK'
 else
   echo 'asdcplib: Installing'
-  if location_exists $asdcplib_dir ; then
+  if location_exists $asdcplib_dir
+  then
     cd $asdcplib_dir
   else
     mkdir $asdcplib_dir && cd $asdcplib_dir
   fi
 
   remove_if_exists $asdcplib_build_dir
-  if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]] ; then
+  if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
+  then
     echo "asdcplib: $asdcplib_version_tarball_md5: MD5 OK"
   else
-    if [ -e $asdcplib_tarball ] ; then
+    if [ -e $asdcplib_tarball ]
+    then
       rm $asdcplib_tarball
     fi
     echo "asdcplib: Downloading tarball $asdcplib_tarball_url"
-    if wget $asdcplib_tarball_url ; then
+    if wget $asdcplib_tarball_url
+    then
       echo 'asdcplib: Download OK'
-      if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]] ; then
+      if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
+      then
         echo "asdcplib: $asdcplib_version_tarball_md5: MD5 OK"
       else
         errors+=("asdcplib: Failed to verify tarball: $asdcplib_dir/$asdcplib_tarball") && echo_last errors[@]
       fi
     else
-      if ! ping -c 1 $cinecert ; then
+      if ! ping -c 1 $cinecert
+      then
         errors+=("asdcplib: $cinecert seems to be down") && echo_last errors[@]
       fi
       errors+=("asdcplib: Failed to download tarball. Try again later") && echo_last errors[@]
     fi
   fi
-  if tar xzf $asdcplib_tarball ; then
+  if tar xzf $asdcplib_tarball
+  then
     cd $asdcplib_build_dir
-    if ./configure --with-expat=yes LDFLAGS="-L/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)" LIBS="-lexpat" --prefix=$asdcplib_install_dir && make -j3 && make install ; then
+    if ./configure --with-expat=yes LDFLAGS="-L/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)" LIBS="-lexpat" --prefix=$asdcplib_install_dir && make -j3 && make install
+    then
       echo 'asdcplib: Build OK'
     else
       errors+=("asdcplib: Failed to configure, build and install") && echo_last errors[@]
@@ -405,8 +448,10 @@ else
 fi
 
 cd $bindir
-for tool in $asdcplib_install_dir/bin/* ; do
-  if [ -e $bindir/$(basename ${tool}) ] ; then
+for tool in $asdcplib_install_dir/bin/*
+do
+  if [ -e $bindir/$(basename ${tool}) ]
+  then
     echo "asdcplib: $(basename ${tool}) OK"
   else
     echo "asdcplib: Add to $bindir: $(basename ${tool})"
@@ -416,31 +461,38 @@ done # asdcplib
 
 # Digital Cinema Tools distribution
 cd $libdir
-if location_exists $dist_dir && location_exists $dist_dir/.git ; then
+if location_exists $dist_dir && location_exists $dist_dir/.git
+then
   cd $dist_dir
   echo "Digital cinema tools distribution: Pulling updates ..."
-  if ! git pull ; then
+  if ! git pull
+  then
     errors+=("Digital cinema tools distribution: Failed to pull updates. Try again later") && echo_last errors[@]
   fi
 else
   remove_if_exists $dist_dir
-  if ! git clone $dist_url ; then
+  if ! git clone $dist_url
+  then
     errors+=("Digital cinema tools distribution: Failed to clone repository. Try again later") && echo_last errors[@]
   else
     echo 'Digital cinema tools distribution: Repository OK'
   fi
 fi
 # Update $bindir entries for distribution
-if location_exists $dist_dir ; then
+if location_exists $dist_dir
+then
   cd $dist_dir
   tools=( $( cat toollist ) )
   cd $bindir
-  for tool in ${tools[@]} ; do
-    if [ -e $bindir/$tool ] && command_exists $tool ; then
+  for tool in ${tools[@]}
+  do
+    if [ -e $bindir/$tool ] && command_exists $tool
+    then
       # Special case: setup might be hanging around here from a previous run:
       # When distribution setup would have failed and the downloaded setup been moved to $bindir.
       # Replace with repo version
-      if [[ $tool =~ $setup_basename ]] && [ ! -L $setup_fullpath ] ; then
+      if [[ $tool =~ $setup_basename ]] && [ ! -L $setup_fullpath ]
+      then
         echo "Digital cinema tools distribution: Replacing setup with repo version"
         rm $bindir/$tool
         ln -s $dist_dir/$tool .
@@ -456,23 +508,27 @@ else
   errors+=("Digital cinema tools distribution: Failed to update $bindir. Repository missing") && echo_last errors[@]
 fi
 # cinemaslides: gem highline required
-if gem list -i highline &> /dev/null ; then
+if gem list -i highline &> /dev/null
+then
   echo 'cinemaslides: Required gem highline OK'
 else
-  if ! gem install highline && rbenv rehash ; then
+  if ! gem install highline && rbenv rehash
+  then
     errors+=("cinemaslides: Failed to install required gem highline. Try again later") && echo_last errors[@]
   else
     echo 'cinemaslides: Required gem highline OK'
   fi
 fi
 # cinemaslides: env CINEMASLIDESDIR (will be created on-demand by cinemaslides)
-if [ -z "$CINEMASLIDESDIR" ] ; then
+if [ -z "$CINEMASLIDESDIR" ]
+then
   cinemaslidesdir=$basedir/CINEMASLIDESDIR
 else
   cinemaslidesdir="$CINEMASLIDESDIR"
 fi
 # FIXME Check for $cinemaslidesdir, there might be already another path exported for CINEMASLIDESDIR
-if grep -P "export CINEMASLIDESDIR=" $bashrc $bash_profile &> /dev/null ; then
+if grep -P "export CINEMASLIDESDIR=" $bashrc $bash_profile &> /dev/null
+then
   echo 'cinemaslides: CINEMASLIDESDIR is set. OK'
 else
   echo 'cinemaslides: Setting CINEMASLIDESDIR'
@@ -484,7 +540,8 @@ fi
 
 # Local certificate store and example certificates
 certstore=$basedir/CERTSTORE
-if grep -P "export CINEMACERTSTORE=" $bashrc $bash_profile &> /dev/null ; then
+if grep -P "export CINEMACERTSTORE=" $bashrc $bash_profile &> /dev/null
+then
   echo 'cinemaslides: CINEMACERTSTORE is set. OK'
 else
   echo '' >> $bashrc
@@ -492,9 +549,11 @@ else
   echo "export CINEMACERTSTORE=$certstore" >> $bashrc
   exec_shell_required=true
 fi
-if location_exists $certstore ; then
+if location_exists $certstore
+then
   cd $certstore
-  if [ -f leaf.key ] && [ -f leaf.signed.pem ] && [ -f intermediate.key ] && [ -f intermediate.signed.pem ] && [ -f ca.key ] && [ -f ca.self-signed.pem ] && [ -f dc-certificate-chain ] ; then
+  if [ -f leaf.key -a -f leaf.signed.pem -a -f intermediate.key -a -f intermediate.signed.pem -a -f ca.key -a -f ca.self-signed.pem -a -f dc-certificate-chain ]
+  then
     echo 'Local certificate store: Required certificates found'
   else
     echo 'Local certificate store: Generating example certificates ...'
@@ -504,7 +563,8 @@ else
   mkdir $certstore && cd $certstore
   $bindir/make-dc-certificate-chain.rb
 fi
-if $bindir/dc_crypto_context.rb --quiet $certstore ; then
+if $bindir/dc_crypto_context.rb --quiet $certstore
+then
   echo 'Local certificate store: OK'
 else
   echo "Local certificate store: Failed to find valid certificate chain in $certstore"
@@ -512,19 +572,23 @@ fi
 # Done: Digital Cinemas Tools Distribution
 
 # Keep downloaded setup script around if distribution setup failed (which would have it included)
-if [ -x $bindir/$setup_basename ] && [ -L $bindir/$setup_basename ] && [[ $( readlink -f $bindir/$setup_basename ) == $dist_dir/$setup_basename ]] ; then
+if [ -x $bindir/$setup_basename ] && [ -L $bindir/$setup_basename ] && [[ $( readlink -f $bindir/$setup_basename ) == $dist_dir/$setup_basename ]]
+then
   # I am installation
   echo "$setup_basename: OK"
-  if [[ $setup_dirname != $bindir ]] ; then
+  if [[ $setup_dirname != $bindir ]]
+  then
     echo "$setup_basename: Removing ad-hoc self"
     rm $setup_fullpath
   fi
-elif [ -x $bindir/$setup_basename ] ; then
+elif [ -x $bindir/$setup_basename ]
+then
   # I am ad-hoc
   echo "$setup_basename: Keep downloaded setup"
   rm $bindir/$setup_basename
   chmod u+x $setup_fullpath && mv $setup_fullpath $bindir/$setup_basename
-  if command_exists $setup_basename ; then
+  if command_exists $setup_basename
+  then
     echo "$setup_basename: Keeper OK"
   else
     echo "$setup_basename: Fail"
@@ -536,16 +600,19 @@ fi
 # Setup done
 echo
 
-if [ ${#errors[@]} -gt 0 ] ; then
+if [ ${#errors[@]} -gt 0 ]
+then
   echo 'There were errors:'
-  for e in "${errors[@]}" ; do
+  for e in "${errors[@]}"
+  do
     echo "Error: $e"
   done
   echo
 fi
 
 # FIXME On re-runs in already working environments this is mis-leading
-if $exec_shell_required ; then
+if $exec_shell_required
+then
   echo '  ---------------------------------------------------'
   echo ' |                                                   |'
   echo ' |  To finish the installation run                   |'
