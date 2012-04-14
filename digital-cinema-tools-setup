@@ -150,6 +150,11 @@ then
 fi
 
 # Which OS distribution are we on?
+#
+# Who'da thunk it that finding this would be so messy:
+# Fedora has lsb_release and *-release files pre-installed,
+# Ubuntu doesn't have lsb_release initially but has the *-release file
+# and Debian 6.0.4 has lsb_release but no *-release file
 if [ -f /etc/fedora-release ]
 then
   os_dist=redhat
@@ -159,11 +164,18 @@ then
 elif [ -f /etc/lsb-release ] && grep -P 'Ubuntu' /etc/lsb-release &> /dev/null
 then
   os_dist=ubuntu
+elif command_exists lsb_release
+then
+  # do the debian thing here lsb_release -a, -i, -r ...
+  if [[ "$(lsb_release --id)" =~ Debian ]]
+  then
+    os_dist=debian
+  fi
 fi
 echo "OS: $os_dist"
 
 case $os_dist in
-  ubuntu)
+  debian|ubuntu)
     query='dpkg-query'
     query_params='-s'
     packager='apt-get'
@@ -201,7 +213,7 @@ then
     echo "$setup_basename: ${packages_missing[@]}"
     echo
     case $os_dist in
-      ubuntu)
+      debian|ubuntu)
         echo "Please enter your root password. In Ubuntu this is your ($script_runner) password" ;;
       redhat)
         echo 'Please enter your root password' ;;
@@ -248,7 +260,7 @@ then
   echo 'bashrc: OK'
 else
   # Fedora sources ~/.bashrc from ~/.bash_profile so we loop source if we add the following
-  if [ $os_dist = 'ubuntu' ]
+  if [ $os_dist = 'ubuntu' -o $os_dist = 'debian' ]
   then
     echo "$setup_basename: Source ~/.bash_profile from ~/.bashrc"
     echo '' >> $bashrc
@@ -314,7 +326,7 @@ else
     fi
 
     case $os_dist in
-      ubuntu)
+      debian|ubuntu)
         env_target=$bash_profile ;;
       redhat)
         env_target=$bashrc ;;
