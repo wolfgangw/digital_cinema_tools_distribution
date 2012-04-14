@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2012.04.11'
+AppVersion = 'v1.2012.04.14'
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
 # schema validation, signature and certificate verification and composition
@@ -1172,10 +1172,10 @@ class DC_Signature_Verification
   end
 
   def signer_name
-    @crypto.context.first.subject.to_s
+    @crypto.context.first.subject.to_s unless @crypto.context.empty?
   end
   def signer_issuer
-    @crypto.context.first.issuer.to_s
+    @crypto.context.first.issuer.to_s unless @crypto.context.empty?
   end
 
   def report
@@ -1803,7 +1803,7 @@ def signer_info( xml, sig )
     if ! sig.signer_node.empty?
       signer_ns_prefix = namespace_prefix( xml, MStr::Ns_Xmldsig )
       sig_info[ :x509serialnumber ] = sig.signer_node.first.xpath( "//#{ signer_ns_prefix }:X509SerialNumber", signer_ns_prefix => MStr::Ns_Xmldsig ).first.text.to_i
-      sig_info[ :cert_serial ] = sig.crypto.context.first.serial.to_i
+      sig_info[ :cert_serial ] = sig.crypto.context.first.serial.to_i unless sig.crypto.context.empty?
     end
   end
   return sig_info
