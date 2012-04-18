@@ -26,6 +26,13 @@ AppVersion = 'v0.2012.02.12'
 #   - Nokogiri
 #
 
+if RUBY_VERSION <= '1.9'
+  begin
+    require 'rubygems'
+  rescue LoadError => e
+    raise e.message
+  end
+end
 require 'nokogiri'
 require 'openssl'
 require 'optparse'
@@ -36,6 +43,7 @@ class Optparser
     # defaults
     options = OpenStruct.new
     options.prefix = 'chain'
+    options.quiet = FALSE
 
     opts = OptionParser.new do |opts|
       # Banner and usage
@@ -45,12 +53,15 @@ Usage: #{ AppName } [-p, --prefix <Signed XML file>]
 BANNER
 
       # Options
-      opts.on( '-p', '--prefix prefix', String, "Prefix for extracted pems" ) do |p|
+      opts.on( '-p', '--prefix prefix', String, 'Prefix for extracted pems' ) do |p|
         options.prefix = p
+      end
+      opts.on( '-q', '--quiet', 'No verbose output (Use exit codes 0 or 1)' ) do
+        options.quiet = TRUE
       end
       opts.on_tail( '-h', '--help', 'Display this screen' ) do
         puts opts
-        exit
+        exit 0
       end
     end
 
@@ -59,7 +70,7 @@ BANNER
     rescue Exception => e
       exit if e.class == SystemExit
       puts "Options error: #{ e.message }"
-      exit
+      exit 1
     end
     options
   end
@@ -140,14 +151,23 @@ def pemify( string )
 end
 
 def signature_namespace_and_prefix( doc )
+  # If Signature's namespace is not in doc's namespace collection then it will be either
+  #   * in Ns_Xmldsig declared as default namespace for Signature scope
+  #   * or whacked beyond recognition
   doc_ns = doc.collect_namespaces
-  if doc_ns.key( MStr::Ns_Xmldsig )
-    prefix = doc_ns.key( MStr::Ns_Xmldsig ).split( 'xmlns:' ).last
+  if RUBY_VERSION < '1.9'
+    # Hash#index will be deprecated in the ruby 1.9.x series. Is in here for 1.8.x
+    if doc_ns.index( MStr::Ns_Xmldsig )
+      prefix = doc_ns.index( MStr::Ns_Xmldsig ).split( 'xmlns:' ).last
+    else
+      prefix = 'xmlns'
+    end
   else
-    # If Signature's namespace is not in doc's namespace collection then it will be either
-    #   * in Ns_Xmldsig declared as default namespace for Signature scope
-    #   * or whacked beyond recognition
-    prefix = 'xmlns'
+    if doc_ns.key( MStr::Ns_Xmldsig )
+      prefix = doc_ns.key( MStr::Ns_Xmldsig ).split( 'xmlns:' ).last
+    else
+      prefix = 'xmlns'
+    end
   end
   sig_ns = { prefix => MStr::Ns_Xmldsig }
   return sig_ns, prefix
@@ -188,22 +208,25 @@ certs = extract_certs( doc, sig_ns, prefix ) if doc
 certs, errors = sort_certs( certs ) if certs
 
 if certs
+  outfiles = Array.new
   certs.each_with_index do |cert, index|
     outfile = "#{ options.prefix }_#{ pad( certs.size.to_s.size, index ) }.pem"
     begin
-      File.open( outfile, 'w' ) { |f| f.write cert.to_pem }
+      File.open( outfile, 'w' ) { |f| f.write cert.to_pem; f.close }
+      outfiles << outfile
     rescue Exception => e
-      puts e.inspect
+      puts e.inspect unless options.quiet
       exit 1
     end
   end
-  puts "#{ certs.size } certificate#{ certs.size != 1 ? 's' : '' } extracted"
+  puts "#{ certs.size } certificate#{ certs.size != 1 ? 's' : '' } extracted: #{ outfiles.inspect }" unless options.quiet
 else
-  puts "No certificates found"
+  puts "No certificates found" unless options.quiet
 end
 
 if errors
-  errors.map { |e| puts e }
+  errors.map { |e| puts e } unless options.quiet
+  exit 1
 end
 
 exit 0
