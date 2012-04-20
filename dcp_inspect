@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2012.04.14'
+AppVersion = 'v1.2012.04.20'
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
 # schema validation, signature and certificate verification and composition
@@ -165,8 +165,8 @@ class DLogger
     @verbosity = options.verbosity
     case @verbosity
     when 'quiet'  then @errors, @info, @debug, @cr = [ FALSE, FALSE, FALSE, FALSE ]
+    when 'info'   then @errors, @info, @debug, @cr = [ FALSE, TRUE, FALSE, FALSE ]
     when 'errors' then @errors, @info, @debug, @cr = [ TRUE, FALSE, FALSE, FALSE ]
-    when 'info'   then @errors, @info, @debug, @cr = [ TRUE, TRUE, FALSE, TRUE ]
     when 'debug'  then @errors, @info, @debug, @cr = [ TRUE, TRUE, TRUE, TRUE ]
     when 'trace_func'
                        @errors, @info, @debug, @cr = [ FALSE, FALSE, FALSE, FALSE ]
@@ -1567,7 +1567,7 @@ class Eta
 
   def preserve_terminal_title_with_message( message )
     clear_terminal
-    @output.info [ @title, message ].join( ' ' )
+    @output.debug [ @title, message ].join( ' ' )
   end
 
   private
@@ -2187,7 +2187,7 @@ def dcp_inspect( options, arg )
   info << "Found #{ am_files.size } Assetmaps" unless am_files.size == 1
 
   # Process all Assetmaps
-  @logger.info( "Found #{ amount( 'Assetmap', am_files ) }" )
+  @logger.debug( "Found #{ amount( 'Assetmap', am_files ) }" )
   dict = Array.new # list of dictionaries/hashes
   pkls = Array.new
   pkls_missing = Array.new
@@ -2304,7 +2304,7 @@ def dcp_inspect( options, arg )
   end
 
   # List all found PKLs
-  @logger.info( "Found #{ amount( 'Package', pkls.flatten ) }" )
+  @logger.debug( "Found #{ amount( 'Package', pkls.flatten ) }" )
   pkls.each_with_index do |am_pkls, index|
     am_pkls.each do |pkl_id|
       if dict[ index ][ pkl_id ]
@@ -2472,7 +2472,7 @@ def dcp_inspect( options, arg )
 
   # List all found CPLs
   if cpls.flatten.size > 0
-    @logger.info( "Found #{ amount( 'Composition', cpls.flatten ) }" )
+    @logger.debug( "Found #{ amount( 'Composition', cpls.flatten ) }" )
     dict.each_with_index do |dictionary, index|
       cpls[ index ].each do |cpl_id|
         cpl_file = package dictionary[ cpl_id ]
