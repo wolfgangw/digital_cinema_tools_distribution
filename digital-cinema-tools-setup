@@ -43,7 +43,7 @@
 # Wolfgang Woehl 2012
 #
 set -e
-setup_version='v1.2012.04.13'
+setup_version='v1.2012.04.21'
 
 # Location of self
 setup_dirname=$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
@@ -154,6 +154,7 @@ fi
 # Who'da thunk it that finding this would be so messy:
 # Fedora has lsb_release and *-release files pre-installed,
 # Ubuntu doesn't have lsb_release initially but has the *-release file
+# openSuSE has os-release and SuSE-release and lsb_release
 # and Debian 6.0.4 has lsb_release but no *-release file
 if [ -f /etc/fedora-release ]
 then
@@ -161,6 +162,9 @@ then
 elif [ -f /etc/redhat-release ]
 then
   os_dist=redhat
+elif [ -f /etc/SuSE-release ]
+then
+  os_dist=opensuse
 elif [ -f /etc/lsb-release ] && grep -P 'Ubuntu' /etc/lsb-release &> /dev/null
 then
   os_dist=ubuntu
@@ -190,6 +194,12 @@ case $os_dist in
     packager_params='-y install'
     packages_required=( make automake gcc gcc-c++ wget libxslt-devel expat-devel xmlsec1 xmlsec1-openssl readline-devel zlib-devel openssl-devel ImageMagick mplayer sox git libtiff-devel libpng-devel )
     ;;
+  opensuse)
+    query='zypper'
+    query_params='--no-refresh se -i'
+    packager='zypper'
+    packager_params='--gpg-auto-import-keys --non-interactive install'
+    packages_required=( make automake gcc gcc-c++ libxslt-devel libexpat-devel libxmlsec1-openssl-devel xmlsec1 readline-devel zlib-devel openssl-devel ImageMagick mplayer sox git libtiff-devel libpng12-devel )
 esac
 
 # Check basic requirements
@@ -214,26 +224,60 @@ then
     echo
     case $os_dist in
       debian|ubuntu)
-        echo "Please enter your root password. In Ubuntu this is your ($script_runner) password" ;;
-      redhat)
+        echo "Please enter your password" ;;
+      redhat|opensuse)
         echo 'Please enter your root password' ;;
     esac
 
-    # Installation
-    # Special case Fedora/MPlayer: Provided by RPMFusion repository. Add the repo
-    # See repo keys and fingerprints on http://rpmfusion.org/keys
+    # Pre-package-installation requirements
     case $os_dist in
       redhat)
-        rpmfusion_free='http://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-stable.noarch.rpm'
-        rpmfusion_nonfree='http://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-stable.noarch.rpm'
-        if ! sudo $packager -y localinstall $rpmfusion_free $rpmfusion_nonfree
+        # Special case Fedora/MPlayer: Provided by RPMFusion repository. Add the repo
+        # See repo keys and fingerprints on http://rpmfusion.org/keys
+        repo_rpmfusion_free='http://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-stable.noarch.rpm'
+        repo_rpmfusion_nonfree='http://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-stable.noarch.rpm'
+        if ! sudo $packager -y localinstall $repo_rpmfusion_free $repo_rpmfusion_nonfree
         then
-          errors+=("$os_dist: Failed to add RPMFusion repository (required for mplayer)") && echo_last errors[@]
+          errors+=("$os_dist: Failed to add RPMFusion repositories (required for mplayer)") && echo_last errors[@]
         else
-          echo "$os_dist: RPMFusion repository (required for mplayer) OK"
+          echo "$os_dist: RPMFusion repositories (required for mplayer) OK"
         fi
         ;;
+      opensuse)
+        # openSuSE seems to be a special case in its entirety:
+        # In a default installation there is no access to any "devel" packages
+        # and crucial stuff lives on packman. Go figure.
+        if command_exists lsb_release
+        then
+          os_info_blob_thank_you_very_much=`lsb_release -a`
+        elif [ -f /etc/SuSE-release ]
+        then
+          os_info_blob_thank_you_very_much=`cat /etc/SuSE-release`
+        elif [ -f /etc/os-release ]
+        then
+          os_info_blob_thank_you_very_much=`cat /etc/os-release`
+        fi
+        case $os_info_blob_thank_you_very_much in
+          *11.4*)
+            os_dist_version='11.4'
+            ;;
+          *12.1*)
+            os_dist_version='12.1'
+            ;;
+          *)
+            echo 'Sorry, openSuSE 12.1 and 11.4 support only for now'
+            exit 1
+            ;;
+        esac
+        repo_packman="http://packman.inode.at/suse/openSUSE_$os_dist_version"
+        if ! sudo $packager ar -f -n packman $repo_packman packman && $packager refresh
+        then
+          errors+=("$os_dist $os_dist_version: Failed to add Packman repositories") && echo_last errors[@]
+        else
+          echo "$os_dist $os_dist_version: Packman repositories OK"
+        fi
     esac
+    # Install packages
     if ! sudo $packager $packager_params "${packages_missing[@]}"
     then
       errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
@@ -328,7 +372,7 @@ else
     case $os_dist in
       debian|ubuntu)
         env_target=$bash_profile ;;
-      redhat)
+      redhat|opensuse)
         env_target=$bashrc ;;
     esac
     echo '' >> $env_target
