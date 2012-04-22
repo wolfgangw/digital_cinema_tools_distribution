@@ -2,7 +2,7 @@
 #
 # Usage:
 #
-#   * Ubuntu: Run
+#   * Ubuntu / Debian / openSUSE: Run
 #       wget http://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
 #     in a terminal
 #
@@ -34,7 +34,7 @@
 #   * x509_inspect.rb:              Inspect X.509 certificates
 #   * xsd-check.rb:                 Validate XML documents against Schema definitions
 #
-# This installer supports Debian/Ubuntu/Fedora systems
+# This installer supports Debian / Ubuntu / Fedora / openSUSE systems
 # Needs a working network connection
 #
 # It tries hard not to break anything and to respect the existing environment.
@@ -43,7 +43,7 @@
 # Wolfgang Woehl 2012
 #
 set -e
-setup_version='v1.2012.04.21'
+setup_version='v1.2012.04.22'
 
 # Location of self
 setup_dirname=$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
@@ -176,8 +176,18 @@ then
     os_dist=debian
   fi
 fi
-echo "OS: $os_dist"
 
+# Bail out if non-supported OS distribution
+if ! [ -z $os_dist ]
+then
+  echo "OS: $os_dist"
+else
+  echo 'OS not supported'
+  exit 1
+fi
+
+# Depending on which OS we're on set the required packager and switches
+# to install a basic set of packages from distribution sources
 case $os_dist in
   debian|ubuntu)
     query='dpkg-query'
@@ -186,6 +196,7 @@ case $os_dist in
     packager_params='-y install'
     # build-essential odd ..
     packages_required=( build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox git-core libtiff4-dev libpng12-dev )
+    packager_prep="$packager update"
     ;;
   redhat)
     query='rpm'
@@ -202,7 +213,7 @@ case $os_dist in
     packages_required=( make automake gcc gcc-c++ libxslt-devel libexpat-devel libxmlsec1-openssl-devel xmlsec1 readline-devel zlib-devel openssl-devel ImageMagick mplayer sox git libtiff-devel libpng12-devel )
 esac
 
-# Check basic requirements
+# Check for the presence of required basic distribution packages
 if command_exists $query && command_exists $packager
 then
   packages_missing=()
@@ -229,7 +240,7 @@ then
         echo 'Please enter your root password' ;;
     esac
 
-    # Pre-package-installation requirements
+    # Some distributions need extra repositories
     case $os_dist in
       redhat)
         # Special case Fedora/MPlayer: Provided by RPMFusion repository. Add the repo
@@ -277,7 +288,17 @@ then
           echo "$os_dist $os_dist_version: Packman repositories OK"
         fi
     esac
+
     # Install packages
+    if ! [ -z "$packager_prep" ]
+    then
+      if ! sudo $packager_prep
+      then
+        errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
+      else
+        echo "$setup_basename: Package preparation OK"
+      fi
+    fi
     if ! sudo $packager $packager_params "${packages_missing[@]}"
     then
       errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
@@ -293,12 +314,12 @@ else
   exit 1
 fi
 
-# set up directories for tools and tmp
+# Set up directories for digital cinema tools
 if ! location_exists $basedir ; then mkdir $basedir ; fi
 if ! location_exists $libdir ; then mkdir $libdir ; fi
 if ! location_exists $bindir ; then mkdir $bindir ; fi
 
-# source .bash_profile from .bashrc
+# Source .bash_profile from .bashrc
 if grep -P '^(source|\.) .*/.bash_profile' $bashrc
 then
   echo 'bashrc: OK'
@@ -433,87 +454,97 @@ fi
 
 # Try to install a ruby version
 # Explicitly set global $ruby_version
-if ! rbenv global $ruby_version
+if command_exists rbenv
 then
-  echo 'rbenv: Required ruby not installed'
-fi
-if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby
-then
-  echo "Ruby: OK"
-else
-  echo "Ruby: Installing ... This will take a while (~5 minutes)"
-  if ! rbenv install $ruby_version
+  if ! rbenv global $ruby_version
   then
-    errors+=("Ruby: Failed to install requested version") && echo_last errors[@]
-  else
-    rbenv global $ruby_version
-    rbenv rehash
-    echo "Ruby: $( rbenv version )"
-    echo 'Ruby: OK'
+    echo 'rbenv: Required ruby not installed'
   fi
+  if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby
+  then
+    echo "Ruby: OK"
+  else
+    echo "Ruby: Installing ... This will take a while (~5 minutes)"
+    if ! rbenv install $ruby_version
+    then
+      errors+=("Ruby: Failed to install requested version") && echo_last errors[@]
+    else
+      rbenv global $ruby_version
+      rbenv rehash
+      echo "Ruby: $( rbenv version )"
+      echo 'Ruby: OK'
+    fi
+  fi
+else
+  errors+=("Ruby: Failed to install ruby (Required command rbenv not found)") && echo_last errors[@]
 fi
 
 # Nokogiri (with c14n)
 cd $libdir
-if gem list -i nokogiri &> /dev/null
+if command_exists gem
 then
-  echo 'Nokogiri: OK'
-else
-  echo 'Nokogiri: Installing ...'
-  if location_is_git_repo $nokogiri_dir
+  if gem list -i nokogiri &> /dev/null
   then
-    cd $nokogiri_dir
-    echo 'Nokogiri: Pulling updates ...'
-    git checkout master
-    if ! git pull
-    then
-      errors+=("Nokogiri: Failed to pull updates. Try again later") && echo_last errors[@]
-    fi
+    echo 'Nokogiri: OK'
   else
-    remove_if_exists nokogiri
-    if ! git clone $nokogiri_url
+    echo 'Nokogiri: Installing ...'
+    if location_is_git_repo $nokogiri_dir
     then
-      errors+=("Nokogiri: Failed to clone repository. Try again later") && echo_last errors[@]
-    else
-      echo 'Nokogiri: Repository OK'
-    fi
-  fi
-fi
-if location_exists $nokogiri_dir && ! gem list -i nokogiri
-then
-  cd $nokogiri_dir
-  echo 'Nokogiri: Installing required gems hoe, rake-compiler, racc, rexical, minitest'
-  if ! gem install hoe rake-compiler racc rexical minitest
-  then
-    errors+=("Nokogiri: Failed to install required gems hoe, rake-compiler, racc, rexical, minitest") && echo_last errors[@]
-  else
-    rbenv rehash
-    echo 'Nokogiri: Installing required gem rake 0.9.2' # Quite possible that this is outdated
-    if ! gem install rake -v=0.9.2
-    then
-      errors+=("Nokogiri: Failed to install required gem rake") && echo_last errors[@]
-    else
-      rbenv rehash
-      echo 'Nokogiri: Building ...'
-      if rake && rake install_gem && sleep 10 && rbenv rehash
+      cd $nokogiri_dir
+      echo 'Nokogiri: Pulling updates ...'
+      git checkout master
+      if ! git pull
       then
-        if gem list -i nokogiri
-        then
-          echo 'Nokogiri: OK'
-        else
-          errors+=("Nokogiri: Gem nokogiri not found") && echo_last errors[@]
-        fi
+        errors+=("Nokogiri: Failed to pull updates. Try again later") && echo_last errors[@]
+      fi
+    else
+      remove_if_exists nokogiri
+      if ! git clone $nokogiri_url
+      then
+        errors+=("Nokogiri: Failed to clone repository. Try again later") && echo_last errors[@]
       else
-        errors+=("Nokogiri: Failed to build and/or install gem nokogiri") && echo_last errors[@]
+        echo 'Nokogiri: Repository OK'
       fi
     fi
   fi
-elif ! location_exists $nokogiri_dir
-then
-  errors+=("Nokogiri: Failed to setup repository") && echo_last errors[@]
-elif location_exists $nokogiri_dir && gem list -i nokogiri
-then
-  echo 'Nokogiri: OK'
+  if location_exists $nokogiri_dir && ! gem list -i nokogiri
+  then
+    cd $nokogiri_dir
+    echo 'Nokogiri: Installing required gems hoe, rake-compiler, racc, rexical, minitest'
+    if ! gem install hoe rake-compiler racc rexical minitest
+    then
+      errors+=("Nokogiri: Failed to install required gems hoe, rake-compiler, racc, rexical, minitest") && echo_last errors[@]
+    else
+      rbenv rehash
+      echo 'Nokogiri: Installing required gem rake 0.9.2' # Quite possible that this is outdated
+      if ! gem install rake -v=0.9.2
+      then
+        errors+=("Nokogiri: Failed to install required gem rake") && echo_last errors[@]
+      else
+        rbenv rehash
+        echo 'Nokogiri: Building ...'
+        if rake && rake install_gem && sleep 10 && rbenv rehash
+        then
+          if gem list -i nokogiri
+          then
+            echo 'Nokogiri: OK'
+          else
+            errors+=("Nokogiri: Gem nokogiri not found") && echo_last errors[@]
+          fi
+        else
+          errors+=("Nokogiri: Failed to build and/or install gem nokogiri") && echo_last errors[@]
+        fi
+      fi
+    fi
+  elif ! location_exists $nokogiri_dir
+  then
+    errors+=("Nokogiri: Failed to setup repository") && echo_last errors[@]
+  elif location_exists $nokogiri_dir && gem list -i nokogiri
+  then
+    echo 'Nokogiri: OK'
+  fi
+else
+  errors+=("Nokogiri: Failed to install Nokogiri (Required command gem not found)") && echo_last errors[@]
 fi
 
 # openjpeg
@@ -694,25 +725,30 @@ else
   errors+=("Digital cinema tools distribution: Failed to update $bindir. Repository missing") && echo_last errors[@]
 fi
 # cinemaslides: gem highline required
-if gem list -i highline &> /dev/null
+if command_exists gem
 then
-  echo 'cinemaslides: Required gem highline OK'
-else
-  if ! gem install highline && rbenv rehash
+  if gem list -i highline &> /dev/null
   then
-    errors+=("cinemaslides: Failed to install required gem highline. Try again later") && echo_last errors[@]
-  else
     echo 'cinemaslides: Required gem highline OK'
+  else
+    if ! gem install highline && rbenv rehash
+    then
+      errors+=("cinemaslides: Failed to install required gem highline. Try again later") && echo_last errors[@]
+    else
+      echo 'cinemaslides: Required gem highline OK'
+    fi
   fi
+else
+  errors+=("cinemaslides: Failed to install required gem highline (Required command gem not found)") && echo_last errors[@]
 fi
-# cinemaslides: env CINEMASLIDESDIR (will be created on-demand by cinemaslides)
+# cinemaslides: Set env CINEMASLIDESDIR (will be created on-demand by cinemaslides)
 if [ -z "$CINEMASLIDESDIR" ]
 then
   cinemaslidesdir=$basedir/CINEMASLIDESDIR
 else
   cinemaslidesdir="$CINEMASLIDESDIR"
 fi
-# FIXME Check for $cinemaslidesdir, there might be already another path exported for CINEMASLIDESDIR
+# There might be another path exported for CINEMASLIDESDIR (user mod)
 if grep -P "export CINEMASLIDESDIR=" $bashrc $bash_profile &> /dev/null
 then
   echo 'cinemaslides: CINEMASLIDESDIR is set. OK'
@@ -796,7 +832,7 @@ then
   then
     echo "$setup_basename: Keeper OK"
   else
-    echo "$setup_basename: Fail"
+    echo "$setup_basename: Keeper failed"
   fi
 else
   errors+=("$setup_basename: Keeper still borked") && echo_last errors[@]
