@@ -69,7 +69,7 @@ rbenv_plugins_dir=$rbenv_dir/plugins
 # Ruby build system: ruby-build
 rubybuild_url="git://github.com/sstephenson/ruby-build.git"
 rubybuild_dir=$rbenv_plugins_dir/ruby-build
-ruby_version='1.9.3-p125'
+ruby_version='1.9.3-p194'
 gemrc=$HOME/.gemrc
 
 # XML engine: Nokogiri
