@@ -43,7 +43,7 @@
 # Wolfgang Woehl 2012
 #
 set -e
-setup_version='v1.2012.04.22'
+setup_version='v1.2012.04.23'
 
 # Location of self
 setup_dirname=$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
@@ -583,25 +583,31 @@ else
     cd $openjpeg_build_dir
     if ./configure --disable-doc --prefix=$openjpeg_install_dir && make -j3 && make install
     then
+      opj_build=ok
       echo "openjpeg: Build OK"
     else
+      opj_build=fail
       errors+=("openjpeg: Failed to configure, build and install") && echo_last errors[@]
     fi
   else
+    opj_build=fail
     errors+=("Failed to extract tarball at $openjpeg_dir") && echo_last errors[@]
   fi
 fi
-cd $bindir
-for tool in $openjpeg_install_dir/bin/*
-do
-  if [ -e $bindir/$(basename ${tool}) ]
-  then
-    echo "openjpeg: $(basename ${tool}) OK"
-  else
-    echo "openjpeg: Add to $bindir: $(basename ${tool})"
-    ln -s $tool .
-  fi
-done # openjpeg
+if [ "$opj_build" = 'ok' ]
+then
+  cd $bindir
+  for tool in $openjpeg_install_dir/bin/*
+  do
+    if [ -e $bindir/$(basename ${tool}) ]
+    then
+      echo "openjpeg: $(basename ${tool}) OK"
+    else
+      echo "openjpeg: Add to $bindir: $(basename ${tool})"
+      ln -s $tool .
+    fi
+  done # openjpeg
+fi
 
 # asdcplib
 cd $libdir
@@ -656,25 +662,31 @@ else
     esac
     if ./configure --with-expat=yes LIBS="-lexpat" --prefix=$asdcplib_install_dir && make -j3 && make install
     then
+      asdcplib_build=ok
       echo 'asdcplib: Build OK'
     else
+      asdcplib_build=fail
       errors+=("asdcplib: Failed to configure, build and install") && echo_last errors[@]
     fi
   else
+    asdcplib_build=fail
     errors+=("asdcplib: Failed to extract tarball at $asdcplib_dir") && echo_last errors[@]
   fi
 fi
-cd $bindir
-for tool in $asdcplib_install_dir/bin/*
-do
-  if [ -e $bindir/$(basename ${tool}) ]
-  then
-    echo "asdcplib: $(basename ${tool}) OK"
-  else
-    echo "asdcplib: Add to $bindir: $(basename ${tool})"
-    ln -s $tool .
-  fi
-done # asdcplib
+if [ "$asdcplib_build" = 'ok' ]
+then
+  cd $bindir
+  for tool in $asdcplib_install_dir/bin/*
+  do
+    if [ -e $bindir/$(basename ${tool}) ]
+    then
+      echo "asdcplib: $(basename ${tool}) OK"
+    else
+      echo "asdcplib: Add to $bindir: $(basename ${tool})"
+      ln -s $tool .
+    fi
+  done # asdcplib
+fi
 
 # Digital Cinema Tools distribution
 cd $libdir
