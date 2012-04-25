@@ -119,6 +119,7 @@ class Options
     options.as_asset_store = FALSE
     options.verbosity = 'debug'
     options.verbosity_choices = [ 'quiet', 'errors', 'info', 'debug', 'trace_func' ]
+
     opts = OptionParser.new do |opts|
       opts.banner = <<BANNER
 #{ AppName } #{ AppVersion }
@@ -146,6 +147,7 @@ BANNER
         exit
       end
     end
+
     begin
       opts.parse!( args )
     rescue Exception => e
@@ -1933,7 +1935,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
       asset_ns = asset.namespaces
       asset_id = asset.xpath( "#{ cpl_ns_prefix }:Id", asset_ns ).text.split( ':' ).last
       duration = asset.xpath( "#{ cpl_ns_prefix }:Duration", asset_ns ).text.to_i
-      n, d = asset.xpath( "#{ cpl_ns_prefix }:EditRate", asset_ns ).text.split( ' ' ).map { |n| n.to_i }
+      n, d = asset.xpath( "#{ cpl_ns_prefix }:EditRate", asset_ns ).text.split( ' ' ).map { |num| num.to_i }
       if n and d then edit_rate = Rational( n, d ) else edit_rate = 0 end
       durations << duration
       edit_rates << edit_rate
