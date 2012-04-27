@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-AppVersion = "v0.2012.04.25"
+AppVersion = "v0.2012.04.27"
 #
 # Cinemaslides offers preview modes, a basic set of transition types 
 # and a basic set of DCP authoring options.
@@ -2081,6 +2081,7 @@ if @output_type == "dcp"
       exit
     else
       CINEMACERTSTORE = ENV[ 'CINEMACERTSTORE' ]
+      @logger.debug( "CINEMACERTSTORE is set to #{ CINEMACERTSTORE }" )
       begin
         signer_key_file, signer_cert_file, signer_cert_obj, ca_cert_file, intermediate_cert_file, certchain_text, certchain_objs = signature_context
       rescue Exception => e

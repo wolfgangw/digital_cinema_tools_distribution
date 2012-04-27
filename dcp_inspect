@@ -1821,7 +1821,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
 
   cpl_ns_prefix = namespace_prefix( xml, xml.root.namespace.href )
   cpl_id = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Id" ).text.split( ':' ).last
-  cpl_file = dict[ cpl_id ]
+  cpl_file = package dict[ cpl_id ]
   case ns[ cpl_ns_prefix ]
   when MStr::Smpte_cpl
     cpl_type = 'SMPTE'
@@ -1829,7 +1829,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
     cpl_type = 'Interop'
   else
     cpl_type = 'Unknown'
-    errors << "CPL #{ cpl_id }: Default namespace unknown: #{ ns[ cpl_ns_prefix ] }: #{ package dict[ cpl_id ] }"
+    errors << "CPL #{ cpl_id }: Default namespace unknown: #{ ns[ cpl_ns_prefix ] }: #{ cpl_file }"
   end
   cpl_referenced_assets_types << cpl_type
 
