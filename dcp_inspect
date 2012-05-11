@@ -1718,9 +1718,7 @@ def errors_signature_verification( errors, signature_result, asset, file )
       errors << "Signature: #{ asset }: #{ file }: #{ signature_result.crypto.errors[ :context ].inspect }"
     end
   else
-    signature_result.messages.each do |message|
-      errors << "Signature: #{ asset }: #{ file }: #{ message }"
-    end
+    errors << "Signature verification failure: #{ asset }: #{ file }:\n\t#{ signature_result.messages.join( "\n\t" ) }"
   end
   return errors
 end
@@ -2052,6 +2050,23 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
       end # if dict
 
       report << "#{ "%6s" % duration }  #{ edit_rate == 0 ? 'EditRate funk' : Timecode.new( duration, edit_rate ) } @ #{ edit_rate }  #{ asset_id }  #{ asset.node_name }\t(#{ meta_report })"
+      case asset.node_name
+      when 'MainStereoscopicPicture'
+        unless meta[ 'EssenceType' ] == MStr::Stereoscopic_pictures
+          report << "Essence type mismatch: Expected MainStereoscopicPicture, got #{ meta[ 'EssenceType' ] }"
+          errors << report.last + ': ' + cpl_file + ': ' + "Reel #{ index + 1 }"
+        end
+      when 'MainPicture'
+        unless meta[ 'EssenceType' ] == MStr::Pictures
+          report << "Essence type mismatch: Expected MainPicture, got #{ meta[ 'EssenceType' ] }"
+          errors << report.last + ': ' + cpl_file + ': ' + "Reel #{ index + 1 }"
+        end
+      when 'MainSound'
+        unless meta[ 'EssenceType' ] == MStr::Audio
+          report << "Essence type mismatch: Expected MainSound, got #{ meta[ 'EssenceType' ] }"
+          errors << report.last + ': ' + cpl_file + ': ' + "Reel #{ index + 1 }"
+        end
+      end
 
     end # assets.each
 
@@ -2539,7 +2554,7 @@ def dcp_inspect( options, arg )
     end
   end
 
-  info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls.flatten ) } (#{ @signed_pkls_count } signed/#{ @signed_pkls_verified_count } verified), #{ amount( 'Composition', cpls.flatten ) } (#{ @signed_cpls_count } signed/#{ @signed_cpls_verified_count } verified)"
+  info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls.flatten ) } (#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }), #{ amount( 'Composition', cpls.flatten ) } (#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' })"
   info << "#{ amount( 'Error', errors ) }, #{ amount( 'Hint', hints ) }"
 
   return { :errors => errors, :hints => hints, :info => info, :am_files => am_files, :pkls => pkls, :cpls => cpls, :pkls_missing => pkls_missing, :cpls_missing => cpls_missing }
