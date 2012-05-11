@@ -2019,6 +2019,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
                 else
                   meta_report = 'DCSubtitle, no Subtitle found'
                 end
+                meta = { 'EssenceType' => MStr::Timed_text }
 
               else
                 broken_assets << asset_id
@@ -2050,21 +2051,28 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
       end # if dict
 
       report << "#{ "%6s" % duration }  #{ edit_rate == 0 ? 'EditRate funk' : Timecode.new( duration, edit_rate ) } @ #{ edit_rate }  #{ asset_id }  #{ asset.node_name }\t(#{ meta_report })"
-      case asset.node_name
-      when 'MainStereoscopicPicture'
-        unless meta[ 'EssenceType' ] == MStr::Stereoscopic_pictures
-          report << "Essence type mismatch: Expected MainStereoscopicPicture, got #{ meta[ 'EssenceType' ] }"
-          errors << report.last + ': ' + cpl_file + ': ' + "Reel #{ index + 1 }"
-        end
-      when 'MainPicture'
-        unless meta[ 'EssenceType' ] == MStr::Pictures
-          report << "Essence type mismatch: Expected MainPicture, got #{ meta[ 'EssenceType' ] }"
-          errors << report.last + ': ' + cpl_file + ': ' + "Reel #{ index + 1 }"
-        end
-      when 'MainSound'
-        unless meta[ 'EssenceType' ] == MStr::Audio
-          report << "Essence type mismatch: Expected MainSound, got #{ meta[ 'EssenceType' ] }"
-          errors << report.last + ': ' + cpl_file + ': ' + "Reel #{ index + 1 }"
+      if meta
+        case asset.node_name
+        when 'MainStereoscopicPicture'
+          unless meta[ 'EssenceType' ] == MStr::Stereoscopic_pictures
+            report << "Essence type mismatch: Expected MainStereoscopicPicture, got #{ meta[ 'EssenceType' ] || 'NIL' }"
+            errors << report.last + ': ' + cpl_file + ': ' + "Reel #{ index + 1 }"
+          end
+        when 'MainPicture'
+          unless ( meta[ 'EssenceType' ] == MStr::Pictures or meta[ 'EssenceType' ] == MStr::Mpeg2 )
+            report << "Essence type mismatch: Expected MainPicture, got #{ meta[ 'EssenceType' ] || 'NIL' }"
+            errors << report.last + ': ' + cpl_file + ': ' + "Reel #{ index + 1 }"
+          end
+        when 'MainSound'
+          unless meta[ 'EssenceType' ] == MStr::Audio
+            report << "Essence type mismatch: Expected MainSound, got #{ meta[ 'EssenceType' ] || 'NIL' }"
+            errors << report.last + ': ' + cpl_file + ': ' + "Reel #{ index + 1 }"
+          end
+        when 'MainSubtitle'
+          unless meta[ 'EssenceType' ] == MStr::Timed_text
+            report << "Essence type mismatch: Expected MainSubtitle, got #{ meta[ 'EssenceType' ] || 'NIL' }"
+            errors << report.last + ': ' + cpl_file + ': ' + "Reel #{ index + 1 }"
+          end
         end
       end
 
