@@ -60,6 +60,9 @@ basedir=$HOME/.digital_cinema_tools
 libdir=$basedir/.lib
 bindir=$basedir/.bin
 
+# readlink command
+readlink="readlink -f"
+
 # Ruby version management: rbenv
 rbenv_url="git://github.com/sstephenson/rbenv.git"
 export RBENV_ROOT=$libdir/.rbenv
@@ -132,9 +135,9 @@ location_is_git_repo() {
 }
 
 # Only linux systems in mind for now
-if [[ ! $MACHTYPE = *linux* ]]
+if [[ ! $MACHTYPE = *linux* ]] | [[ ! $MACHTYPE = *darwin* ]]
 then
-  echo "This installer supports only linux systems"
+  echo "This installer supports only linux and OS X systems"
   exit 1
 fi
 
@@ -175,6 +178,13 @@ then
   then
     os_dist=debian
   fi
+elif command_exists sw_vers
+then
+  # do the os x thing here
+  if [[ "$(sw_vers -productName)" =~ Mac ]]
+  then
+	os_dist=osx
+  fi
 fi
 
 # Bail out if non-supported OS distribution
@@ -211,6 +221,16 @@ case $os_dist in
     packager='zypper'
     packager_params='--gpg-auto-import-keys --non-interactive install'
     packages_required=( make automake gcc gcc-c++ libxslt-devel libexpat-devel libxmlsec1-openssl-devel xmlsec1 readline-devel zlib-devel openssl-devel ImageMagick mplayer sox git libtiff-devel libpng12-devel )
+	;;
+  osx)
+	query='brew'
+	query_params='list'
+	packager='brew'
+	packager_params='install'
+    packages_required=( wget libxslt expat xmlsec1 readline openssl imagemagick mplayer sox libtiff )
+	packager_prep="$packager update"
+	# os x readlink does not know the -f flag
+	readlink="readlink"
 esac
 
 # Check for the presence of required basic distribution packages
@@ -292,22 +312,49 @@ then
     # Install packages
     if ! [ -z "$packager_prep" ]
     then
-      if ! sudo $packager_prep
-      then
-        errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
-      else
-        echo "$setup_basename: Package preparation OK"
-      fi
+	  case $os_dist in
+		osx)
+		  # brew on os x does not need sudo privileges
+		  if ! $packager_prep
+		  then
+	        errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
+          else
+            echo "$setup_basename: Package preparation OK"
+          fi
+		  ;;
+		*)
+          if ! sudo $packager_prep
+          then
+            errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
+          else
+            echo "$setup_basename: Package preparation OK"
+          fi
+		  ;;
+      esac
     fi
-    if ! sudo $packager $packager_params "${packages_missing[@]}"
-    then
-      errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
-      sudo -K # drop sudo privileges
-      exit 1
-    else
-      echo "$packager: OK"
-    fi
-    sudo -K
+
+	case $os_dist in
+      osx)
+		# brew on os x does not need sudo privileges
+		if ! $packager $packager_params "${packages_missing[@]}"
+		then
+          errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
+		else
+          echo "$packager: OK"
+		fi
+		;;
+	  *)
+        if ! sudo $packager $packager_params "${packages_missing[@]}"
+        then
+          errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
+          sudo -K # drop sudo privileges
+          exit 1
+        else
+          echo "$packager: OK"
+        fi
+        sudo -K
+		;;
+	esac
   fi
 else
   errors+=("$setup_basename: Required packager tools not found: $query/$packager. Exiting") && echo_last errors[@]
@@ -825,7 +872,7 @@ else
 fi
 
 # Keep downloaded setup script around if distribution setup failed (which would have it included)
-if [ -x "$bindir/$setup_basename" -a -L "$bindir/$setup_basename" ] && [[ $( readlink -f "$bindir/$setup_basename" ) = "$dist_dir/$setup_basename" ]]
+if [ -x "$bindir/$setup_basename" -a -L "$bindir/$setup_basename" ] && [[ $( $readlink "$bindir/$setup_basename" ) = "$dist_dir/$setup_basename" ]]
 then
   # I am installation
   echo "$setup_basename: OK"
@@ -882,4 +929,3 @@ echo "$setup_basename: Done"
 echo
 
 exit 0
-
