@@ -416,31 +416,17 @@ then
   echo
   exit 1
 fi
-if command_exists rbenv
+if location_exists $rbenv_dir && location_exists $rbenv_dir/.git
 then
-  echo "rbenv: OK"
-else
-  if location_exists $rbenv_dir && location_exists $rbenv_dir/.git
+  echo "rbenv: Repository exists"
+  if string_includes $PATH "$rbenv_dir/bin"
   then
-    echo "rbenv: Repository exists"
-    if string_includes $PATH "$rbenv_dir/bin"
-    then
-      echo "rbenv: PATH includes rbenv bin dir"
-    else
-      errors+=("rbenv: PATH does not include rbenv bin dir") && echo_last errors[@]
-    fi
+    echo "rbenv: PATH includes rbenv bin dir"
   else
-    echo "rbenv: Installing"
-    remove_if_exists $rbenv_dir
-    if ! git clone $rbenv_url $rbenv_dir
-    then
-      errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
-    fi
-
     case $os_dist in
       debian|ubuntu)
         env_target=$bash_profile ;;
-      redhat|opensuse)
+      redhat|opensuse|osx)
         env_target=$bashrc ;;
     esac
     echo '' >> $env_target
@@ -450,14 +436,21 @@ else
     echo 'eval "$(rbenv init -)"' >> $env_target
     source $env_target
     exec_shell_required=true
+  fi
+else
+  echo "rbenv: Installing"
+  remove_if_exists $rbenv_dir
+  if ! git clone $rbenv_url $rbenv_dir
+  then
+    errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
+  fi
 
-    if command_exists rbenv
-    then
-      echo "rbenv: OK"
-    else
-      echo "rbenv: Command 'rbenv' not found"
-      exit 1
-    fi
+  if command_exists rbenv
+  then
+    echo "rbenv: OK"
+  else
+    echo "rbenv: Command 'rbenv' not found"
+    exit 1
   fi
 fi
 
@@ -503,10 +496,7 @@ fi
 # Explicitly set global $ruby_version
 if command_exists rbenv
 then
-  if ! rbenv global $ruby_version
-  then
-    echo 'rbenv: Required ruby not installed'
-  fi
+
   if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby
   then
     echo "Ruby: OK"
