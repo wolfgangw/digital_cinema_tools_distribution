@@ -134,12 +134,15 @@ location_is_git_repo() {
   location_exists "$1" && location_exists "$1/.git" && [ -d "$1/.git" ]
 }
 
-# Only linux systems in mind for now
-if [[ ! $MACHTYPE = *linux* ]] | [[ ! $MACHTYPE = *darwin* ]]
-then
-  echo "This installer supports only linux and OS X systems"
-  exit 1
-fi
+case $MACHTYPE in
+  *linux*|*darwin*)
+    echo "Welcome to digital-cinema-tools-setup."
+    ;;
+  *)
+    echo "This installer supports Linux and OS X systems only"
+    exit 1
+    ;;
+esac
 
 # Check and bail out if the installer is run with root privileges
 if [ $script_runner == "root" ]
