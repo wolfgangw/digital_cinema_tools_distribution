@@ -190,6 +190,12 @@ then
   fi
 fi
 
+# md5tool: compensate for BSD md5 in OS X
+case $os_dist in
+  osx) md5tool="md5 -q" ;;
+    *) md5tool="md5sum" ;;
+esac
+
 # Bail out if non-supported OS distribution
 if ! [ -z $os_dist ]
 then
@@ -500,7 +506,12 @@ fi
 # Explicitly set global $ruby_version
 if command_exists rbenv
 then
-
+  if ! rbenv global $ruby_version
+    then
+    echo 'rbenv: Required ruby not installed'
+  else
+    echo "rbenv: Required ruby already installed."
+  fi
   if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby
   then
     echo "Ruby: OK"
@@ -666,7 +677,7 @@ else
   fi
 
   remove_if_exists $asdcplib_build_dir
-  if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
+  if [ -e $asdcplib_tarball ] && [[ $( $md5tool $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
   then
     echo "asdcplib: $asdcplib_version_tarball_md5: MD5 OK"
   else
@@ -678,7 +689,7 @@ else
     if wget $asdcplib_tarball_url
     then
       echo 'asdcplib: Download OK'
-      if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
+      if [ -e $asdcplib_tarball ] && [[ $( $md5tool $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
       then
         echo "asdcplib: $asdcplib_version_tarball_md5: MD5 OK"
       else
