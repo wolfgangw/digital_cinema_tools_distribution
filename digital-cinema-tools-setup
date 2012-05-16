@@ -375,19 +375,20 @@ then
   echo 'bashrc: OK'
 else
   # Fedora sources ~/.bashrc from ~/.bash_profile so we loop source if we add the following
-  if [ $os_dist = 'ubuntu' -o $os_dist = 'debian' ]
-  then
-    echo "$setup_basename: Source ~/.bash_profile from ~/.bashrc"
-    echo '' >> $bashrc
-    echo "# $setup_basename: Use .bash_profile to read rbenv environment" >> $bashrc
-    echo 'source $HOME/.bash_profile' >> $bashrc
-    if ! [ -f $bash_profile ]
-    then
-      touch $bash_profile
-      echo 'bash_profile: Touched'
-    fi
-    exec_shell_required=true
-  fi
+  case $os_dist in
+    ubuntu|debian|osx)
+      echo "$setup_basename: Source ~/.bash_profile from ~/.bashrc"
+      echo '' >> $bashrc
+      echo "# $setup_basename: Use .bash_profile to read rbenv environment" >> $bashrc
+      echo 'source $HOME/.bash_profile' >> $bashrc
+      if ! [ -f $bash_profile ]
+      then
+        touch $bash_profile
+        echo 'bash_profile: Touched'
+      fi
+      exec_shell_required=true
+    ;;
+  esac
 fi
 
 # Check for ~/bin and inclusion in PATH
@@ -427,9 +428,9 @@ then
     echo "rbenv: PATH includes rbenv bin dir"
   else
     case $os_dist in
-      debian|ubuntu)
+      debian|ubuntu|osx)
         env_target=$bash_profile ;;
-      redhat|opensuse|osx)
+      redhat|opensuse)
         env_target=$bashrc ;;
     esac
     echo '' >> $env_target
