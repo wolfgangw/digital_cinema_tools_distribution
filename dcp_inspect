@@ -17,7 +17,8 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2012.04.28'
+AppVersion = 'v1.2012.05.11'
+#
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
 # schema validation, signature and certificate verification and composition
@@ -30,26 +31,36 @@ AppVersion = 'v1.2012.04.28'
 #   dcp_inspect /path/to/dir
 #   dcp_inspect /path/to/dir --check-hashes
 #
+# Installation:
+#
+#   See https://github.com/wolfgangw/digital_cinema_tools_distribution/wiki
+#   for an easy-to-use setup script. This will install everything required
+#   (batteries included).
+#
 # Features:
 #
-# - Checks all packages under a given location
-# - Runs schema validation on all infrastructure files and DCSubtitle
-#    Validation errors will be reported but dcp_inspect will still try
-#    to inspect the contents of non-valid files.
+# - Will find and check all DCPs in a filesystem tree
+#
+# - Runs schema validation on all infrastructure files and DCSubtitle.
+#   Validation errors will be reported but dcp_inspect will still try to
+#   inspect the contents of non-valid files.
+#
 # - Checks and verifies signatures
-#    Signature verification requires a recent Nokogiri version with C14N
-#    support (See Requirements). If the installed version of Nokogiri does
-#    not support C14N dcp_inspect will skip signature verification and
-#    let you know.
-# - Deep-inspects compositions
-#    This includes composition type consistency and completeness checks.
-#    dcp_inspect goes through some lengths to determine a composition's
-#    type (SMPTE/Interop). It does so by collecting all types referenced
-#    and trying to make sense of that list.
+#
+# - Deep-inspects compositions. This includes composition type consistency
+#   and completeness checks. dcp_inspect goes through some lengths to determine
+#   a composition's type (SMPTE/Interop). It does so by collecting all types
+#   referenced and trying to make sense of that list.
+#
 # - Reports in detail all errors encountered
+#
+# See [Examples](https://github.com/wolfgangw/backports/wiki/Example-output-from-dcp_inspect).
 #
 # Requirements:
 #
+#   If you prefer manual installation you will need the following:
+#
+# - $ git clone git://github.com/wolfgangw/backports.git
 # - asdcplib and its cli tools (http://www.cinecert.com/asdcplib/)
 # - Nokogiri, a ruby wrapper for libxml2
 #    (http://nokogiri.org/tutorials/installing_nokogiri.html)
@@ -62,16 +73,15 @@ AppVersion = 'v1.2012.04.28'
 #    Clone the whole repository to put everything in place:
 #        $ git clone git://github.com/wolfgangw/backports.git
 #
-# Run
-#   $ git pull
-# in backports to keep up-to-date.
+#   Run
+#     $ git pull
+#   in backports to keep up-to-date.
 #
 # Couple of todos:
 #
 # - Assetmap options chunks, offsets, volume indices are not handled
 # - Marker lists are not handled
 # - Check Signer.X509IssuerSerial issuer name
-# - Sound present in SMPTE DCP reels?
 #
 # Thanks to Julik for his Timecode library (https://github.com/guerilla-di/timecode).
 #
