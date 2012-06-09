@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2012.06.08'
+AppVersion = 'v1.2012.06.09'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -2507,6 +2507,7 @@ def dcp_inspect( options, arg )
     end # am_pkls.each
   end # pkls.each
 
+  info << "Inspected: #{ arg }"
   info << "Found #{ amount( 'Package', pkls.flatten ) } with total size #{ packages_size_actual == packages_size_listed ? packages_size_actual.to_k : packages_size_actual.to_k + ' (Listed: ' + packages_size_listed.to_k + ')' }"
 
   # List all found CPLs
