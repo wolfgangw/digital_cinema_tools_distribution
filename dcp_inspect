@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2012.06.09'
+AppVersion = 'v1.2012.06.13'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -1943,6 +1943,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
       asset_ns = asset.namespaces
       asset_id = asset.xpath( "#{ cpl_ns_prefix }:Id", asset_ns ).text.split( ':' ).last
       duration = asset.xpath( "#{ cpl_ns_prefix }:Duration", asset_ns ).text.to_i
+      # FIXME Timecode will die on edit_rate == 0
       n, d = asset.xpath( "#{ cpl_ns_prefix }:EditRate", asset_ns ).text.split( ' ' ).map { |num| num.to_i }
       if n and d then edit_rate = Rational( n, d ) else edit_rate = 0 end
       durations << duration
@@ -2507,7 +2508,7 @@ def dcp_inspect( options, arg )
     end # am_pkls.each
   end # pkls.each
 
-  info << "Inspected: #{ arg }"
+  info << "Inspected: #{ File.realpath arg }"
   info << "Found #{ amount( 'Package', pkls.flatten ) } with total size #{ packages_size_actual == packages_size_listed ? packages_size_actual.to_k : packages_size_actual.to_k + ' (Listed: ' + packages_size_listed.to_k + ')' }"
 
   # List all found CPLs
