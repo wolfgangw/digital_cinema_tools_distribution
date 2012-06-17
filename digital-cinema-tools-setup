@@ -43,7 +43,7 @@
 # Wolfgang Woehl 2012
 #
 set -e
-setup_version='v1.2012.04.23'
+setup_version='v1.2012.06.17'
 
 # Location of self
 setup_dirname=$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
@@ -440,7 +440,13 @@ fi
 cd $rbenv_plugins_dir
 if location_is_git_repo $rubybuild_dir
 then
-  echo 'ruby-build: OK'
+  cd $rubybuild_dir
+  if ! git pull
+  then
+    errors+=("ruby-build: Failed to pull updates. Try again later") && echo_last errors[@]
+  else
+    echo 'ruby-build: OK'
+  fi
 else
   remove_if_exists $rubybuild_dir
   echo 'ruby-build: Installing'
