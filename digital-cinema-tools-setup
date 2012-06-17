@@ -487,9 +487,19 @@ fi
 
 # Nokogiri (with c14n)
 cd $libdir
+# Nokogiri origin moved from tenderlove to sparklemotion (6/2012)
+if location_exists $nokogiri_dir && location_is_git_repo $nokogiri_dir && cd $nokogiri_dir && ! [ $(git config remote.origin.url) = $nokogiri_url ]
+then
+  if cd $nokogiri_dir && git remote set-url origin url:$nokogiri_url && git fetch && git remote prune origin
+  then
+    echo 'Nokogiri: Updated repository origin url'
+  else
+    errors+=("Nokogiri: Failed to update repository origin url") && echo_last errors[@]
+  fi
+fi
 if command_exists gem
 then
-  if gem list -i nokogiri &> /dev/null
+  if gem list -i nokogiri &> /dev/null # We don't pull/build updates
   then
     echo 'Nokogiri: OK'
   else
