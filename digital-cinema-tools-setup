@@ -73,7 +73,7 @@ ruby_version='1.9.3-p194'
 gemrc=$HOME/.gemrc
 
 # XML engine: Nokogiri
-nokogiri_url="git://github.com/tenderlove/nokogiri.git"
+nokogiri_url="git://github.com/sparklemotion/nokogiri.git"
 nokogiri_dir=$libdir/nokogiri
 
 # JPEG2000 codec: OpenJPEG
