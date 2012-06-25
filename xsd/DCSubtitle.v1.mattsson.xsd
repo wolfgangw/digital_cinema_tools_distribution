@@ -238,7 +238,8 @@
   </xs:simpleType>
   <xs:simpleType name="positionType">
     <xs:restriction base="xs:decimal">
-      <xs:minInclusive value="0"/>
+      <xs:minInclusive value="-100"/>
+      <xs:maxInclusive value="100"/>
     </xs:restriction>
   </xs:simpleType>
 </xs:schema>
