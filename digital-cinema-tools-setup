@@ -519,7 +519,16 @@ then
       then
         errors+=("Nokogiri: Failed to clone repository. Try again later") && echo_last errors[@]
       else
-        echo 'Nokogiri: Repository OK'
+        # Workaround for issue 2. Thanks to youngwug for coming back with this
+        # (See Nokogiri issue 712 which resulted in a commit with a failing test case and is of zero relevance here)
+        cd $nokogiri_dir
+        nokogiri_required_commit='bfe87e05'
+        if ! git checkout $nokogiri_required_commit
+        then
+          errors+=("Nokogiri: Failed to checkout required version. Try again later") && echo_last errors[@]
+        else
+          echo 'Nokogiri: Repository OK'
+        fi
       fi
     fi
   fi
