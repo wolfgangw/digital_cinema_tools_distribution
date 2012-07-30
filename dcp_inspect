@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2012.06.26'
+AppVersion = 'v1.2012.07.30'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -1691,8 +1691,13 @@ def validate_xml( xml, file )
       xsd_file = ( MStr::Schemas[ xml.namespaces[ 'xmlns' ] ] )
     end
   end
-  xsd = Nokogiri::XML::Schema( open File.join( XSDDir, xsd_file ) )
-  validation_errors = xsd.validate( xml )
+  if xsd_file
+    xsd = Nokogiri::XML::Schema( open File.join( XSDDir, xsd_file ) )
+    validation_errors = xsd.validate( xml )
+  else
+    errors << "Could not determine Schema for #{ xml.namespaces.inspect }"
+    return FALSE, errors
+  end
   if validation_errors.empty?
     return TRUE, errors
   else
@@ -2013,8 +2018,12 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
                       last_time_out = sub.attributes[ 'TimeOut' ].value
                     end
                   end
-                  first_time_in = Timecode.parse_with_ticks( first_time_in, edit_rate )
-                  last_time_out = Timecode.parse_with_ticks( last_time_out, edit_rate )
+                  begin
+                    first_time_in = Timecode.parse_with_ticks( first_time_in, edit_rate )
+                    last_time_out = Timecode.parse_with_ticks( last_time_out, edit_rate )
+                  rescue Exception => e
+                    errors << "Timecode: #{ asset_file }: #{ e.message }"
+                  end
 
                   # Check for empty elements. Thanks to Mattias Mattsson for the field feedback
                   empty_subtitles = 0
