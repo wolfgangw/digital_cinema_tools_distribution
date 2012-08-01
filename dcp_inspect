@@ -1884,18 +1884,37 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
   report << "AnnotationText:   #{ xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:AnnotationText" ).text }"
   report << "ContentKind:      #{ xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ContentKind" ).text }"
   dt = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:IssueDate" ).text
-  dt_friendly = datetime_friendly( DateTime.parse dt )
-  report << "IssueDate:        #{ dt } (#{ dt_friendly })"
+  if dt.empty?
+    errors << "CPL #{ cpl_id }: IssueDate is empty"
+    report << 'IssueDate:        <Empty. See errors below>'
+  else
+    dt_friendly = datetime_friendly( DateTime.parse dt )
+    report << "IssueDate:        #{ dt } (#{ dt_friendly })"
+  end
   # TKR? (Todo: Check URL scheme)
   issuer = xml.at_xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Issuer" )
   if issuer
     if issuer.attributes[ 'language' ] and issuer.attributes[ 'language' ].value == MStr::Tkr_attr
       report << "TKR Base URL:     #{ issuer.text }"
     else
-      report << "Issuer:           #{ issuer.text }"
+      if issuer.text.empty?
+        errors << "CPL #{ cpl_id }: Issuer is empty"
+        report << 'Issuer:           <Empty. See errors below>'
+      else
+        report << "Issuer:           #{ issuer.text }"
+      end
     end
+  else
+    errors << "CPL #{ cpl_id }: Issuer element not found"
+    report << 'Issuer:           <Element not found. See errors below>'
   end
-  report << "Creator:          #{ xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Creator" ).text }"
+  creator = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Creator" ).text
+  if creator.empty?
+    errors << "CPL #{ cpl_id }: Creator is empty"
+    report << 'Creator:          <Empty. See errors below>'
+  else
+    report << "Creator:          #{ creator }"
+  end
 
   # Metadata
   if ns.keys.include?( 'xmlns:meta' )
