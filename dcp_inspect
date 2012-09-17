@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2012.07.30'
+AppVersion = 'v1.2012.09.14'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -1883,14 +1883,20 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
   end
   report << "AnnotationText:   #{ xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:AnnotationText" ).text }"
   report << "ContentKind:      #{ xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ContentKind" ).text }"
-  dt = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:IssueDate" ).text
-  if dt.empty?
-    errors << "CPL #{ cpl_id }: IssueDate is empty"
-    report << 'IssueDate:        <Empty. See errors below>'
+
+  issue_date = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:IssueDate" )
+  if issue_date
+    if issue_date.text.empty?
+      errors << "CPL #{ cpl_id }: IssueDate is empty"
+      report << 'IssueDate:        <Empty -- See schema errors below>'
+    else
+      issue_date_friendly = datetime_friendly( DateTime.parse issue_date.text )
+      report << "IssueDate:        #{ issue_date.text } (#{ issue_date_friendly })"
+    end
   else
-    dt_friendly = datetime_friendly( DateTime.parse dt )
-    report << "IssueDate:        #{ dt } (#{ dt_friendly })"
+    report << "IssueDate:        <Not present -- See schema errors below>"
   end
+
   # TKR? (Todo: Check URL scheme)
   issuer = xml.at_xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Issuer" )
   if issuer
@@ -1898,22 +1904,26 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
       report << "TKR Base URL:     #{ issuer.text }"
     else
       if issuer.text.empty?
-        errors << "CPL #{ cpl_id }: Issuer is empty"
-        report << 'Issuer:           <Empty. See errors below>'
+        hints << "CPL #{ cpl_id }: Issuer is empty"
+        report << 'Issuer:           <Empty>'
       else
         report << "Issuer:           #{ issuer.text }"
       end
     end
   else
-    errors << "CPL #{ cpl_id }: Issuer element not found"
-    report << 'Issuer:           <Element not found. See errors below>'
+    report << 'Issuer:           <Not present>'
   end
-  creator = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Creator" ).text
-  if creator.empty?
-    errors << "CPL #{ cpl_id }: Creator is empty"
-    report << 'Creator:          <Empty. See errors below>'
+
+  creator = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Creator" )
+  if creator
+    if creator.text.empty?
+      hints << "CPL #{ cpl_id }: Creator is empty"
+      report << 'Creator:          <Empty>'
+    else
+      report << "Creator:          #{ creator.text }"
+    end
   else
-    report << "Creator:          #{ creator }"
+    report << 'Creator:          <Not present>'
   end
 
   # Metadata
