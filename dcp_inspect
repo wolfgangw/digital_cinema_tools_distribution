@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2012.09.14'
+AppVersion = 'v1.2012.09.29'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -1897,10 +1897,15 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
     report << "IssueDate:        <Not present -- See schema errors below>"
   end
 
-  # TKR? (Todo: Check URL scheme)
+  # TKR? (TODO: Check URL scheme)
   issuer = xml.at_xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Issuer" )
   if issuer
-    if issuer.attributes[ 'language' ] and issuer.attributes[ 'language' ].value == MStr::Tkr_attr
+    #
+    # Interop and SMPTE UserText types -- used for Issuer -- are referred to by different names
+    # Interop: 'lang' (see xsd/PROTO-ASDCP-CPL-20040511.xsd)
+    # SMPTE: 'language' (see xsd/SMPTE-429-7-2006-CPL.xsd)
+    #
+    if ( issuer.attributes[ 'language' ] and issuer.attributes[ 'language' ].value == MStr::Tkr_attr ) or ( issuer.attributes[ 'lang' ] and issuer.attributes[ 'lang' ].value == MStr::Tkr_attr )
       report << "TKR Base URL:     #{ issuer.text }"
     else
       if issuer.text.empty?
