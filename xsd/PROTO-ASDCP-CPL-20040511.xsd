@@ -120,7 +120,7 @@
             <xs:element name="MainSound" type="cpl:SoundTrackFileAssetType" minOccurs="0"/>
             <xs:element name="MainSubtitle" type="cpl:SubtitleTrackFileAssetType" minOccurs="0"/>
             <xs:element name="ProjectorData" type="cpl:ProjectorDataAssetType" minOccurs="0" maxOccurs="unbounded"/> 
-            <xs:any namespace="##other" minOccurs="0" maxOccurs="unbounded"/>
+            <xs:any namespace="##other" minOccurs="0" maxOccurs="unbounded" processContents="lax"/>
           </xs:sequence>
         </xs:complexType>
       </xs:element>
