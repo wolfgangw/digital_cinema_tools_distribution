@@ -499,9 +499,26 @@ then
 fi
 if command_exists gem
 then
-  if gem list -i nokogiri &> /dev/null # We don't pull/build updates
+  if gem list -i nokogiri &> /dev/null
+    if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby
+    then
+      ruby -e "require 'rubygems'; require 'nokogiri'; if Nokogiri::XML::Document.new.respond_to?( 'canonicalize' ) then exit 0 else exit 1 ; end"
+      if [ $? == 0 ]
+      then
+        nokogiri_c14n=true
+        echo 'Nokogiri: C14N support present'
+      else
+        nokogiri_c14n=false
+        errors+=("Nokogiri: Installed version does not support C14N") && echo_last errors[@]
+      fi
+    fi
   then
-    echo 'Nokogiri: OK'
+    if $nokogiri_c14n
+    then
+      echo 'Nokogiri: OK'
+    else
+      errors+=("Nokogiri: There is a problem with the installed version of Nokogiri. Consider removing your installed version of Nokogiri and re-run this installer") && echo_last errors[@]
+    fi
   else
     echo 'Nokogiri: Installing ...'
     if location_is_git_repo $nokogiri_dir
