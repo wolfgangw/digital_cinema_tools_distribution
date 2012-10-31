@@ -2048,8 +2048,8 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options, signa
                   # last subtitle is not necessarily the last displayed
                   first_time_in = subtitles.first.attributes[ 'TimeIn' ].value
                   last_time_out = subtitles.last.attributes[ 'TimeOut' ].value
-                  first_time_in_text = truncate( ( subtitles[ 0 ].at_xpath( '*/Text|Text' ).gsub( /\s+|\s+$/, '' ) || subtitles[ 0 ].at_xpath( '*/Image|Image' ) ).text, 3 )
-                  last_time_out_text = truncate( ( subtitles[ -1 ].at_xpath( '*/Text|Text' ).gsub( /\s+|\s+$/, '' ) || subtitles[ -1 ].at_xpath( '*/Image|Image' ) ).text, 3 )
+                  first_time_in_text = truncate( ( subtitles[ 0 ].at_xpath( '*/Text|Text' ) || subtitles[ 0 ].at_xpath( '*/Image|Image' ) ).text.gsub( /^\s+|\s+$/, '' ), 3 )
+                  last_time_out_text = truncate( ( subtitles[ -1 ].at_xpath( '*/Text|Text' ) || subtitles[ -1 ].at_xpath( '*/Image|Image' ) ).text.gsub( /^\s+|\s+$/, '' ), 3 )
                   if subtitles.size > 1
                     subtitles[ 1 .. -1 ].each do |sub|
                       break if first_time_in < sub.attributes[ 'TimeIn' ].value
