@@ -43,7 +43,7 @@
 # Wolfgang Woehl 2012
 #
 set -e
-setup_version='v1.2012.06.17'
+setup_version='v1.2012.11.09'
 
 # Location of self
 setup_dirname=$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
@@ -75,6 +75,7 @@ gemrc=$HOME/.gemrc
 # XML engine: Nokogiri
 nokogiri_url="git://github.com/sparklemotion/nokogiri.git"
 nokogiri_dir=$libdir/nokogiri
+nokogiri_required_commit='bfe87e05'
 
 # JPEG2000 codec: OpenJPEG
 # http://openjpeg.googlecode.com/files/openjpeg-1.5.0.tar.gz
@@ -529,6 +530,13 @@ then
       if ! git pull
       then
         errors+=("Nokogiri: Failed to pull updates. Try again later") && echo_last errors[@]
+      else
+        if ! git checkout $nokogiri_required_commit
+        then
+          errors+=("Nokogiri: Failed to checkout required version. Try again later") && echo_last errors[@]
+        else
+          echo 'Nokogiri: Repository OK'
+        fi
       fi
     else
       remove_if_exists nokogiri
@@ -539,7 +547,6 @@ then
         # Workaround for issue 2. Thanks to youngwug for coming back with this
         # (See Nokogiri issue 712 which resulted in a commit with a failing test case and is of zero relevance here)
         cd $nokogiri_dir
-        nokogiri_required_commit='bfe87e05'
         if ! git checkout $nokogiri_required_commit
         then
           errors+=("Nokogiri: Failed to checkout required version. Try again later") && echo_last errors[@]
