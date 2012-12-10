@@ -43,7 +43,7 @@
 # Wolfgang Woehl 2012
 #
 set -e
-setup_version='v1.2012.11.09'
+setup_version='v1.2012.12.10'
 
 # Location of self
 setup_dirname=$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
@@ -501,6 +501,7 @@ fi
 if command_exists gem
 then
   if gem list -i nokogiri &> /dev/null
+  then
     if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby
     then
       ruby -e "require 'rubygems'; require 'nokogiri'; if Nokogiri::XML::Document.new.respond_to?( 'canonicalize' ) then exit 0 else exit 1 ; end"
@@ -513,7 +514,6 @@ then
         errors+=("Nokogiri: Installed version does not support C14N") && echo_last errors[@]
       fi
     fi
-  then
     if $nokogiri_c14n
     then
       echo 'Nokogiri: OK'
