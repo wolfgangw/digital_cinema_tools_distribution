@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2012.10.22'
+AppVersion = 'v1.2013.01.05'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -2220,6 +2220,11 @@ def dcp_inspect( options, arg )
   hints << 'Schema checks were skipped' unless options.validate
   info = Array.new
   uuid_re = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
+  #
+  # RFC-4122:
+  # The hexadecimal values "a" through "f" are output as
+  # lower case characters and are case insensitive on input.
+  #
   uuid_rfc4122_re = /^[0-9a-f]{8}-[0-9a-f]{4}-([1-5])[0-9a-f]{3}-[8-9a-b][0-9a-f]{3}-[0-9a-f]{12}$/
 
   # Nokogiri git master (2012.01.11) implements interface to libxml2's C14N
@@ -2349,6 +2354,24 @@ def dcp_inspect( options, arg )
         if file_basename =~ uuid_re
           unless file_basename.match( uuid_re )[ 0 ] == listed_id
             hints << "Asset UUID and filename UUID component mismatch: #{ listed_id } -> #{ file_basename }"
+          end
+        end
+      end
+
+      # Check for optional Length element and compare to actual asset size
+      # In the case of a mismatch this results in a hint as Length is optional
+      # and no crucial processing can depend on it. Field behaviour undefined ttbomk.
+      if File.exists?( asset_file )
+        length_el = asset.xpath( 'ChunkList/Chunk/Length' )
+        if ! length_el.empty?
+          begin
+            listed_asset_length = asset.xpath( 'ChunkList/Chunk/Length' ).text.to_i
+            asset_size = File.size asset_file
+            unless listed_asset_length == asset_size
+              hints << "Length mismatch: AM #{ am_id } #{ am_file }: Length: #{ listed_asset_length } Asset on medium: #{ asset_size }"
+            end
+          rescue Exception => e
+            errors << "Length check fail: AM #{ am_id } #{ am_file }: #{ e.message }"
           end
         end
       end
@@ -2502,7 +2525,7 @@ def dcp_inspect( options, arg )
                     errors << "Hash mismatch: #{ id }: #{ asset_file }: PKL: #{ hash_listed } Asset: #{ hash_check }"
                   else
                     eta.preserve_terminal_title_with_message( 'OK' )
-                    info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
+                    # info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
                   end
                 end
               else
@@ -2628,6 +2651,12 @@ def dcp_inspect( options, arg )
   info << 'Hash checks skipped' if options.check_hashes == false
   info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls.flatten ) } (#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }), #{ amount( 'Composition', cpls.flatten ) } (#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' })"
   info << "#{ amount( 'Error', errors ) }, #{ amount( 'Hint', hints ) }"
+
+
+  puts
+  puts dict.inspect
+  puts
+
 
   return { :errors => errors, :hints => hints, :info => info, :am_files => am_files, :pkls => pkls, :cpls => cpls, :pkls_missing => pkls_missing, :cpls_missing => cpls_missing }
 end
