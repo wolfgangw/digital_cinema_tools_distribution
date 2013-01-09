@@ -2652,12 +2652,6 @@ def dcp_inspect( options, arg )
   info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls.flatten ) } (#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }), #{ amount( 'Composition', cpls.flatten ) } (#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' })"
   info << "#{ amount( 'Error', errors ) }, #{ amount( 'Hint', hints ) }"
 
-
-  puts
-  puts dict.inspect
-  puts
-
-
   return { :errors => errors, :hints => hints, :info => info, :am_files => am_files, :pkls => pkls, :cpls => cpls, :pkls_missing => pkls_missing, :cpls_missing => cpls_missing }
 end
 
