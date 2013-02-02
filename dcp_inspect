@@ -142,7 +142,7 @@ BANNER
       opts.on( '--no-schema', 'Skip schema checks' ) do
         options.validate = FALSE
       end
-      opts.on( '-s', '--as-asset-store', 'Simulate asset store by merging all collected AM dictionaries to resolve missing assets' ) do
+      opts.on( '-s', '--as-asset-store', 'Simulate asset store by merging all collected AM dictionaries' ) do
         options.as_asset_store = TRUE
       end
       opts.on( '-v', '--verbosity level', String, 'Use quiet, errors, info, debug or trace_func (Default: debug)' ) do |p|
