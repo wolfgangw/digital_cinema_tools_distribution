@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+set -e
+setup_version='v1.2012.12.10'
 #
 # Usage:
 #
@@ -42,10 +44,9 @@
 #
 # Wolfgang Woehl 2012
 #
-set -e
-setup_version='v1.2012.12.10'
-
+#
 # Location of self
+#
 setup_dirname=$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
 setup_basename=$(basename ${BASH_SOURCE[0]})
 setup_fullpath="$setup_dirname/$setup_basename"
@@ -78,7 +79,8 @@ nokogiri_dir=$libdir/nokogiri
 nokogiri_required_commit='bfe87e05'
 
 # JPEG2000 codec: OpenJPEG
-# http://openjpeg.googlecode.com/files/openjpeg-1.5.0.tar.gz
+# http://openjpeg.googlecode.com/files/openjpeg-1.5.0.tar.gz (SHA1 dce705ae45f137e4698a8cf39d1fbf22bc434fa8)
+# http://openjpeg.googlecode.com/files/openjpeg-2.0.0.tar.gz (SHA1 0af78ab2283b43421458f80373422d8029a9f7a7)
 opj_googlecode='openjpeg.googlecode.com'
 openjpeg_version='1.5.0'
 openjpeg_tarball="openjpeg-$openjpeg_version.tar.gz"
