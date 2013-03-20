@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.03.19'
+AppVersion = 'v1.2013.03.20'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -277,17 +277,17 @@ module MStr
 
   Naming_convention = {
     :film_title       => { :re => /^[-A-Z0-9]{1,14}$/,                    :field_re => /^[-a-zA-Z0-9]+$/, :pos => 0 },
-    :content_type     => { :re => /^FTR|FTR-1|FTR-2|TST|TLR|TLR-1|TLR1-2D|TLR1-3D|RTG-F|RTG-T1|TSR|TSR-1|POL|PSA|ADV|SHR|XSN$/, :pos => 1 },
-    :aspect_ratio     => { :re => /^F|S|C$/, :pos => 2 },
+    :content_type     => { :re => /^(FTR|FTR-1|FTR-2|TST|TLR|TLR-1|TLR1-2D|TLR1-3D|RTG-F|RTG-T1|TSR|TSR-1|POL|PSA|ADV|SHR|XSN)$/, :pos => 1 },
+    :aspect_ratio     => { :re => /^(F|S|C)$/, :pos => 2 },
     :language         => { :re => /^[A-Z]{2,3}-[A-Z]{2,3}$/,              :field_re => /^[a-zA-Z]{2,3}-[a-zA-Z]{2,3}$/, :pos => 3 },
-    :territory_rating => { :re => /^[A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL$/, :field_re => /^[A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL|INT|INT-XX$/, :pos => 4 },
-    :audio_type       => { :re => /^(10|20|51|61|71)(-[A-Z]{2})?|51-HI-VI|51-HI|51-VI$/, :pos => 5 },
+    :territory_rating => { :re => /^([A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL)$/, :field_re => /^([A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL|INT|INT-XX)$/, :pos => 4 },
+    :audio_type       => { :re => /^((10|20|51|61|71)(-[A-Z]{2})?|51-HI-VI|51-HI|51-VI)$/, :pos => 5 },
     :resolution       => { :re => /^2K|4K|48$/, :pos => 6 },
     :studio           => { :re => /^[A-Z]{2,4}$/,                         :field_re => /^[A-Z]+$/, :pos => 7 },
     :date             => { :re => /^\d{8}$/, :pos => 8 },
     :facility         => { :re => /^[A-Z0-9]{2,3}$/, :pos => 9 },
-    :i3d_specs        => { :re => /^i3D|i3D-gb|i3D-ngb$/, :pos => 10 },
-    :package_type     => { :re => /^OV|VF(-\d)?$/, :pos => 11 }
+    :i3d_specs        => { :re => /^(i3D|i3D-gb|i3D-ngb)$/, :pos => 10 },
+    :package_type     => { :re => /^(OV|VF(-\d)?)$/, :pos => 11 }
   }
 
   # asdcp-test answers include
@@ -380,7 +380,7 @@ def pl( list )
 end
 
 # Thanks to Rein Henrichs
-def truncate( text, num_words = 6, truncate_string = "..." )
+def truncate( text, num_words = 6, truncate_string = " [...]" )
   if text.nil? then return end
   arr = text.split( ' ' )
   arr.length > num_words ? arr[ 0...num_words ].join( ' ' ) + truncate_string : text
@@ -1963,8 +1963,8 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, hints )
   else
     hints << "CPL #{ cpl_id }: Naming convention: Expected number of parts present in #{ title.inspect }"
   end
-  hints << "CPL #{ cpl_id }: Naming convention: #{ matches.size } matches: #{ matches.inspect }"
-  hints << "CPL #{ cpl_id }: Naming convention: #{ misses.size } misses: #{ misses.inspect }"
+  hints << "CPL #{ cpl_id }: Naming convention: #{ amount( 'part', matches ) } matching: #{ matches.inspect }"
+  hints << "CPL #{ cpl_id }: Naming convention: #{ amount( 'part', misses ) } missing: #{ misses.inspect }"
   return hints
 end
 
@@ -2167,6 +2167,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     # Check uniqueness of asset kinds
     listed_asset_nodes = assets.collect { |a| a.node_name }
     if listed_asset_nodes.uniq.size != assets.size
+      # FIXME check for ST429-12 assets ClosedCaption and MainCaption. How about ClosedSubtitle?
       errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Found duplicate asset kinds"
       cpl_errors = TRUE
     end
@@ -2270,9 +2271,9 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                 meta[ 'ContainerDuration' ] ? Timecode.new( meta[ 'ContainerDuration' ].to_i, edit_rate ).to_s : 'ContainerDuration:' + MStr::AssetTypeUnknown,
                 meta[ 'EncryptedEssence' ] ? meta[ 'EncryptedEssence' ] == 'Yes' ? 'encrypted' : 'unencrypted' : 'Encrypted:' + MStr::AssetTypeUnknown,
                 asset.node_name =~ /Picture/ ? ( meta[ 'StoredWidth' ] || 'StoredWidth:' + MStr::AssetTypeUnknown ) + 'x' + ( meta[ 'StoredHeight' ] || 'StoredHeight:' + MStr::AssetTypeUnknown ) : '',
-                asset.node_name =~ /Sound/ ? ( meta[ 'ChannelCount' ] || 'ChannelCount' + MStr::AssetTypeUnknown ) + ' channels' : '',
-                asset.node_name =~ /Sound/ ? ( meta[ 'AudioSamplingRate' ] || 'AudioSamplingRate' + MStr::AssetTypeUnknown ) + ' hz' : '',
-                asset.node_name =~ /Sound/ ? ( meta[ 'QuantizationBits' ] || 'QuantizationBits' + MStr::AssetTypeUnknown ) + ' bps' : '',
+                asset.node_name =~ /Sound/ ? ( meta[ 'ChannelCount' ] || 'ChannelCount:' + MStr::AssetTypeUnknown ) + ' channels' : '',
+                asset.node_name =~ /Sound/ ? audio_sampling_rate == '48000/1' ? '48 kHz' : audio_sampling_rate == '96000/1' ? '96 kHz' : audio_sampling_rate : '',
+                asset.node_name =~ /Sound/ ? ( meta[ 'QuantizationBits' ] || 'QuantizationBits:' + MStr::AssetTypeUnknown ) + ' bps' : '',
                 meta[ 'EssenceType' ] || 'EssenceType:' + MStr::AssetTypeUnknown
               ].reject { |e| e.nil? or e.empty? }.join( ', ' )
 
