@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.03.20'
+AppVersion = 'v1.2013.03.21'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -27,11 +27,13 @@ AppVersion = 'v1.2013.03.20'
 # Basically anyone who needs to establish the validity of a digital cinema
 # package can put dcp_inspect to good use.
 #
+#
 # Usage:
 #
 #   dcp_inspect --help
 #   dcp_inspect /path/to/dir
 #   dcp_inspect /path/to/dir --no-hash
+#
 #
 # And then what?
 #
@@ -50,13 +52,15 @@ AppVersion = 'v1.2013.03.20'
 #
 #       Either your package is perfectly ok
 #
-#       or you ran into a dcp_inspect bug :) Again, get in touch
-#       (https://github.com/wolfgangw/backports/issues) if you suspect the latter
+#       or you ran into a dcp_inspect bug :) Again, get in touch if you suspect
+#       the latter (https://github.com/wolfgangw/backports/issues).
+#
 #
 # Installation:
 #
 #   See https://github.com/wolfgangw/digital_cinema_tools_distribution/wiki
 #   for an easy-to-use setup script. This will install everything required.
+#
 #
 # Features:
 #
@@ -84,6 +88,7 @@ AppVersion = 'v1.2013.03.20'
 #
 # See [Examples](https://github.com/wolfgangw/backports/wiki/Example-output-from-dcp_inspect).
 #
+#
 # Manual installation / Requirements:
 #
 #   If you prefer manual installation you will need the following:
@@ -102,13 +107,17 @@ AppVersion = 'v1.2013.03.20'
 #     $ git pull
 #   in backports to keep up-to-date.
 #
+#
 # Thanks to the Nokogiri team. You're a wicked crew.
-# Thanks to Julik for his Timecode library (https://github.com/guerilla-di/timecode).
-# Thanks to Mattias Mattsson for DCSubtitle.v1.mattsson.xsd and great feedback.
+# Thanks to Julik for his Timecode library
+#   https://github.com/guerilla-di/timecode
+# Thanks to Mattias Mattsson for DCSubtitle.v1.mattsson.xsd and
+#   great feedback from Göteborg International Film Festival.
 # Thanks to Mike Radford and Tammo Buhren for test materials.
 # Thanks to Alexis Michaltsis for interesting test cases and feedback.
-# Thanks to Lilian Lefranc for constant feedback and a donation which clearly
-#   exceeded what can safely be called a gesture. Appreciated and you rock.
+# Thanks to Lilian Lefranc for constant feedback and a donation
+#   which clearly exceeded what can safely be called a gesture.
+#   Appreciated and you rock.
 # Thanks to Adrianne Jorge for a great user report from Sundance and Sarasota.
 #
 # Tested on linux and Mac OS boxes. Thanks to Terrence Meiczinger for trying
@@ -138,6 +147,7 @@ TOO_MANY_ARGS = 3
 ARG_NOT_A_DIR = 4
 XML_CATALOG_NOT_FOUND = 5
 XSD_STORE_NOT_FOUND = 6
+BAD_HASH_LIMIT_ARG = 7
 
 # Signature counters
 @signed_cpls_count = 0
@@ -151,6 +161,7 @@ class Options
     # defaults
     options = OpenStruct.new
     options.check_hashes = TRUE
+    options.check_hashes_limit = :no_limit
     options.validate = TRUE
     options.as_asset_store = FALSE
     options.verbosity = 'debug'
@@ -164,6 +175,9 @@ Usage: #{ AppName } [options] <location>
 BANNER
       opts.on( '--no-hash', 'Skip asset hash checks' ) do
         options.check_hashes = FALSE
+      end
+      opts.on( '--hash-limit limit', String, 'Limit asset hash checks to assets smaller than limit. E.g. 700KB, 50MB or 10GB (Default: no limit)' ) do |p|
+        options.check_hashes_limit = p
       end
       opts.on( '--no-schema', 'Skip schema checks' ) do
         options.validate = FALSE
@@ -276,18 +290,18 @@ module MStr
   }
 
   Naming_convention = {
-    :film_title       => { :re => /^[-A-Z0-9]{1,14}$/,                    :field_re => /^[-a-zA-Z0-9]+$/, :pos => 0 },
-    :content_type     => { :re => /^(FTR|FTR-1|FTR-2|TST|TLR|TLR-1|TLR1-2D|TLR1-3D|RTG-F|RTG-T1|TSR|TSR-1|POL|PSA|ADV|SHR|XSN)$/, :pos => 1 },
-    :aspect_ratio     => { :re => /^(F|S|C)$/, :pos => 2 },
-    :language         => { :re => /^[A-Z]{2,3}-[A-Z]{2,3}$/,              :field_re => /^[a-zA-Z]{2,3}-[a-zA-Z]{2,3}$/, :pos => 3 },
-    :territory_rating => { :re => /^([A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL)$/, :field_re => /^([A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL|INT|INT-XX)$/, :pos => 4 },
-    :audio_type       => { :re => /^((10|20|51|61|71)(-[A-Z]{2})?|51-HI-VI|51-HI|51-VI)$/, :pos => 5 },
-    :resolution       => { :re => /^2K|4K|48$/, :pos => 6 },
-    :studio           => { :re => /^[A-Z]{2,4}$/,                         :field_re => /^[A-Z]+$/, :pos => 7 },
-    :date             => { :re => /^\d{8}$/, :pos => 8 },
-    :facility         => { :re => /^[A-Z0-9]{2,3}$/, :pos => 9 },
-    :i3d_specs        => { :re => /^(i3D|i3D-gb|i3D-ngb)$/, :pos => 10 },
-    :package_type     => { :re => /^(OV|VF(-\d)?)$/, :pos => 11 }
+    :film_title       => { :re => /^[-A-Z0-9]{1,14}$/,                        :field_re => /^[-a-zA-Z0-9]+$/ },
+    :content_type     => { :re => /^(FTR|FTR-\d|TST|TLR|TLR-\d|TLR\d-2D|TLR\d-3D|RTG-F|RTG-T1|TSR|TSR-\d|POL|PSA|ADV|SHR|XSN)$/ },
+    :aspect_ratio     => { :re => /^(F|S|C)$/ },
+    :language         => { :re => /^[A-Z]{2,3}-[A-Z]{2,3}$/,                  :field_re => /^[a-zA-Z]{2,3}-[a-zA-Z]{2,3}$/ },
+    :territory_rating => { :re => /^([A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL)$/,   :field_re => /^([A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL|INT|INT-XX)$/ },
+    :audio_type       => { :re => /^((10|20|51|61|71)(-[A-Z]{2})?|51-HI-VI|51-HI|51-VI)$/ },
+    :resolution       => { :re => /^2K|4K|48$/ },
+    :studio           => { :re => /^[A-Z]{2,4}$/,                             :field_re => /^[A-Z]+$/ },
+    :date             => { :re => /^\d{8}$/ },
+    :facility         => { :re => /^[A-Z0-9]{2,3}$/ },
+    :i3d_specs        => { :re => /^(i3D|i3D-gb|i3D-ngb)$/ },
+    :package_type     => { :re => /^(OV|VF(-\d)?)$/ }
   }
 
   # asdcp-test answers include
@@ -299,9 +313,11 @@ module MStr
 
   Tkr_attr = 'x-TKR'
 
-  AssetTypeInterop  = 'Interop'
-  AssetTypeSmpte    = 'SMPTE'
-  AssetTypeUnknown  = 'Unknown'
+  AssetTypeInterop      = 'Interop'
+  AssetTypeSmpte        = 'SMPTE'
+  AssetTypeUnknown      = 'Unknown'
+  AssetTypeMixed        = 'Mixed'
+  AssetTypeUndetermined = 'Undetermined'
 
   TTF = 'Font TrueType'
   OTF = 'Font CFF-based'
@@ -319,6 +335,24 @@ module Shell
     end
     def asdcp_mxf_interop_stereoscopic_info( filename )
       `asdcp-test -3 -v -i #{ Shellwords.shellescape filename } 2>&1`.chomp
+    end
+  end
+end
+
+
+class Numeric
+  TERA = 1099511627776.0
+  GIGA = 1073741824.0
+  MEGA = 1048576.0
+  KILO = 1024.0
+  def to_k
+    case
+    when self == 1 then '1 Byte'
+    when self < KILO then "%d Bytes" % self
+    when self < MEGA then "%.1f KB" % ( self / KILO )
+    when self < GIGA then "%.1f MB" % ( self / MEGA )
+    when self < TERA then "%.1f GB" % ( self / GIGA )
+    else "%.1f TB" % ( self / TERA )
     end
   end
 end
@@ -370,6 +404,24 @@ end
 
 # misc helpers
 #
+# turn items like '100KB' or '1.5 GB' to bytes
+def bytes_from_nice_bytes( nice_bytes )
+  parts = nice_bytes.downcase.split( /(kb|mb|gb)/ )
+  n = Float( parts.first )
+  if parts[ 1 ]
+    case parts[ 1 ]
+    when 'kb'
+      n * Numeric::KILO.to_i
+    when 'mb'
+      n * Numeric::MEGA.to_i
+    when 'gb'
+      n * Numeric::GIGA.to_i
+    end
+  else
+    n
+  end
+end
+
 # plural helper english
 def amount( item, list )
   "#{ list.size } #{ item }#{ pl list }"
@@ -1568,24 +1620,6 @@ class DC_Signature_Verification
 end # DC_Signature_Verification
 
 
-class Numeric
-  TERA = 1099511627776.0
-  GIGA = 1073741824.0
-  MEGA = 1048576.0
-  KILO = 1024.0
-  def to_k
-    case
-    when self == 1 then '1 Byte'
-    when self < KILO then "%d Bytes" % self
-    when self < MEGA then "%.1f KB" % ( self / KILO )
-    when self < GIGA then "%.1f MB" % ( self / MEGA )
-    when self < TERA then "%.1f GB" % ( self / GIGA )
-    else "%.1f TB" % ( self / TERA )
-    end
-  end
-end
-
-
 class Eta
   attr_reader :percentage, :eta, :elapsed
   def initialize( title, width, looks_like, terminal_size, options )
@@ -1880,14 +1914,14 @@ end
 # Consider the naming convention checks performed here
 # to be a moving target
 #
-def naming_convention_compliant?( cpl_id, title, is_stereoscopic, hints )
+def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_required, hints )
   original_parts = title.split( '_' )
   parts = original_parts.dup
   matches = Hash.new
   misses = Hash.new
   required_parts = MStr::Naming_convention.keys
   # puts required_parts.inspect
-  required_parts.delete( :i3d_specs ) unless is_stereoscopic
+  required_parts.delete( :i3d_specs ) unless ( is_stereoscopic && i3d_specs_required )
 
   required_parts.each_with_index do |part_name, part_name_index|
     # puts "  Looking for #{part_name}"
@@ -2164,10 +2198,11 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     assets_labels = Array.new
     assets = reel.xpath( "#{ cpl_ns_prefix }:AssetList/*" )
 
-    # Check uniqueness of asset kinds
-    listed_asset_nodes = assets.collect { |a| a.node_name }
-    if listed_asset_nodes.uniq.size != assets.size
-      # FIXME check for ST429-12 assets ClosedCaption and MainCaption. How about ClosedSubtitle?
+    # Check uniqueness of asset kinds which need to be unique in a reel.
+    # Multiple instances of ClosedCaption, MainCaption and ClosedSubtitle allowed.
+    asset_node_names = assets.collect { |a| a.node_name }
+    assets_required_unique = asset_node_names - [ 'ClosedCaption', 'MainCaption', 'ClosedSubtitle' ]
+    if assets_required_unique.uniq.size != assets_required_unique.size
       errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Found duplicate asset kinds"
       cpl_errors = TRUE
     end
@@ -2421,7 +2456,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                 broken_assets << asset_id
                 cpl_referenced_assets << { asset_id => FALSE }
                 cpl_referenced_assets_types << MStr::AssetTypeUnknown
-                meta_report = 'Asset file found but not AS-DCP MXF'
+                meta_report = 'File found but not AS-DCP MXF'
               end
             end
 
@@ -2522,12 +2557,12 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     end
   end
 
-  # Stereoscopic composition?
+  # Monoscopic/Stereoscopic composition?
   if is_stereoscopic.uniq.size == 1 and is_stereoscopic.uniq.first == TRUE
-    report << 'Composition kind: 3D / stereoscopic'
+    report << 'Composition kind: 3D/Stereoscopic'
     is_stereoscopic = TRUE
   elsif is_stereoscopic.uniq.size == 1 and is_stereoscopic.uniq.first == FALSE
-    report << 'Composition kind: 2D / monoscopic'
+    report << 'Composition kind: 2D/Monoscopic'
     is_stereoscopic = FALSE
   elsif is_stereoscopic.uniq.size != 1
     report << 'Composition references monoscopic and stereoscopic elements'
@@ -2536,24 +2571,37 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     cpl_errors = TRUE
   end
 
-  # Naming convention
-  hints = naming_convention_compliant?( cpl_id, content_title_text, is_stereoscopic, hints )
-
-  # Composition type
+  # Composition type SMPTE/Interop/Undetermined?
   assets_status_list = cpl_referenced_assets.map { |e| e.values }.flatten
   if cpl_referenced_assets_types.uniq.size == 1 and assets_status_list.uniq.size == 1 and assets_status_list.uniq.first == TRUE
-    report << "Composition type: #{ cpl_referenced_assets_types.uniq.first }"
+    composition_type = cpl_referenced_assets_types.uniq.first
+    report << "Composition type: #{ composition_type }"
   else
     # FIXME Composition type Mixed error or hint?
-    stab = ( cpl_referenced_assets_types.include?( MStr::AssetTypeUnknown ) ? 'Undetermined' : assets_status_list.include?( FALSE ) ? 'Undetermined' : 'Mixed' )
-    report << "Composition type: #{ stab }: #{ cpl_referenced_assets_types.inspect }"
+    composition_type = ( cpl_referenced_assets_types.include?( MStr::AssetTypeUnknown ) ? MStr::AssetTypeUndetermined : assets_status_list.include?( FALSE ) ? MStr::AssetTypeUndetermined : MStr::AssetTypeMixed )
+    report << "Composition type: #{ composition_type }: #{ cpl_referenced_assets_types.inspect }"
     if broken_assets.size != 0
-      errors << "CPL #{ cpl_id }: Composition type: #{ stab }: Broken assets: #{ broken_assets.inspect }"
+      errors << "CPL #{ cpl_id }: Composition type: #{ composition_type }: Broken assets: #{ broken_assets.inspect }"
       cpl_errors = TRUE
     else
-      hints << "CPL #{ cpl_id }: Composition type: #{ stab }: Supplemental/VF/External: #{ cpl_referenced_assets_types.inspect }"
+      hints << "CPL #{ cpl_id }: Composition type: #{ composition_type }: Supplemental/VF/External: #{ cpl_referenced_assets_types.inspect }"
     end
   end
+
+  # Naming convention
+  case composition_type
+  when MStr::AssetTypeInterop
+    naming_i3d_specs_required = TRUE
+  when MStr::AssetTypeUndetermined
+    if cpl_referenced_assets_types.include?( MStr::AssetTypeInterop )
+      naming_i3d_specs_required = TRUE
+    else
+      naming_i3d_specs_required = FALSE
+    end
+  else
+    naming_i3d_specs_required = FALSE
+  end
+  hints = naming_convention_compliant?( cpl_id, content_title_text, is_stereoscopic, naming_i3d_specs_required, hints )
 
   # Composition completeness
   if assets_status_list.include?( FALSE )
@@ -2904,11 +2952,11 @@ def dcp_inspect( options, arg )
             size_listed = asset.xpath( 'Size' ).text.to_i
 
             if File.exists?( asset_file )
+              size_asset = File.size( asset_file )
               # Plug in checks here. we might be skipping validation hence the tag test
               #
               # Check listed and actual asset size
               if size_listed
-                size_asset = File.size( asset_file )
                 if size_listed != size_asset
                   errors << "PKL #{ pkl_id }: Size mismatch: #{ id }: #{ asset_file }: PKL: #{ size_listed } Asset: #{ size_asset }"
                   pkl_errors = TRUE
@@ -2923,20 +2971,25 @@ def dcp_inspect( options, arg )
               # Check listed and actual digests
               if ( hash_listed = asset.xpath( 'Hash' ).text )
                 if options.check_hashes
-                  etabar_title = "#{ id }: Checking hash value:"
-                  hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options )
-                  hash_check = Base64.encode64( hash_check ).chomp
-                  if hash_listed != hash_check
-                    eta.preserve_terminal_title_with_message( 'Mismatch' )
-                    errors << "PKL #{ pkl_id }: Hash mismatch: #{ id }: #{ asset_file }: PKL: #{ hash_listed } Asset: #{ hash_check }"
-                    pkl_errors = TRUE
+                  if options.check_hashes_limit == :no_limit or bytes_from_nice_bytes( options.check_hashes_limit ) > size_asset
+                    etabar_title = "#{ id }: Checking hash value:"
+                    hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options )
+                    hash_check = Base64.encode64( hash_check ).chomp
+                    if hash_listed != hash_check
+                      eta.preserve_terminal_title_with_message( 'Mismatch' )
+                      errors << "PKL #{ pkl_id }: Hash mismatch: #{ id }: #{ asset_file }: PKL: #{ hash_listed } Asset: #{ hash_check }"
+                      pkl_errors = TRUE
+                    else
+                      eta.preserve_terminal_title_with_message( 'OK' )
+                      # info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
+                    end
                   else
-                    eta.preserve_terminal_title_with_message( 'OK' )
-                    # info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
+                    @logger.debug( "#{ id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit" )
+                    hints << "PKL #{ pkl_id }: Asset #{ id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit: #{ asset_file }"
                   end
                 end
               else
-                errors << "PKL: Hash tag missing or bad content: #{ asset_file }: #{ type.empty? ? '<Type not specified in PKL>' : type }: #{ id }"
+                errors << "PKL #{ pkl_id }: Hash tag missing or bad content: #{ asset_file }: #{ type.empty? ? '<Type not specified in PKL>' : type }: #{ id }"
               end
 
               # Pick CPLs
@@ -3046,7 +3099,20 @@ end
 options = Options.parse( ARGV )
 args = ARGV
 @logger = DLogger.new( prefix = '', options )
-@logger.debug( "#{ AppName } #{ AppVersion }: #{ args } #{ options.validate ? '' : ': Schema checks will be skipped' }" )
+@logger.debug( "#{ AppName } #{ AppVersion }: #{ args }" )
+unless options.validate
+  @logger.info( 'Will skip schema checks' )
+end
+# Check --hash-limit argument
+unless options.check_hashes_limit == :no_limit
+  if options.check_hashes_limit =~ /\d+(\.?\d+)?\s?(kb|mb|gb)/
+    @logger.info( "Will skip hash checks for files bigger than #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k }" )
+  else
+    @logger.info( "Option --hash-limit argument #{ options.check_hashes_limit.inspect } does not compute.\nUse integer or decimal plus an optional KB, MB or GB symbol, e.g. 700KB or 1.5GB" )
+    exit BAD_HASH_LIMIT_ARG
+  end
+end
+
 
 # Set up local XML Catalog and patch its xml:base
 AppDir = File.dirname( Pathname.new( __FILE__ ).realpath )
