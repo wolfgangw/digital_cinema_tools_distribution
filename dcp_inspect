@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.03.21'
+AppVersion = 'v1.2013.03.22'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -46,9 +46,12 @@ AppVersion = 'v1.2013.03.21'
 #
 #       We all write bugs all the time and your feedback is much appreciated.
 #
-#   - If you get hints think about bugging someone
+#   - If you get hints think about bugging someone. Try and make an informed
+#     decision whether the issues hinted at might lead to trouble in the field.
+#     Some hints will recommend fixing the issue (e.g. empty Text or Image
+#     elements in DCSubtitle).
 #
-#   - If all you get is info and 0 errors:
+#   - If all you get is info and "0 errors 0 hints":
 #
 #       Either your package is perfectly ok
 #
@@ -289,6 +292,8 @@ module MStr
     Interop_cpl => 'PROTO-ASDCP-CPL-20040511.xsd'
   }
 
+  # Digital Cinema Naming Convention V.3.9
+  # http://digitalcinemanamingconvention.com
   Naming_convention = {
     :film_title       => { :re => /^[-A-Z0-9]{1,14}$/,                        :field_re => /^[-a-zA-Z0-9]+$/ },
     :content_type     => { :re => /^(FTR|FTR-\d|TST|TLR|TLR-\d|TLR\d-2D|TLR\d-3D|RTG-F|RTG-T1|TSR|TSR-\d|POL|PSA|ADV|SHR|XSN)$/ },
@@ -1912,7 +1917,7 @@ end
 
 #
 # Consider the naming convention checks performed here
-# to be a moving target
+# to be a moving target.
 #
 def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_required, hints )
   original_parts = title.split( '_' )
@@ -1920,11 +1925,9 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
   matches = Hash.new
   misses = Hash.new
   required_parts = MStr::Naming_convention.keys
-  # puts required_parts.inspect
   required_parts.delete( :i3d_specs ) unless ( is_stereoscopic && i3d_specs_required )
 
   required_parts.each_with_index do |part_name, part_name_index|
-    # puts "  Looking for #{part_name}"
 
     regexp = Hash.new
     regexp[ :re ] = MStr::Naming_convention[ part_name ][ :re ]
@@ -1934,20 +1937,15 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
 
     parts.each_with_index do |part, part_index|
 
-      # puts "    parts: #{parts.inspect}"
       if part =~ regexp[ :re ] # Check strict
         matches[ part_name ] = part
         if misses.keys.include?( part_name ) then misses.delete( part_name ) end
-        # puts "    MATCH: #{ part_name.inspect } => #{ part } => #{ regexp.inspect }"
-        # puts "      matches: #{matches.inspect}"
         parts.delete_at( part_index )
         break
       elsif regexp.keys.include?( :field_re ) # Check less strict
         if part =~ regexp[ :field_re ]
           matches[ part_name ] = part
           if misses.keys.include?( part_name ) then misses.delete( part_name ) end
-          # puts "    MATCH FIELD_RE: #{ part_name.inspect } => #{ part } => #{ regexp.inspect }"
-          # puts "      matches: #{matches.inspect}"
           parts.delete_at( part_index )
 
           # Examples for more or less useful messages in :field_re matches:
@@ -1969,18 +1967,14 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
           end
           break
         else
-          # puts "    MISS: #{ part_name } => #{ part } => #{ regexp.inspect }"
           if part_index = parts.size - 1
             misses[ part_name ] = false
-            # puts "      misses:  #{misses.inspect}"
           end
           next
         end
       else
-        # puts "    MISS: #{ part_name } => #{ part } => #{ regexp.inspect }"
         if part_index = parts.size - 1
           misses[ part_name ] = false
-          # puts "      misses:  #{misses.inspect}"
         end
         next
       end
@@ -2366,7 +2360,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   end
 
                   #
-                  # Check for empty elements. Thanks to Mattias Mattsson and Lilian Lefranc for the field feedback
+                  # Check for empty elements. Thanks to Mattias Mattsson, Lilian Lefranc and Johann Hohenwarter for the field feedback
                   #
                   empty_subtitles = 0
                   subtitles.each do |sub|
@@ -2378,7 +2372,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                       nodeset.each do |node|
                         if node.text == ''
                           empty_subtitles += 1
-                          hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Empty #{ node.name } element#{ sub.attributes[ 'SpotNumber' ] ? ': SpotNumber ' + sub.attributes[ 'SpotNumber' ].value : '' }"
+                          hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Empty #{ node.name } element#{ sub.attributes[ 'SpotNumber' ] ? ': SpotNumber ' + sub.attributes[ 'SpotNumber' ].value : '' }. While not a specification error this can lead to playback problems in the field. Consider fixing"
                         end
                       end
                     end
@@ -2518,10 +2512,13 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
       errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Duration mismatch"
       cpl_errors = TRUE
     else
-      if edit_rates.min > 0 and durations.first.to_i / edit_rates.min.to_i < 1 # ugh, but hey, re-write is in the works
+      reel_duration = durations.first.to_i / edit_rates.min.to_i # gets it done but ugh
+      if edit_rates.min > 0 and reel_duration < 1
         report << "\tReel duration minimum violated (< 1 second)"
         errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Reel duration minimum violated (< 1 second)"
         cpl_errors = TRUE
+      elsif edit_rates.min > 0 and reel_duration < 5 # Doremi TB 65 (2010-03-09)
+        hints << "CPL #{ cpl_id }: Reel #{ reel_no }: Reel duration less than 5 seconds. Doremi TB 65 mentions the restriction for their systems"
       end
     end
     if edit_rates.uniq.size != 1
@@ -2985,7 +2982,7 @@ def dcp_inspect( options, arg )
                     end
                   else
                     @logger.debug( "#{ id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit" )
-                    hints << "PKL #{ pkl_id }: Asset #{ id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit: #{ asset_file }"
+                    hints << "PKL #{ pkl_id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit: Asset #{ id }: #{ asset_file }"
                   end
                 end
               else
