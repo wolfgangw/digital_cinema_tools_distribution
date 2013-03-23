@@ -61,6 +61,9 @@ basedir=$HOME/.digital_cinema_tools
 libdir=$basedir/.lib
 bindir=$basedir/.bin
 
+# readlink command
+readlink="readlink -f"
+
 # Ruby version management: rbenv
 rbenv_url="git://github.com/sstephenson/rbenv.git"
 export RBENV_ROOT=$libdir/.rbenv
@@ -134,12 +137,15 @@ location_is_git_repo() {
   location_exists "$1" && location_exists "$1/.git" && [ -d "$1/.git" ]
 }
 
-# Only linux systems in mind for now
-if [[ ! $MACHTYPE = *linux* ]]
-then
-  echo "This installer supports only linux systems"
-  exit 1
-fi
+case $MACHTYPE in
+  *linux*|*darwin*)
+    echo "Welcome to digital-cinema-tools-setup."
+    ;;
+  *)
+    echo "This installer supports Linux and OS X systems only"
+    exit 1
+    ;;
+esac
 
 # Check and bail out if the installer is run with root privileges
 if [ $script_runner == "root" ]
@@ -178,7 +184,20 @@ then
   then
     os_dist=debian
   fi
+elif command_exists sw_vers
+then
+  # do the os x thing here
+  if [[ "$(sw_vers -productName)" =~ Mac ]]
+  then
+	os_dist=osx
+  fi
 fi
+
+# md5tool: compensate for BSD md5 in OS X
+case $os_dist in
+  osx) md5tool="md5 -q" ;;
+    *) md5tool="md5sum" ;;
+esac
 
 # Bail out if non-supported OS distribution
 if ! [ -z $os_dist ]
@@ -214,6 +233,16 @@ case $os_dist in
     packager='zypper'
     packager_params='--gpg-auto-import-keys --non-interactive install'
     packages_required=( make automake gcc gcc-c++ libxslt-devel libexpat-devel libxmlsec1-openssl-devel xmlsec1 readline-devel zlib-devel openssl-devel ImageMagick mplayer sox git libtiff-devel libpng12-devel )
+	;;
+  osx)
+	query='brew'
+	query_params='list'
+	packager='brew'
+	packager_params='install'
+    packages_required=( wget libxslt expat xmlsec1 readline openssl imagemagick mplayer sox libtiff )
+	packager_prep="$packager update"
+	# os x readlink does not know the -f flag
+	readlink="readlink"
 esac
 
 # Check for the presence of required basic distribution packages
@@ -295,22 +324,49 @@ then
     # Install packages
     if ! [ -z "$packager_prep" ]
     then
-      if ! sudo $packager_prep
-      then
-        errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
-      else
-        echo "$setup_basename: Package preparation OK"
-      fi
+	  case $os_dist in
+		osx)
+		  # brew on os x does not need sudo privileges
+		  if ! $packager_prep
+		  then
+	        errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
+          else
+            echo "$setup_basename: Package preparation OK"
+          fi
+		  ;;
+		*)
+          if ! sudo $packager_prep
+          then
+            errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
+          else
+            echo "$setup_basename: Package preparation OK"
+          fi
+		  ;;
+      esac
     fi
-    if ! sudo $packager $packager_params "${packages_missing[@]}"
-    then
-      errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
-      sudo -K # drop sudo privileges
-      exit 1
-    else
-      echo "$packager: OK"
-    fi
-    sudo -K
+
+	case $os_dist in
+      osx)
+		# brew on os x does not need sudo privileges
+		if ! $packager $packager_params "${packages_missing[@]}"
+		then
+          errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
+		else
+          echo "$packager: OK"
+		fi
+		;;
+	  *)
+        if ! sudo $packager $packager_params "${packages_missing[@]}"
+        then
+          errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
+          sudo -K # drop sudo privileges
+          exit 1
+        else
+          echo "$packager: OK"
+        fi
+        sudo -K
+		;;
+	esac
   fi
 else
   errors+=("$setup_basename: Required packager tools not found: $query/$packager. Exiting") && echo_last errors[@]
@@ -328,19 +384,20 @@ then
   echo 'bashrc: OK'
 else
   # Fedora sources ~/.bashrc from ~/.bash_profile so we loop source if we add the following
-  if [ $os_dist = 'ubuntu' -o $os_dist = 'debian' ]
-  then
-    echo "$setup_basename: Source ~/.bash_profile from ~/.bashrc"
-    echo '' >> $bashrc
-    echo "# $setup_basename: Use .bash_profile to read rbenv environment" >> $bashrc
-    echo 'source $HOME/.bash_profile' >> $bashrc
-    if ! [ -f $bash_profile ]
-    then
-      touch $bash_profile
-      echo 'bash_profile: Touched'
-    fi
-    exec_shell_required=true
-  fi
+  case $os_dist in
+    ubuntu|debian|osx)
+      echo "$setup_basename: Source ~/.bash_profile from ~/.bashrc"
+      echo '' >> $bashrc
+      echo "# $setup_basename: Use .bash_profile to read rbenv environment" >> $bashrc
+      echo 'source $HOME/.bash_profile' >> $bashrc
+      if ! [ -f $bash_profile ]
+      then
+        touch $bash_profile
+        echo 'bash_profile: Touched'
+      fi
+      exec_shell_required=true
+    ;;
+  esac
 fi
 
 # Check for ~/bin and inclusion in PATH
@@ -372,29 +429,15 @@ then
   echo
   exit 1
 fi
-if command_exists rbenv
+if location_exists $rbenv_dir && location_exists $rbenv_dir/.git
 then
-  echo "rbenv: OK"
-else
-  if location_exists $rbenv_dir && location_exists $rbenv_dir/.git
+  echo "rbenv: Repository exists"
+  if string_includes $PATH "$rbenv_dir/bin"
   then
-    echo "rbenv: Repository exists"
-    if string_includes $PATH "$rbenv_dir/bin"
-    then
-      echo "rbenv: PATH includes rbenv bin dir"
-    else
-      errors+=("rbenv: PATH does not include rbenv bin dir") && echo_last errors[@]
-    fi
+    echo "rbenv: PATH includes rbenv bin dir"
   else
-    echo "rbenv: Installing"
-    remove_if_exists $rbenv_dir
-    if ! git clone $rbenv_url $rbenv_dir
-    then
-      errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
-    fi
-
     case $os_dist in
-      debian|ubuntu)
+      debian|ubuntu|osx)
         env_target=$bash_profile ;;
       redhat|opensuse)
         env_target=$bashrc ;;
@@ -406,14 +449,21 @@ else
     echo 'eval "$(rbenv init -)"' >> $env_target
     source $env_target
     exec_shell_required=true
+  fi
+else
+  echo "rbenv: Installing"
+  remove_if_exists $rbenv_dir
+  if ! git clone $rbenv_url $rbenv_dir
+  then
+    errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
+  fi
 
-    if command_exists rbenv
-    then
-      echo "rbenv: OK"
-    else
-      echo "rbenv: Command 'rbenv' not found"
-      exit 1
-    fi
+  if command_exists rbenv
+  then
+    echo "rbenv: OK"
+  else
+    echo "rbenv: Command 'rbenv' not found"
+    exit 1
   fi
 fi
 
@@ -466,8 +516,10 @@ fi
 if command_exists rbenv
 then
   if ! rbenv global $ruby_version
-  then
+    then
     echo 'rbenv: Required ruby not installed'
+  else
+    echo "rbenv: Required ruby already installed."
   fi
   if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby
   then
@@ -676,7 +728,7 @@ else
   fi
 
   remove_if_exists $asdcplib_build_dir
-  if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
+  if [ -e $asdcplib_tarball ] && [[ $( $md5tool $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
   then
     echo "asdcplib: $asdcplib_version_tarball_md5: MD5 OK"
   else
@@ -688,7 +740,7 @@ else
     if wget $asdcplib_tarball_url
     then
       echo 'asdcplib: Download OK'
-      if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
+      if [ -e $asdcplib_tarball ] && [[ $( $md5tool $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
       then
         echo "asdcplib: $asdcplib_version_tarball_md5: MD5 OK"
       else
@@ -878,7 +930,7 @@ else
 fi
 
 # Keep downloaded setup script around if distribution setup failed (which would have it included)
-if [ -x "$bindir/$setup_basename" -a -L "$bindir/$setup_basename" ] && [[ $( readlink -f "$bindir/$setup_basename" ) = "$dist_dir/$setup_basename" ]]
+if [ -x "$bindir/$setup_basename" -a -L "$bindir/$setup_basename" ] && [[ $( $readlink "$bindir/$setup_basename" ) = "$dist_dir/$setup_basename" ]]
 then
   # I am installation
   echo "$setup_basename: OK"
@@ -935,4 +987,3 @@ echo "$setup_basename: Done"
 echo
 
 exit 0
-
