@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2012.12.10'
+setup_version='v1.2013.03.24'
 #
 # Usage:
 #
@@ -574,7 +574,7 @@ then
       else
         rbenv rehash
         echo 'Nokogiri: Building ...'
-        if rake && rake install_gem && sleep 10 && rbenv rehash
+        if rake && rake install_gem && sleep 20 && rbenv rehash
         then
           if gem list -i nokogiri
           then
