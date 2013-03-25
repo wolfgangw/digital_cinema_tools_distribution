@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2013.03.24'
+setup_version='v1.2013.03.25'
 #
 # Usage:
 #
@@ -587,7 +587,7 @@ then
         fi
       fi
     fi
-  elif ! location_exists $nokogiri_dir
+  elif ! location_exists $nokogiri_dir && ! gem list -i nokogiri
   then
     errors+=("Nokogiri: Failed to setup repository") && echo_last errors[@]
   elif location_exists $nokogiri_dir && gem list -i nokogiri
