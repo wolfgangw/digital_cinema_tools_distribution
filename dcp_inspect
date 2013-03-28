@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.03.22'
+AppVersion = 'v1.2013.03.28'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -151,6 +151,7 @@ ARG_NOT_A_DIR = 4
 XML_CATALOG_NOT_FOUND = 5
 XSD_STORE_NOT_FOUND = 6
 BAD_HASH_LIMIT_ARG = 7
+LOGFILE_WRITE_ERROR = 8
 
 # Signature counters
 @signed_cpls_count = 0
@@ -168,6 +169,7 @@ class Options
     options.validate = TRUE
     options.as_asset_store = FALSE
     options.verbosity = 'debug'
+    options.logfile = NIL
     options.verbosity_choices = [ 'quiet', 'errors', 'info', 'debug', 'trace_func' ]
 
     opts = OptionParser.new do |opts|
@@ -176,11 +178,11 @@ class Options
 Usage: #{ AppName } [options] <location>
 
 BANNER
-      opts.on( '--no-hash', 'Skip asset hash checks' ) do
+      opts.on( '--nh', '--no-hash', 'Skip asset hash checks' ) do
         options.check_hashes = FALSE
       end
-      opts.on( '--hash-limit limit', String, 'Limit asset hash checks to assets smaller than limit. E.g. 700KB, 50MB or 10GB (Default: no limit)' ) do |p|
-        options.check_hashes_limit = p
+      opts.on( '--hl', '--hash-limit limit', String, 'Limit asset hash checks to assets smaller than limit. E.g. 700KB, 50MB or 1GB (Default: no limit)' ) do |p|
+        options.check_hashes_limit = p.downcase
       end
       opts.on( '--no-schema', 'Skip schema checks' ) do
         options.validate = FALSE
@@ -194,6 +196,9 @@ BANNER
         else
           options.verbosity = "info"
         end
+      end
+      opts.on( '-l' '--logfile logfile', String, 'Specify logfile' ) do |p|
+        options.logfile = p
       end
       opts.on_tail( '-h', '--help', 'Display this screen' ) do
         puts opts
@@ -217,6 +222,7 @@ end # Options
 class DLogger
   def initialize( prefix, options )
     @prefix = prefix
+    @full_log = ( options.logfile ? Array.new : NIL )
     @verbosity = options.verbosity
     case @verbosity
     when 'quiet'  then @errors, @info, @debug, @cr = [ FALSE, FALSE, FALSE, FALSE ]
@@ -230,12 +236,33 @@ class DLogger
       }
     end
   end
-  def errors( text ); to_console( text ) if @errors; end
-  def info( text ); to_console( text ) if @info; end
-  def debug( text ); to_console( text ) if @debug; end
-  def cr( text ); carriage_return( text ) if @cr; end
-  def to_console( text ); printf "%s %s\n", @prefix, text; end
-  def carriage_return( text ); printf "%s %s\r", @prefix, text; end
+  def errors( text )
+    if @errors
+      to_console( text )
+      @full_log << text if @full_log
+    end
+  end
+  def info( text )
+    if @info
+      to_console( text )
+      @full_log << text if @full_log
+    end
+  end
+  def debug( text )
+    if @debug
+      to_console( text )
+      @full_log << text if @full_log
+    end
+  end
+  def cr( text )
+    # don't go to @full_log here
+    carriage_return( text ) if @cr
+  end
+  def to_console( text ) printf "%s %s\n", @prefix, text end
+  def carriage_return( text ) printf "%s %s\r", @prefix, text end
+  def full_log_blob
+    @full_log.join( "\n" ) + "\n"
+  end
 end
 
 
@@ -299,11 +326,11 @@ module MStr
     :content_type     => { :re => /^(FTR|FTR-\d|TST|TLR|TLR-\d|TLR\d-2D|TLR\d-3D|RTG-F|RTG-T1|TSR|TSR-\d|POL|PSA|ADV|SHR|XSN)$/ },
     :aspect_ratio     => { :re => /^(F|S|C)$/ },
     :language         => { :re => /^[A-Z]{2,3}-[A-Z]{2,3}$/,                  :field_re => /^[a-zA-Z]{2,3}-[a-zA-Z]{2,3}$/ },
-    :territory_rating => { :re => /^([A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL)$/,   :field_re => /^([A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL|INT|INT-XX)$/ },
+    :territory_rating => { :re => /^([A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL)$/,   :field_re => /^([A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL|INT|INT-XX|ITL-TD|ITL-TL)$/ },
     :audio_type       => { :re => /^((10|20|51|61|71)(-[A-Z]{2})?|51-HI-VI|51-HI|51-VI)$/ },
     :resolution       => { :re => /^2K|4K|48$/ },
     :studio           => { :re => /^[A-Z]{2,4}$/,                             :field_re => /^[A-Z]+$/ },
-    :date             => { :re => /^\d{8}$/ },
+    :date             => { :re => /^\d{8}$/,                                  :field_re => /^\d{6}$/ },
     :facility         => { :re => /^[A-Z0-9]{2,3}$/ },
     :i3d_specs        => { :re => /^(i3D|i3D-gb|i3D-ngb)$/ },
     :package_type     => { :re => /^(OV|VF(-\d)?)$/ }
@@ -1927,6 +1954,36 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
   required_parts = MStr::Naming_convention.keys
   required_parts.delete( :i3d_specs ) unless ( is_stereoscopic && i3d_specs_required )
 
+  #
+  # Try to anchor :studio and :facility to :date. Ugh
+  # Also see begin; Date::strptime( '20130343', "%Y%m%d" ); rescue; puts "Exception"; end # for date parsing fu
+  # See raid_0/Double_Happiness for "_FTR_F_-XX_-_20_2K__20121010__OV which currently results in "Expected number of parts present"
+  #
+  hints << "Original parts: #{ parts.inspect }"
+  regexp = Hash.new
+  regexp[ :studio ] = MStr::Naming_convention[ :studio ][ :re ]
+  regexp[ :date ] = MStr::Naming_convention[ :date ][ :re ]
+  regexp[ :facility ] = MStr::Naming_convention[ :facility ][ :re ]
+  parts_clone = parts.dup
+  studio_match = FALSE
+  parts_clone.each_with_index do |part, part_index|
+    hints << "Naming convention debug: #{ part_index }: #{ part.inspect }"
+    if part =~ regexp[ :studio ] and parts_clone[ part_index + 1 ] =~ regexp[ :date ]
+      studio_match = TRUE
+      hints << "FOUND :studio directly before :date"
+      matches[ :studio ] = part
+      required_parts.delete( :studio )
+      parts.delete_at( part_index )
+    end
+    if part =~ regexp[ :facility ] and parts_clone[ part_index - 1 ] =~ regexp[ :date ]
+      hints << "FOUND :facility directly after :date"
+      matches[ :facility ] = part
+      required_parts.delete( :facility )
+      parts.delete_at( studio_match ? part_index - 1 : part_index ) 
+    end
+  end
+  hints << "Remaining parts after :studio :date :facility combo: #{ parts.inspect }"
+
   required_parts.each_with_index do |part_name, part_name_index|
 
     regexp = Hash.new
@@ -1955,17 +2012,19 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
             if part.size > 14
               hints << "CPL #{ cpl_id }: Naming convention: Part #{ part_name } #{ part.inspect } has #{ part.size } characters instead of max 14"
             end
-            if part.upcase != part
-              hints << "CPL #{ cpl_id }: Naming convention: Part #{ part_name } #{ part.inspect } contains lowercase letters"
-            end
           when :studio
             if part.size < 2 or part.size > 4
               hints << "CPL #{ cpl_id }: Naming convention: Part #{ part_name } #{ part.inspect } has #{ part.size } characters instead of 2-4"
             end
           when :territory_rating
-            hints << "CPL #{ cpl_id }: Naming convention: Part #{ part_name } ##{ part.inspect } matches :field_re only"
+            hints << "CPL #{ cpl_id }: Naming convention: Part #{ part_name } #{ part.inspect } matches :field_re only"
+          end
+          # All upcase
+          if part.upcase != part
+            hints << "CPL #{ cpl_id }: Naming convention: Part #{ part_name } #{ part.inspect } contains lowercase letters"
           end
           break
+
         else
           if part_index = parts.size - 1
             misses[ part_name ] = false
@@ -1987,12 +2046,12 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
   elsif original_parts.size > 12
     hints << "CPL #{ cpl_id }: Naming convention: ContentTitleText #{ title.inspect } has more parts than expected (matching #{ matches }, missing #{ misses })"
   elsif original_parts.size == 1
-    hints << "CPL #{ cpl_id }: Naming convention: ContentTitleText #{ title.inspect } has only 1 part. Expected 11 or 12 (missing #{ misses })"
+    hints << "CPL #{ cpl_id }: Naming convention: ContentTitleText #{ title.inspect } has only 1 part. Expected #{ is_stereoscopic && i3d_specs_required ? '12' : '11' }#{ misses.size > 0 ? " (missing #{ misses })" : '' }"
   else
     hints << "CPL #{ cpl_id }: Naming convention: Expected number of parts present in #{ title.inspect }"
   end
-  hints << "CPL #{ cpl_id }: Naming convention: #{ amount( 'part', matches ) } matching: #{ matches.inspect }"
-  hints << "CPL #{ cpl_id }: Naming convention: #{ amount( 'part', misses ) } missing: #{ misses.inspect }"
+  hints << "CPL #{ cpl_id }: Naming convention: #{ amount( 'part', matches ) } matching: #{ matches.inspect }" if matches.size > 0
+  hints << "CPL #{ cpl_id }: Naming convention: #{ amount( 'part', misses ) } missing: #{ misses.inspect }" if misses.size > 0
   return hints
 end
 
@@ -2279,18 +2338,13 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
               case asset.node_name
               when 'MainSound'
                 audio_sampling_rate = meta[ 'AudioSamplingRate' ]
-                if ( audio_sampling_rate == ( '48000/1' || '96000/1' ) ? false : true )
-                  #
-                  # FIXME long day and I've got to be missing something deep here as
-                  #   if audio_sampling_rate != '48000/1' or audio_sampling_rate != '96000/1'
-                  # isn't doing what I want
-                  #
+                if audio_sampling_rate != '48000/1' and audio_sampling_rate != '96000/1'
                   errors << "CPL #{ cpl_id }: Reel #{ reel_no }: MainSound sampling rate #{ audio_sampling_rate } Hz. Expected 48k or 96k"
                   cpl_errors = TRUE
                 end
                 audio_quantization_bits = meta[ 'QuantizationBits' ]
                 if audio_quantization_bits != '24'
-                  errors << "CPL #{ cpl_id }: Reel #{ reel_no }: MainSound quantization #{ audio_quantization_bits } bps. Expected 24"
+                  errors << "CPL #{ cpl_id }: Reel #{ reel_no }: MainSound quantization #{ audio_quantization_bits } bps. Expected 24 bps"
                   cpl_errors = TRUE
                 end
               end
@@ -2518,7 +2572,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
         errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Reel duration minimum violated (< 1 second)"
         cpl_errors = TRUE
       elsif edit_rates.min > 0 and reel_duration < 5 # Doremi TB 65 (2010-03-09)
-        hints << "CPL #{ cpl_id }: Reel #{ reel_no }: Reel duration less than 5 seconds. Doremi TB 65 mentions the restriction for their systems"
+        hints << "CPL #{ cpl_id }: Reel #{ reel_no }: Reel duration less than 5 seconds. Doremi TB 65 suggests a 5 second minimum for safe playback on their systems"
       end
     end
     if edit_rates.uniq.size != 1
@@ -2633,12 +2687,12 @@ def dcp_inspect( options, arg )
   hints = Array.new
   hints << 'Schema checks were skipped' unless options.validate
   info = Array.new
-  uuid_re = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
   #
   # RFC-4122:
   # The hexadecimal values "a" through "f" are output as
   # lower case characters and are case insensitive on input.
   #
+  uuid_re = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ # used for filename component
   uuid_rfc4122_re = /^[0-9a-f]{8}-[0-9a-f]{4}-([1-5])[0-9a-f]{3}-[8-9a-b][0-9a-f]{3}-[0-9a-f]{12}$/
 
   # Nokogiri git master (2012.01.11) implements interface to libxml2's C14N
@@ -2664,7 +2718,7 @@ def dcp_inspect( options, arg )
   am_candidates = package_dir_tree.select { |e| File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/ }.sort
   am_candidates = am_candidates.sort
   if am_candidates.empty?
-    errors << 'No Assetmap candidates found' 
+    errors << 'No Assetmap candidates found'
   else
     @logger.debug( "Found #{ amount( 'Assetmap candidate', am_candidates ) }: #{ am_candidates.inspect }" )
   end
@@ -3136,6 +3190,18 @@ ENV[ 'XML_CATALOG_FILES' ] = local_xml_catalog
 if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( args[ 0 ] ).realpath )
   inspection = dcp_inspect( options, args[ 0 ] )
   print_inspection_messages( inspection ) unless options.verbosity == 'quiet'
+  if options.logfile
+    if File.exists?( options.logfile )
+      @logger.info "Requested logfile #{ Pathname( options.logfile ).realpath } exists. Not overwriting"
+    else
+      begin
+        File.open( options.logfile, 'w' ) { |f| f.write( @logger.full_log_blob ) }
+      rescue Exception => e
+        @logger.info e.message
+        exit LOGFILE_WRITE_ERROR
+      end
+    end
+  end
   case inspection[ :errors ].size
   when 0
     exit DCP_OK
