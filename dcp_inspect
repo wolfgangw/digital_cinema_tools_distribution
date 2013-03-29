@@ -2489,7 +2489,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                             begin
                               require 'ttfunk'
                               ttfunk = TRUE
-                            rescue
+                            rescue LoadError
                               ttfunk = FALSE
                             end
                             begin
