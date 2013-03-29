@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.03.28'
+AppVersion = 'v1.2013.03.29'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -1654,13 +1654,14 @@ end # DC_Signature_Verification
 
 class Eta
   attr_reader :percentage, :eta, :elapsed
-  def initialize( title, width, looks_like, terminal_size, options )
+  def initialize( title, width, looks_like, terminal_size, options, logger )
     @title = title
     @total = 100
     @scaling = width.to_f / @total
     @left, @major, @fill, @right = looks_like.scan( /./ )
     @terminal_size = terminal_size
-    @output = DLogger.new( prefix = '', options )
+    # @output = DLogger.new( prefix = '', options )
+    @output = logger
     @start = Time.now
   end
 
@@ -1735,8 +1736,8 @@ def detect_terminal_size
   end
 end
 
-def with_etabar( args, options, etabar_title, etabar_pbar_width, etabar_looks_like, &block )
-  eta = Eta.new( etabar_title, etabar_pbar_width, etabar_looks_like, detect_terminal_size, options )
+def with_etabar( args, options, etabar_title, etabar_pbar_width, etabar_looks_like, logger, &block )
+  eta = Eta.new( etabar_title, etabar_pbar_width, etabar_looks_like, detect_terminal_size, options, logger )
   chunks_per_percent = args.size / 100 + 1
   index = 0
   result = Array.new
@@ -1752,7 +1753,7 @@ def with_etabar( args, options, etabar_title, etabar_pbar_width, etabar_looks_li
   return result.reject { |e| e.nil? }
 end
 
-def digest_with_etabar( digest_algorithm, title, file, pbar_width, looks_like, options )
+def digest_with_etabar( digest_algorithm, title, file, pbar_width, looks_like, options, logger )
   size = File.size file
   chunksize = 4096
   chunks = size / chunksize + ( size % chunksize > 0 ? 1 : 0 )
@@ -1760,7 +1761,7 @@ def digest_with_etabar( digest_algorithm, title, file, pbar_width, looks_like, o
 
   dgst = OpenSSL::Digest.new( digest_algorithm )
   io = File.open file
-  eta = Eta.new( title, pbar_width, looks_like, detect_terminal_size, options )
+  eta = Eta.new( title, pbar_width, looks_like, detect_terminal_size, options, logger )
 
   ( 0 .. 100 ).each do |percentage|
     # read 1 % of chunks
@@ -2709,7 +2710,7 @@ def dcp_inspect( options, arg )
   #
   # Find files called what Assetmap(s) would be called.
   # Don't assume they're actually Assetmaps before checking.
-  # am_candidates = with_etabar( package_dir_tree, options, 'Looking for Assetmap candidates:', 20, '[= ]' ) { |e| ( File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/ ) ? e : nil }
+  # am_candidates = with_etabar( package_dir_tree, options, 'Looking for Assetmap candidates:', 20, '[= ]', @logger ) { |e| ( File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/ ) ? e : nil }
   #
   am_candidates = package_dir_tree.select { |e| File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/ }.sort
   am_candidates = am_candidates.sort
@@ -3020,7 +3021,7 @@ def dcp_inspect( options, arg )
                 if options.check_hashes
                   if options.check_hashes_limit == :no_limit or bytes_from_nice_bytes( options.check_hashes_limit ) > size_asset
                     etabar_title = "#{ id }: Checking hash value:"
-                    hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options )
+                    hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options, logger = @logger )
                     hash_check = Base64.encode64( hash_check ).chomp
                     if hash_listed != hash_check
                       eta.preserve_terminal_title_with_message( 'Mismatch' )
