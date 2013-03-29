@@ -1960,7 +1960,6 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
   # Also see begin; Date::strptime( '20130343', "%Y%m%d" ); rescue; puts "Exception"; end # for date parsing fu
   # See raid_0/Double_Happiness for "_FTR_F_-XX_-_20_2K__20121010__OV which currently results in "Expected number of parts present"
   #
-  hints << "Original parts: #{ parts.inspect }"
   regexp = Hash.new
   regexp[ :studio ] = MStr::Naming_convention[ :studio ][ :re ]
   regexp[ :date ] = MStr::Naming_convention[ :date ][ :re ]
@@ -2478,10 +2477,27 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                         font_asset = package( File.join( asset_id, File.basename( load_font_uri ) ) )
                         if File.exists?( font_asset )
                           if font?( font_asset )
+                            # Check for font max size recommendation
                             font_asset_size = File.size font_asset
                             if font_asset_size > 655360 # 640 KB
                               errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Font #{ font_asset } size #{ font_asset_size.to_k } exceeds 640 KB"
                               cpl_errors = TRUE
+                            end
+                            # Get font name
+                            begin
+                              require 'ttfunk'
+                              ttfunk = TRUE
+                            rescue
+                              ttfunk = FALSE
+                            end
+                            begin
+                              if ttfunk
+                                font_fu = TTFunk::File.open font_asset
+                                font_name = font_fu.name.font_name.first.to_s
+                                hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Font name: #{ font_name }"
+                              end
+                            rescue
+                              #
                             end
                           else
                             errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Font #{ font_asset } referenced in LoadFont is neither #{ MStr::TTF } nor #{ MStr::OTF }"
@@ -2544,7 +2560,6 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
           meta_report = 'Referenced asset file not listed in Assetmap dictionary: Supplemental/VF/External'
           hint_info = [
             'CPL ' + cpl_id,
-            asset_id,
             'Reel ' + ( index + 1 ).to_s,
             asset.node_name
           ].join( ': ' )
