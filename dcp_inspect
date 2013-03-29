@@ -152,6 +152,7 @@ XML_CATALOG_NOT_FOUND = 5
 XSD_STORE_NOT_FOUND = 6
 BAD_HASH_LIMIT_ARG = 7
 LOGFILE_WRITE_ERROR = 8
+FILE_ACCESS_ERROR = 9
 
 # Signature counters
 @signed_cpls_count = 0
@@ -197,7 +198,7 @@ BANNER
           options.verbosity = "info"
         end
       end
-      opts.on( '-l' '--logfile logfile', String, 'Specify logfile' ) do |p|
+      opts.on( '-l', '--logfile logfile', String, 'Specify logfile' ) do |p|
         options.logfile = p
       end
       opts.on_tail( '-h', '--help', 'Display this screen' ) do
@@ -2746,7 +2747,12 @@ def dcp_inspect( options, arg )
   # see http://stackoverflow.com/a/2370805 for a portable and generic way to get at a tree's contents
   @package_dir = arg
   package_dir_tree = Array.new
-  Dir.chdir( @package_dir ) { |d| package_dir_tree = Dir[ "**/*" ] }
+  begin
+    Dir.chdir( @package_dir ) { |d| package_dir_tree = Dir[ "**/*" ] }
+  rescue Exception => e
+    @logger.info e.message
+    exit FILE_ACCESS_ERROR
+  end
 
   #
   # Find files called what Assetmap(s) would be called.
