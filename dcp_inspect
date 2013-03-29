@@ -237,21 +237,21 @@ class DLogger
     end
   end
   def errors( text )
+    @full_log << text if @full_log
     if @errors
       to_console( text )
-      @full_log << text if @full_log
     end
   end
   def info( text )
+    @full_log << text if @full_log
     if @info
       to_console( text )
-      @full_log << text if @full_log
     end
   end
   def debug( text )
+    @full_log << text if @full_log
     if @debug
       to_console( text )
-      @full_log << text if @full_log
     end
   end
   def cr( text )
@@ -2415,52 +2415,60 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   #
                   empty_subtitles = 0
                   subtitles.each do |sub|
+                    spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : NIL )
                     if sub.children.empty? or ( sub.children.size == 1 and sub.children.first.is_a? Nokogiri::XML::Text )
                       empty_subtitles += 1
-                      errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Empty Subtitle element#{ sub.attributes[ 'SpotNumber' ] ? ': SpotNumber ' + sub.attributes[ 'SpotNumber' ].value : '' }"
+                      errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Empty Subtitle element#{ spot_number ? ': SpotNumber ' + spot_number : '' }"
                       cpl_errors = TRUE
                     elsif ( nodeset = sub.xpath( '*/Text|Text|*/Image|Image' ) )
                       nodeset.each do |node|
                         if node.text == ''
                           empty_subtitles += 1
-                          hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Empty #{ node.name } element#{ sub.attributes[ 'SpotNumber' ] ? ': SpotNumber ' + sub.attributes[ 'SpotNumber' ].value : '' }. While not a specification error this can lead to playback problems in the field. Consider fixing"
+                          hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Empty #{ node.name } element#{ spot_number ? ': SpotNumber ' + spot_number : '' }. While not a specification error this can lead to playback problems in the field. Consider fixing"
                         end
                       end
                     end
                   end
 
                   #
-                  # Check if all referenced resources (font, subtitle images) are in the dictionary
-                  # and present on the medium
+                  # Check whether all referenced resources (font, subtitle images)
+                  # are in the dictionary and exist on the medium
                   #
                   text_elements = FALSE
+                  image_elements = FALSE
+                  load_font_el = xml.xpath( '//LoadFont' )
+                  font_el = xml.xpath( '//Font' )
+
                   subtitles.each do |sub|
+                    spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : NIL )
                     nodeset = sub.xpath( '*/Text|Text|*/Image|Image' )
                     nodeset.each do |node|
                       case node.name
                       when 'Text'
                         text_elements = TRUE
                       when 'Image'
-                        asset_name = File.join( asset_id, node.text )
-                        if dict.values.include? asset_name
-                          if File.exists?( package asset_name )
-                            #
+                        image_elements = TRUE
+                        unless node.text.empty? # Checked above
+                          asset_name = File.join( asset_id, node.text )
+                          if dict.values.include? asset_name
+                            unless File.exists?( package asset_name )
+                              errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not found on the medium"
+                              cpl_errors = TRUE
+                            end
                           else
-                            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle #{ asset_id }: Referenced subtitle image #{ asset_name.inspect } not found on the medium"
+                            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not in AssetMap"
                             cpl_errors = TRUE
-                          end
-                        else
-                          errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Referenced subtitle image #{ asset_name.inspect } not in AssetMap"
-                          cpl_errors = TRUE
-                          if File.exists?( package asset_name )
-                            hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Referenced subtitle image #{ asset_name.inspect } not in AssetMap but present on the medium"
+                            if File.exists?( package asset_name )
+                              hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not in AssetMap but present on the medium"
+                            end
                           end
                         end
                       end
                     end
                   end
+
+                  # Check referenced font file
                   if text_elements
-                    load_font_el = xml.xpath( '//LoadFont' )
                     if load_font_el.empty?
                       hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: No LoadFont element found. Playback will use a default font"
                     else
@@ -2472,21 +2480,39 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                           if font?( font_asset )
                             font_asset_size = File.size font_asset
                             if font_asset_size > 655360 # 640 KB
-                              errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle #{ asset_id }: Font #{ font_asset } size #{ font_asset_size.to_k } exceeds 640 KB"
+                              errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Font #{ font_asset } size #{ font_asset_size.to_k } exceeds 640 KB"
                               cpl_errors = TRUE
                             end
                           else
-                            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle #{ asset_id }: Font #{ font_asset } referenced in LoadFont is neither #{ MStr::TTF } nor #{ MStr::OTF }"
+                            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Font #{ font_asset } referenced in LoadFont is neither #{ MStr::TTF } nor #{ MStr::OTF }"
                             cpl_errors = TRUE
                           end
                         end
                       else
-                        errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle #{ asset_id }: Referenced font #{ font_asset } not in AssetMap"
+                        errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Referenced font #{ font_asset } not in AssetMap"
                         cpl_errors = TRUE
                       end
                       if load_font_el.size > 1
                         hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Found multiple LoadFont elements. Playback will use 1st: #{ load_font_uri }"
                       end
+                    end
+                  end
+
+                  # Check LoadFont / Font Id dependency
+                  # See https://github.com/wolfgangw/digital_cinema_tools_distribution/issues/15 for discussion
+                  # TI's Subtitle_Specification_TI_1.1.pdf: Font's attributes are all #IMPLIED (not required)
+                  font_ids = Array.new
+                  font_el.each do |el|
+                    font_ids << el.attributes[ 'Id' ].value if el.attributes[ 'Id' ]
+                  end
+                  font_ids.uniq!
+                  if font_ids.size > 1
+                    errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Multiple Font Ids referenced: #{ font_ids.inspect }"
+                    cpl_errors = TRUE
+                  end
+                  if load_font_el.empty?
+                    if font_ids.size > 0
+                      errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: No Font Id declared via LoadFont but referenced Font Ids found: #{ font_ids.inspect }"
                     end
                   end
 
@@ -2773,8 +2799,8 @@ def dcp_inspect( options, arg )
     # collect all asset nodes
     assets = xml.xpath( '//Asset' )
 
-    @logger.debug( "Assetmap #{ am_id }: #{ am_file }"  )
-    @logger.debug( "Assetmap #{ am_id } lists #{ amount( 'asset', assets ) }:" )
+    @logger.debug( "AM #{ am_id }: #{ am_file }"  )
+    @logger.debug( "AM #{ am_id } lists #{ amount( 'asset', assets ) }:" )
 
     # Store asset info in a dictionary (uuid => path, relative to package root)
     # look for PackingList(s)
