@@ -1967,22 +1967,18 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
   parts_clone = parts.dup
   studio_match = FALSE
   parts_clone.each_with_index do |part, part_index|
-    hints << "Naming convention debug: #{ part_index }: #{ part.inspect }"
     if part =~ regexp[ :studio ] and parts_clone[ part_index + 1 ] =~ regexp[ :date ]
       studio_match = TRUE
-      hints << "FOUND :studio directly before :date"
       matches[ :studio ] = part
       required_parts.delete( :studio )
       parts.delete_at( part_index )
     end
     if part =~ regexp[ :facility ] and parts_clone[ part_index - 1 ] =~ regexp[ :date ]
-      hints << "FOUND :facility directly after :date"
       matches[ :facility ] = part
       required_parts.delete( :facility )
-      parts.delete_at( studio_match ? part_index - 1 : part_index ) 
+      parts.delete_at( studio_match ? part_index - 1 : part_index )
     end
   end
-  hints << "Remaining parts after :studio :date :facility combo: #{ parts.inspect }"
 
   required_parts.each_with_index do |part_name, part_name_index|
 
