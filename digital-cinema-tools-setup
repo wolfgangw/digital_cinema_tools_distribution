@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2013.03.25'
+setup_version='v1.2013.03.29'
 #
 # Usage:
 #
@@ -134,12 +134,14 @@ location_is_git_repo() {
   location_exists "$1" && location_exists "$1/.git" && [ -d "$1/.git" ]
 }
 
+
 # Only linux systems in mind for now
 if [[ ! $MACHTYPE = *linux* ]]
 then
   echo "This installer supports only linux systems"
   exit 1
 fi
+
 
 # Check and bail out if the installer is run with root privileges
 if [ $script_runner == "root" ]
@@ -151,6 +153,7 @@ then
   echo
   exit 1
 fi
+
 
 # Which OS distribution are we on?
 #
@@ -180,6 +183,7 @@ then
   fi
 fi
 
+
 # Bail out if non-supported OS distribution
 if ! [ -z $os_dist ]
 then
@@ -188,6 +192,7 @@ else
   echo 'OS not supported'
   exit 1
 fi
+
 
 # Depending on which OS we're on set the required packager and switches
 # to install a basic set of packages from distribution sources
@@ -215,6 +220,7 @@ case $os_dist in
     packager_params='--gpg-auto-import-keys --non-interactive install'
     packages_required=( make automake gcc gcc-c++ libxslt-devel libexpat-devel libxmlsec1-openssl-devel xmlsec1 readline-devel zlib-devel openssl-devel ImageMagick mplayer sox git libtiff-devel libpng12-devel )
 esac
+
 
 # Check for the presence of required basic distribution packages
 if command_exists $query && command_exists $packager
@@ -317,10 +323,12 @@ else
   exit 1
 fi
 
+
 # Set up directories for digital cinema tools
 if ! location_exists $basedir ; then mkdir $basedir ; fi
 if ! location_exists $libdir ; then mkdir $libdir ; fi
 if ! location_exists $bindir ; then mkdir $bindir ; fi
+
 
 # Source .bash_profile from .bashrc
 if grep -P '^(source|\.) .*/.bash_profile' $bashrc
@@ -343,6 +351,7 @@ else
   fi
 fi
 
+
 # Check for ~/bin and inclusion in PATH
 if string_includes $PATH "$bindir"
 then
@@ -361,6 +370,7 @@ else
 fi
 
 source $bashrc
+
 
 # rbenv
 if command_exists rvm
@@ -417,6 +427,7 @@ else
   fi
 fi
 
+
 # gems: ri/rdoc switches
 if [ -e $gemrc ]
 then
@@ -429,6 +440,7 @@ then
 else
   echo 'gem: --no-ri --no-rdoc' > $gemrc
 fi
+
 
 # ruby-build (as rbenv plugin)
 if location_exists $rbenv_dir
@@ -461,6 +473,7 @@ else
   fi
 fi
 
+
 # Try to install a ruby version
 # Explicitly set global $ruby_version
 if command_exists rbenv
@@ -488,20 +501,25 @@ else
   errors+=("Ruby: Failed to install ruby (Required command rbenv not found)") && echo_last errors[@]
 fi
 
+
 # Nokogiri (with c14n)
-cd $libdir
-# Nokogiri origin moved from tenderlove to sparklemotion (6/2012)
-if location_exists $nokogiri_dir && location_is_git_repo $nokogiri_dir && cd $nokogiri_dir && ! [ $(git config remote.origin.url) = $nokogiri_url ]
-then
-  if cd $nokogiri_dir && git remote set-url origin $nokogiri_url && git fetch && git remote prune origin
-  then
-    echo 'Nokogiri: Updated repository origin url'
-  else
-    errors+=("Nokogiri: Failed to update repository origin url") && echo_last errors[@]
-  fi
-fi
 if command_exists gem
 then
+  if gem list -i nokogiri &> /dev/null
+  then
+    echo 'Nokogiri: Found installed gem'
+  else
+    # Install Nokogiri gem
+    if ! gem install nokogiri
+    then
+      errors+=("Nokogiri: Failed to install rtequired gem nokogiri") && echo_last errors[@]
+    else
+      rbenv rehash
+      echo 'Nokogiri: Installed gem nokogiri'
+    fi
+  fi
+
+  # Check for C14N support
   if gem list -i nokogiri &> /dev/null
   then
     if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby
@@ -515,6 +533,8 @@ then
         nokogiri_c14n=false
         errors+=("Nokogiri: Installed version does not support C14N") && echo_last errors[@]
       fi
+    else
+      errors+=("Nokogiri: Could not test Nokogiri C14N support (Required ruby version not found)") && echo_last errors[@]
     fi
     if $nokogiri_c14n
     then
@@ -522,81 +542,12 @@ then
     else
       errors+=("Nokogiri: There is a problem with the installed version of Nokogiri. Consider removing your installed version of Nokogiri and re-run this installer") && echo_last errors[@]
     fi
-  else
-    echo 'Nokogiri: Installing ...'
-    if location_is_git_repo $nokogiri_dir
-    then
-      cd $nokogiri_dir
-      echo 'Nokogiri: Pulling updates ...'
-      git checkout master
-      if ! git pull
-      then
-        errors+=("Nokogiri: Failed to pull updates. Try again later") && echo_last errors[@]
-      else
-        if ! git checkout $nokogiri_required_commit
-        then
-          errors+=("Nokogiri: Failed to checkout required version. Try again later") && echo_last errors[@]
-        else
-          echo 'Nokogiri: Repository OK'
-        fi
-      fi
-    else
-      remove_if_exists nokogiri
-      if ! git clone $nokogiri_url
-      then
-        errors+=("Nokogiri: Failed to clone repository. Try again later") && echo_last errors[@]
-      else
-        # Workaround for issue 2. Thanks to youngwug for coming back with this
-        # (See Nokogiri issue 712 which resulted in a commit with a failing test case and is of zero relevance here)
-        cd $nokogiri_dir
-        if ! git checkout $nokogiri_required_commit
-        then
-          errors+=("Nokogiri: Failed to checkout required version. Try again later") && echo_last errors[@]
-        else
-          echo 'Nokogiri: Repository OK'
-        fi
-      fi
-    fi
   fi
-  if location_exists $nokogiri_dir && ! gem list -i nokogiri
-  then
-    cd $nokogiri_dir
-    echo 'Nokogiri: Installing required gems hoe, rake-compiler, racc, rexical, minitest'
-    if ! gem install hoe rake-compiler racc rexical minitest
-    then
-      errors+=("Nokogiri: Failed to install required gems hoe, rake-compiler, racc, rexical, minitest") && echo_last errors[@]
-    else
-      rbenv rehash
-      echo 'Nokogiri: Installing required gem rake 0.9.2' # Quite possible that this is outdated
-      if ! gem install rake -v=0.9.2
-      then
-        errors+=("Nokogiri: Failed to install required gem rake") && echo_last errors[@]
-      else
-        rbenv rehash
-        echo 'Nokogiri: Building ...'
-        if rake && rake install_gem && sleep 20 && rbenv rehash
-        then
-          if gem list -i nokogiri
-          then
-            echo 'Nokogiri: OK'
-          else
-            errors+=("Nokogiri: Gem nokogiri not found") && echo_last errors[@]
-          fi
-        else
-          errors+=("Nokogiri: Failed to build and/or install gem nokogiri") && echo_last errors[@]
-        fi
-      fi
-    fi
-  elif ! location_exists $nokogiri_dir && ! gem list -i nokogiri
-  then
-    errors+=("Nokogiri: Failed to setup repository") && echo_last errors[@]
-  elif location_exists $nokogiri_dir && gem list -i nokogiri
-  then
-    echo 'Nokogiri: OK'
-  fi
+
 else
   errors+=("Nokogiri: Failed to install Nokogiri (Required command gem not found)") && echo_last errors[@]
-fi
+fi # Nokogiri
+
 
 # openjpeg
 cd $libdir
@@ -659,6 +610,7 @@ then
     fi
   done # openjpeg
 fi
+
 
 # asdcplib
 cd $libdir
@@ -741,6 +693,7 @@ then
   done # asdcplib
 fi
 
+
 # Digital Cinema Tools distribution
 cd $libdir
 if location_is_git_repo $dist_dir
@@ -789,6 +742,21 @@ then
 else
   errors+=("Digital cinema tools distribution: Failed to update $bindir. Repository missing") && echo_last errors[@]
 fi
+# dcp_inspect: gem ttfunk nice-to-have
+if command_exists gem
+then
+  if gem list -i ttfunk &> /dev/null
+  then
+    echo 'dcp_inspect: Nice-to-have gem ttfunk OK'
+  else
+    if ! gem install ttfunk && rbenv rehash
+    then
+      echo 'dcp_inspect: Failed to install nice-to-have gem ttfunk. This is not a critical error'
+    else
+      echo 'dcp_inspect: Nice-to-have gem ttfunk OK'
+    fi
+  fi
+fi
 # cinemaslides: gem highline required
 if command_exists gem
 then
@@ -825,6 +793,7 @@ else
   exec_shell_required=true
 fi
 
+
 # Local certificate store and example certificates
 certstore=$basedir/CERTSTORE
 if grep -P "export CINEMACERTSTORE=" $bashrc $bash_profile &> /dev/null
@@ -858,6 +827,7 @@ else
 fi
 # Done: Digital Cinemas Tools Distribution
 
+
 # Fastpath for tab-completion
 if [ -e $inputrc ]
 then
@@ -876,6 +846,7 @@ else
   echo 'set show-all-if-ambiguous on' >> $inputrc
   exec_shell_required=true
 fi
+
 
 # Keep downloaded setup script around if distribution setup failed (which would have it included)
 if [ -x "$bindir/$setup_basename" -a -L "$bindir/$setup_basename" ] && [[ $( readlink -f "$bindir/$setup_basename" ) = "$dist_dir/$setup_basename" ]]
@@ -903,6 +874,7 @@ else
   errors+=("$setup_basename: Keeper still borked") && echo_last errors[@]
 fi
 
+
 # Setup done
 echo
 
@@ -915,6 +887,7 @@ then
   done
   echo
 fi
+
 
 # FIXME On re-runs in already working environments this is mis-leading
 if $exec_shell_required
