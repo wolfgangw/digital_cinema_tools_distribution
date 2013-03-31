@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.03.29'
+AppVersion = 'v1.2013.04.01'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -79,8 +79,7 @@ AppVersion = 'v1.2013.03.29'
 #
 # - Deep-inspects compositions. This includes composition type consistency
 #   and completeness checks. dcp_inspect goes through some lengths to determine
-#   a composition's type (SMPTE/Interop). It does so by collecting all types
-#   referenced and trying to make sense of that list.
+#   a composition's type (SMPTE/Interop).
 #
 # - Hints at deviations from the Digital Cinema Naming Convention.
 #   See http://digitalcinemanamingconvention.com for the proper nomenclature
@@ -133,14 +132,27 @@ if RUBY_VERSION <= '1.9'
   rescue LoadError
   end
 end
-require 'nokogiri'
-require 'optparse'
-require 'ostruct'
-require 'pathname'
-require 'shellwords'
-require 'openssl'
-require 'base64'
-require 'stringio'
+[
+'nokogiri',
+'optparse',
+'ostruct',
+'pathname',
+'shellwords',
+'openssl',
+'base64',
+'stringio'
+].each do |gem|
+  begin
+    require gem
+  rescue LoadError => e
+    puts e.message
+    case gem
+    when 'nokogiri'
+      puts "Please run 'gem install nokogiri' and try again"
+    end
+    exit GEM_LOAD_ERROR
+  end
+end
 
 # Exit codes
 DCP_OK = 0
@@ -153,6 +165,8 @@ XSD_STORE_NOT_FOUND = 6
 BAD_HASH_LIMIT_ARG = 7
 LOGFILE_WRITE_ERROR = 8
 FILE_ACCESS_ERROR = 9
+LOGFILE_EXISTS_ERROR = 10
+GEM_LOAD_ERROR = 11
 
 # Signature counters
 @signed_cpls_count = 0
@@ -171,7 +185,7 @@ class Options
     options.as_asset_store = FALSE
     options.verbosity = 'debug'
     options.logfile = NIL
-    options.verbosity_choices = [ 'quiet', 'errors', 'info', 'debug', 'trace_func' ]
+    options.verbosity_choices = [ 'quiet', 'errors', 'hints', 'info', 'cpl', 'debug', 'trace_func' ]
 
     opts = OptionParser.new do |opts|
       opts.banner = <<BANNER
@@ -191,15 +205,15 @@ BANNER
       opts.on( '-s', '--as-asset-store', 'Simulate asset store by merging all collected AM dictionaries' ) do
         options.as_asset_store = TRUE
       end
-      opts.on( '-v', '--verbosity level', String, 'Use quiet, errors, info, debug or trace_func (Default: debug)' ) do |p|
+      opts.on( '-l', '--logfile logfile', String, 'Specify logfile' ) do |p|
+        options.logfile = p
+      end
+      opts.on( '-v', '--verbosity level', String, 'Use quiet, errors, hints, info, debug, cpl or trace_func (Default: debug)' ) do |p|
         if options.verbosity_choices.include?( p )
           options.verbosity = p
         else
           options.verbosity = "info"
         end
-      end
-      opts.on( '-l', '--logfile logfile', String, 'Specify logfile' ) do |p|
-        options.logfile = p
       end
       opts.on_tail( '-h', '--help', 'Display this screen' ) do
         puts opts
@@ -221,39 +235,49 @@ end # Options
 
 # * lib/logger.rb
 class DLogger
+  attr_reader :is_quiet, :prints_errors, :prints_hints, :prints_info, :prints_debug, :prints_cr, :prints_cpl, :writes_logfile, :logfile
   def initialize( prefix, options )
     @prefix = prefix
     @full_log = ( options.logfile ? Array.new : NIL )
-    @verbosity = options.verbosity
-    case @verbosity
-    when 'quiet'  then @errors, @info, @debug, @cr = [ FALSE, FALSE, FALSE, FALSE ]
-    when 'info'   then @errors, @info, @debug, @cr = [ FALSE, TRUE, FALSE, FALSE ]
-    when 'errors' then @errors, @info, @debug, @cr = [ TRUE, FALSE, FALSE, FALSE ]
-    when 'debug'  then @errors, @info, @debug, @cr = [ TRUE, TRUE, TRUE, TRUE ]
+
+    case options.verbosity
+    when 'quiet'  then @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, FALSE, FALSE, FALSE, FALSE, FALSE ]
+    when 'errors' then @errors, @hints, @info, @debug, @cr, @cpl = [ TRUE, FALSE, FALSE, FALSE, FALSE, FALSE ]
+    when 'hints'  then @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, TRUE, FALSE, FALSE, FALSE, FALSE ]
+    when 'info'   then @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, FALSE, TRUE, FALSE, FALSE, FALSE ]
+    when 'debug'  then @errors, @hints, @info, @debug, @cr, @cpl = [ TRUE, TRUE, TRUE, TRUE, TRUE, TRUE ]
+    when 'cpl'    then @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, FALSE, FALSE, FALSE, FALSE, TRUE ]
     when 'trace_func'
-                       @errors, @info, @debug, @cr = [ FALSE, FALSE, FALSE, FALSE ]
+                       @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, FALSE, FALSE, FALSE, FALSE, FALSE ]
       set_trace_func proc { |event, file, line, id, binding, classname|
         printf "%8s %s:%-2d %10s %8s\n", event, file, line, id, classname
       }
     end
+
+    @is_quiet = TRUE if options.verbosity == 'quiet'
+    @writes_logfile = TRUE if @full_log
+    @logfile = options.logfile
+    @prints_errors, @prints_hints, @prints_info, @prints_debug, @prints_cr, @prints_cpl = @errors, @hints, @info, @debug, @cr, @cpl
   end
   def errors( text )
     @full_log << text if @full_log
-    if @errors
-      to_console( text )
-    end
+    if @errors then to_console( text ) end
+  end
+  def hints( text )
+    @full_log << text if @full_log
+    if @hints then to_console( text ) end
   end
   def info( text )
     @full_log << text if @full_log
-    if @info
-      to_console( text )
-    end
+    if @info then to_console( text ) end
   end
   def debug( text )
     @full_log << text if @full_log
-    if @debug
-      to_console( text )
-    end
+    if @debug then to_console( text ) end
+  end
+  def cpl( text )
+    @full_log << text if @full_log
+    if @cpl then to_console( text ) end
   end
   def cr( text )
     # don't go to @full_log here
@@ -334,7 +358,7 @@ module MStr
     :date             => { :re => /^\d{8}$/,                                  :field_re => /^\d{6}$/ },
     :facility         => { :re => /^[A-Z0-9]{2,3}$/ },
     :i3d_specs        => { :re => /^(i3D|i3D-gb|i3D-ngb)$/ },
-    :package_type     => { :re => /^(OV|VF(-\d)?)$/ }
+    :package_type     => { :re => /^(OV|VF(-\d)?)$/,                          :field_re => /^VF(\d)?$/ }
   }
 
   # asdcp-test answers include
@@ -478,7 +502,7 @@ end
 
 def print_inspection_messages( inspection )
   inspection[ :errors ].map { |e| @logger.errors [ 'Error', e ].join( ': ' ) }
-  inspection[ :hints ].map { |e| @logger.info [ 'Hint', e ].join( ': ' ) }
+  inspection[ :hints ].map { |e| @logger.hints [ 'Hint', e ].join( ': ' ) }
   inspection[ :info ].map { |e| @logger.info [ 'Info', e ].join( ': ' ) }
 end
 
@@ -1952,9 +1976,10 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
   original_parts = title.split( '_' )
   parts = original_parts.dup
   matches = Hash.new
-  misses = Hash.new
   required_parts = MStr::Naming_convention.keys
   required_parts.delete( :i3d_specs ) unless ( is_stereoscopic && i3d_specs_required )
+  misses = Hash.new
+  required_parts.each do |rp| misses[ rp ] = FALSE end
 
   #
   # Try to anchor :studio and :facility to :date. Ugh
@@ -1971,11 +1996,13 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
     if part =~ regexp[ :studio ] and parts_clone[ part_index + 1 ] =~ regexp[ :date ]
       studio_match = TRUE
       matches[ :studio ] = part
+      misses.delete( :studio )
       required_parts.delete( :studio )
       parts.delete_at( part_index )
     end
     if part =~ regexp[ :facility ] and parts_clone[ part_index - 1 ] =~ regexp[ :date ]
       matches[ :facility ] = part
+      misses.delete( :facility )
       required_parts.delete( :facility )
       parts.delete_at( studio_match ? part_index - 1 : part_index )
     end
@@ -2015,6 +2042,8 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
             end
           when :territory_rating
             hints << "CPL #{ cpl_id }: Naming convention: Part #{ part_name } #{ part.inspect } matches :field_re only"
+          when :package_type
+            hints << "CPL #{ cpl_id }: Naming convention: Part #{ part_name } #{ part.inspect } is missing a hyphen, should be '#{ part.split( /\d/ ).first }-#{ part.split( /\D/ ).last }'"
           end
           # All upcase
           if part.upcase != part
@@ -2047,9 +2076,9 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
   else
     hints << "CPL #{ cpl_id }: Naming convention: Expected number of parts present in #{ title.inspect }"
   end
-  hints << "CPL #{ cpl_id }: Naming convention: #{ amount( 'part', matches ) } matching: #{ matches.inspect }" if matches.size > 0
-  hints << "CPL #{ cpl_id }: Naming convention: #{ amount( 'part', misses ) } missing: #{ misses.keys.inspect }" if misses.size > 0
-  return hints
+  hints << "CPL #{ cpl_id }: Naming convention: #{ amount( 'part', matches ) } matching: #{ matches.map { |k,v| [ k, '"' + v + '"' ].join( ':' ) }.join( ' ' ) }" if matches.size > 0
+  hints << "CPL #{ cpl_id }: Naming convention: #{ amount( 'part', misses ) } missing: #{ misses.keys.join( ', ' ) }" if misses.size > 0
+  return hints, matches, misses
 end
 
 
@@ -2065,6 +2094,16 @@ def font?( file )
   else
     nil
   end
+end
+
+
+def error_output
+  where = Array.new
+  where << 'below' if @logger.prints_errors
+  where << 'with increased verbosity' if ! @logger.prints_errors
+  where << "in #{ @logger.logfile }" if @logger.writes_logfile
+  where << 'in a logfile with option --logfile' if ! @logger.writes_logfile
+  return where.join ' or '
 end
 
 
@@ -2096,11 +2135,11 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   if options.validate
     begin
       valid, errors, cpl_errors = validation( errors, cpl_errors, xml, cpl_file, cpl_id, 'CPL' )
-      @logger.debug( "CPL #{ cpl_id }: Schema check: #{ valid ? 'OK' : 'Errors (See below)' }" )
+      report << "CPL #{ cpl_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }"
     rescue Exception => e
       errors << "CPL #{ cpl_id }: Exception in Schema check: #{ e.message }"
       cpl_errors = TRUE
-      @logger.debug errors.last
+      report << errors.last
     end
   end
 
@@ -2111,7 +2150,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
       @signed_cpls_verified_count += 1
     end
     errors, cpl_errors = errors_signature_verification( errors, cpl_errors, signature_result, cpl_id, cpl_file, 'CPL' )
-    @logger.debug( "CPL #{ cpl_id }: #{ signature_result.messages.last }" )
+    report << "CPL #{ cpl_id }: #{ signature_result.messages.last }"
   else
     signature_result = nil
   end
@@ -2149,7 +2188,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   content_title_text = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ContentTitleText" ).text
   if content_title_text.empty?
     hints << "CPL #{ cpl_id }: ContentTitleText is empty"
-    report << "ContentTitleText: <Empty>"
+    report << "ContentTitleText: [Empty]"
   else
     report << "ContentTitleText: #{ content_title_text }"
   end
@@ -2169,13 +2208,13 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     if issue_date.text.empty?
       errors << "CPL #{ cpl_id }: IssueDate is empty"
       cpl_errors = TRUE
-      report << 'IssueDate:        <Empty -- See schema errors below>'
+      report << "IssueDate:        [Empty -- See schema errors #{ error_output }]"
     else
       issue_date_friendly = datetime_friendly( DateTime.parse issue_date.text )
       report << "IssueDate:        #{ issue_date.text } (#{ issue_date_friendly })"
     end
   else
-    report << "IssueDate:        <Not present -- See schema errors below>"
+    report << "IssueDate:        [Not present -- See schema errors #{ error_output }]"
   end
 
   # TKR? (FIXME: Check URL scheme)
@@ -2191,13 +2230,13 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     else
       if issuer.text.empty?
         hints << "CPL #{ cpl_id }: Issuer is empty"
-        report << 'Issuer:           <Empty>'
+        report << 'Issuer:           [Empty]'
       else
         report << "Issuer:           #{ issuer.text }"
       end
     end
   else
-    report << 'Issuer:           <Not present>'
+    report << 'Issuer:           [Not present]'
   end
 
   # Creator
@@ -2205,12 +2244,12 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   if creator
     if creator.text.empty?
       hints << "CPL #{ cpl_id }: Creator is empty"
-      report << 'Creator:          <Empty>'
+      report << 'Creator:          [Empty]'
     else
       report << "Creator:          #{ creator.text }"
     end
   else
-    report << 'Creator:          <Not present>'
+    report << 'Creator:          [Not present]'
   end
 
   # Metadata // CMA
@@ -2366,11 +2405,14 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                 cpl_referenced_assets_types << MStr::AssetTypeInterop
 
                 if options.validate
-                  valid, errors, cpl_errors = validation( errors, cpl_errors, xml, asset_file, asset_id, 'DCSubtitle' )
-                  if valid == FALSE
+                  begin
+                    valid, errors, cpl_errors = validation( errors, cpl_errors, xml, asset_file, asset_id, 'DCSubtitle' )
+                    report << "DCSubtitle #{ asset_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }"
+                  rescue Exception => e
+                    errors << "DCSubtitle #{ asset_id }: Exception in Schema check: #{ e.message }"
                     cpl_errors = TRUE
+                    report << errors.last
                   end
-                  @logger.debug( "DCSubtitle #{ asset_id }: Schema check: #{ valid ? 'OK' : 'Errors (See below)' }"  )
                 end
 
                 xml.remove_namespaces!
@@ -2692,7 +2734,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   else
     naming_i3d_specs_required = FALSE
   end
-  hints = naming_convention_compliant?( cpl_id, content_title_text, is_stereoscopic, naming_i3d_specs_required, hints )
+  hints, naming_matches, naming_misses = naming_convention_compliant?( cpl_id, content_title_text, is_stereoscopic, naming_i3d_specs_required, hints )
 
   # Composition completeness
   if assets_status_list.include?( FALSE )
@@ -2715,11 +2757,11 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     report << 'Composition complete'
   end
   if cpl_errors == TRUE
-    report << "There were errors. See CPL #{ cpl_id } errors below"
+    report << "There were errors. See CPL #{ cpl_id } errors #{ error_output }"
   end
 
   return report, errors, hints, info
-end
+end # cpl_inspect_xml
 
 
 def dcp_inspect( options, arg )
@@ -2779,8 +2821,14 @@ def dcp_inspect( options, arg )
         # Scrounge am id for reporting
         am_id = get_asset_uuid( am_file )
         if options.validate
-          valid, errors, error_status = validation( errors, TRUE, xml, am_file, am_id, 'AM' )
-          @logger.debug( "AM #{ am_id.nil? ? am_id.inspect : am_id }: Schema check: #{ valid ? 'OK' : 'Errors (See below)' }: #{ am_file }" )
+          begin
+            valid, errors, error_status = validation( errors, TRUE, xml, am_file, am_id, 'AM' )
+            @logger.debug( "AM #{ am_id.nil? ? am_id.inspect : am_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }: #{ am_file }" )
+          rescue Exception => e
+            errors << "AM #{ am_id.nil? ? am_id.inspect : am_id }: Exception in Schema check: #{ e.message }"
+            error_status = TRUE
+            @logger.debug errors.last
+          end
         end
 
       else
@@ -2868,7 +2916,7 @@ def dcp_inspect( options, arg )
           am_errors = TRUE
         end
 
-        # Check for optional Length element and compare to actual asset size
+        # Check for Chunklist:Chunk:Length element and compare to actual asset size.
         # In the case of a mismatch this results in a hint as Length is optional
         # and no crucial processing can depend on it. Field behaviour undefined ttbomk.
         if File.exists?( asset_file )
@@ -2878,7 +2926,7 @@ def dcp_inspect( options, arg )
               listed_asset_length = asset.xpath( 'ChunkList/Chunk/Length' ).text.to_i
               asset_size = File.size asset_file
               unless listed_asset_length == asset_size
-                hints << "AM #{ am_id }: Length mismatch: Asset: #{ listed_id }: Listed length: #{ listed_asset_length } Asset on medium: #{ asset_size }"
+                hints << "AM #{ am_id }: Length mismatch: Asset: #{ listed_id }: Listed length: #{ listed_asset_length } (#{ listed_asset_length.to_k }) Asset on medium: #{ asset_size } (#{ asset_size.to_k })"
               end
             rescue Exception => e
               errors << "AM #{ am_id }: Length check fail: #{ e.message }"
@@ -2922,7 +2970,7 @@ def dcp_inspect( options, arg )
     pkls_missing[ index ].map { |pkl_id| pkls[ index ].delete pkl_id }
 
     if am_errors == TRUE
-      @logger.debug "There were errors. See AM #{ am_id } errors below"
+      @logger.debug "There were errors. See AM #{ am_id } errors #{ error_output }"
     end
 
     @logger.debug nil
@@ -2978,7 +3026,7 @@ def dcp_inspect( options, arg )
         if options.validate
           begin
             valid, errors, pkl_errors = validation( errors, pkl_errors, xml, pkl_file, pkl_id, 'PKL' )
-            @logger.debug( "PKL #{ pkl_id }: Schema check: #{ valid ? 'OK' : 'Errors (See below)' }" )
+            @logger.debug( "PKL #{ pkl_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }" )
           rescue Exception => e
             errors << "PKL #{ pkl_id }: Exception in Schema check: #{ e.message }"
             pkl_errors = TRUE
@@ -3049,6 +3097,7 @@ def dcp_inspect( options, arg )
 
             if File.exists?( asset_file )
               size_asset = File.size( asset_file )
+              #
               # Plug in checks here. we might be skipping validation hence the tag test
               #
               # Check listed and actual asset size
@@ -3177,8 +3226,8 @@ def dcp_inspect( options, arg )
         else
           report << "CPL file missing: #{ cpl_file }"
         end
-        report.map { |line| @logger.debug line }
-        @logger.debug ''
+        report.map { |line| @logger.cpl line }
+        @logger.cpl ''
       end
     end
   end
@@ -3231,28 +3280,36 @@ else
 end
 ENV[ 'XML_CATALOG_FILES' ] = local_xml_catalog
 
+
 # main
 if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( args[ 0 ] ).realpath )
-  inspection = dcp_inspect( options, args[ 0 ] )
-  print_inspection_messages( inspection ) unless options.verbosity == 'quiet'
+
   if options.logfile
     if File.exists?( options.logfile )
       @logger.info "Requested logfile #{ Pathname( options.logfile ).realpath } exists. Not overwriting"
-    else
-      begin
-        File.open( options.logfile, 'w' ) { |f| f.write( @logger.full_log_blob ) }
-      rescue Exception => e
-        @logger.info e.message
-        exit LOGFILE_WRITE_ERROR
-      end
+      exit LOGFILE_EXISTS_ERROR
     end
   end
+
+  inspection = dcp_inspect( options, args[ 0 ] )
+  print_inspection_messages( inspection ) unless options.verbosity == 'quiet'
+
+  if options.logfile
+    begin
+      File.open( options.logfile, 'w' ) { |f| f.write( @logger.full_log_blob ) }
+    rescue Exception => e
+      @logger.info e.message
+      exit LOGFILE_WRITE_ERROR
+    end
+  end
+
   case inspection[ :errors ].size
   when 0
     exit DCP_OK
   else
     exit DCP_ERROR
   end
+
 elsif args.size == 0
   @logger.info( "No volume or directory given. See #{ AppName } --help" )
   exit NO_ARG
