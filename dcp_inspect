@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.04.04'
+AppVersion = 'v1.2013.04.05'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -185,6 +185,7 @@ class Options
     options.as_asset_store = FALSE
     options.verbosity = 'debug'
     options.logfile = NIL
+    options.overwrite_logfile = FALSE
     options.verbosity_choices = [ 'quiet', 'errors', 'hints', 'info', 'cpl', 'debug', 'trace_func' ]
 
     opts = OptionParser.new do |opts|
@@ -196,7 +197,7 @@ BANNER
       opts.on( '--nh', '--no-hash', 'Skip asset hash checks' ) do
         options.check_hashes = FALSE
       end
-      opts.on( '--hl', '--hash-limit limit', String, 'Limit asset hash checks to assets smaller than limit. E.g. 700KB, 50MB or 1GB (Default: no limit)' ) do |p|
+      opts.on( '--hl', '--hash-limit limit', String, 'Limit asset hash checks to assets smaller than limit. E.g. 700KB, 50MB or 1GB (Default: No limit)' ) do |p|
         options.check_hashes_limit = p.downcase
       end
       opts.on( '--no-schema', 'Skip schema checks' ) do
@@ -205,8 +206,11 @@ BANNER
       opts.on( '-s', '--as-asset-store', 'Simulate asset store by merging all collected AM dictionaries' ) do
         options.as_asset_store = TRUE
       end
-      opts.on( '-l', '--logfile logfile', String, 'Specify logfile' ) do |p|
+      opts.on( '-l', '--logfile logfile', String, 'Specify logfile. Will receive full output' ) do |p|
         options.logfile = p
+      end
+      opts.on( '-L', '--overwrite-logfile', 'Force writing of logfile (Default: Do not overwrite existing logfile)' ) do
+        options.overwrite_logfile = TRUE
       end
       opts.on( '-v', '--verbosity level', String, 'Use quiet, errors, hints, info, debug, cpl or trace_func (Default: debug)' ) do |p|
         if options.verbosity_choices.include?( p )
@@ -3302,8 +3306,8 @@ if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( a
 
   if options.logfile
     if File.exists?( options.logfile )
-      @logger.info "Requested logfile #{ Pathname( options.logfile ).realpath } exists. Not overwriting"
-      exit LOGFILE_EXISTS_ERROR
+      puts " Requested logfile #{ options.logfile.inspect } exists. Will #{ options.overwrite_logfile ? '' : 'not ' }overwrite"
+      exit LOGFILE_EXISTS_ERROR unless options.overwrite_logfile
     end
   end
 
@@ -3313,6 +3317,7 @@ if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( a
   if options.logfile
     begin
       File.open( options.logfile, 'w' ) { |f| f.write( @logger.full_log_blob ) }
+      @logger.info "See logfile at #{ options.logfile }"
     rescue Exception => e
       @logger.info e.message
       exit LOGFILE_WRITE_ERROR
