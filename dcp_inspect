@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.04.05'
+AppVersion = 'v1.2013.04.06'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -140,7 +140,8 @@ end
 'shellwords',
 'openssl',
 'base64',
-'stringio'
+'stringio',
+'fileutils'
 ].each do |gem|
   begin
     require gem
@@ -3155,6 +3156,7 @@ def dcp_inspect( options, arg )
                 end
               else
                 errors << "PKL #{ pkl_id }: Hash tag missing or bad content: #{ asset_file }: #{ type.empty? ? '<Type not specified in PKL>' : type }: #{ id }"
+                pkl_errors = TRUE
               end
 
               # Pick CPLs
@@ -3169,6 +3171,7 @@ def dcp_inspect( options, arg )
               #
             else
               # asset_file does not exist
+              errors << "PKL #{ pkl_id }: Asset file missing: #{ id }: #{ asset_file }"
               package_size_listed += size_listed
               package_size_actual += 0
             end
@@ -3177,6 +3180,7 @@ def dcp_inspect( options, arg )
             # For some reason the listed id in PackingList is not in assetmap dictionary
             # Possibly been tampered with
             errors << "Asset UUID not in assetmap dictionary: PKL #{ pkl_id }: #{ id } (#{ type })"
+            pkl_errors = TRUE
           end
 
         end
@@ -3191,18 +3195,25 @@ def dcp_inspect( options, arg )
             cpls_missing[ index ] << cpl_id
             errors << "CPL file missing: #{ cpl_id }: #{ cpl_file }"
             @logger.debug errors.last
+            pkl_errors = TRUE
           end
         }
         cpls_missing[ index ].map { |cpl_id| cpls[ index ].delete cpl_id }
       else
         errors << "Not a PackingList: #{ pkl_file }"
         @logger.debug errors.last
+        pkl_errors = TRUE
       end
       if package_size_listed
         packages_size_listed += package_size_listed
         packages_size_actual += package_size_actual
         package_size_listed, package_size_actual = NIL, NIL
       end
+
+      if pkl_errors == TRUE
+        @logger.debug "There were errors. See PKL #{ pkl_id } errors #{ error_output }"
+      end
+
       @logger.debug ''
     end # am_pkls.each
   end # pkls.each
@@ -3260,6 +3271,29 @@ def dcp_inspect( options, arg )
 end
 
 
+def confirm_or_create( location )
+  testfile = File.join( location, Random.new.rand.to_s )
+  if File.exists?( location )
+    begin
+      result = FileUtils.touch( testfile )
+      File.delete( testfile )
+      return TRUE
+    rescue Exception => result
+      return FALSE
+    end
+  else
+    begin
+      result = FileUtils.mkdir_p( location )
+      return TRUE
+    rescue Exception => result
+      return FALSE
+    end
+  end
+end
+
+
+#
+# Prepare for main
 #
 options = Options.parse( ARGV )
 args = ARGV
@@ -3304,13 +3338,19 @@ ENV[ 'XML_CATALOG_FILES' ] = local_xml_catalog
 # main
 if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( args[ 0 ] ).realpath )
 
+  # Check requested logfile early (exists? overwrite? writable?)
   if options.logfile
     if File.exists?( options.logfile )
       puts " Requested logfile #{ options.logfile.inspect } exists. Will #{ options.overwrite_logfile ? '' : 'not ' }overwrite"
       exit LOGFILE_EXISTS_ERROR unless options.overwrite_logfile
     end
+    if ! confirm_or_create( File.dirname options.logfile )
+      puts " Cannot write requested logfile at #{ options.logfile.inspect }. Please specify another location"
+      exit LOGFILE_WRITE_ERROR
+    end
   end
 
+  # Inspection
   inspection = dcp_inspect( options, args[ 0 ] )
   print_inspection_messages( inspection ) unless options.verbosity == 'quiet'
 
