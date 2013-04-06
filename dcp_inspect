@@ -3172,6 +3172,7 @@ def dcp_inspect( options, arg )
             else
               # asset_file does not exist
               errors << "PKL #{ pkl_id }: Asset file missing: #{ id }: #{ asset_file }"
+              pkl_errors = TRUE
               package_size_listed += size_listed
               package_size_actual += 0
             end
