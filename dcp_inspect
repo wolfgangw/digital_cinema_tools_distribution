@@ -2135,10 +2135,14 @@ end
 
 # lib/cpl.rb
 def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
-  ns = xml.collect_namespaces
-  report = Array.new
   cpl_errors = FALSE
+  # FIXME Nokogiri's XML::Document#collect_namespaces is broken
+  # See https://github.com/sparklemotion/nokogiri/issues/885
+  ns = xml.collect_namespaces 
+  report = Array.new
+  reels_report = Array.new
   cpl_referenced_assets = Array.new
+  cpl_referenced_assets_encrypted = Array.new
   cpl_referenced_assets_types = Array.new
   cpl_reels_references_complete = Array.new
 
