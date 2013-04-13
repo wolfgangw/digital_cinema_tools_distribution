@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-AppVersion = "v0.2013.03.17"
+AppVersion = "v0.2013.04.13"
 #
 # Cinemaslides offers preview modes, a basic set of transition types 
 # and a basic set of DCP authoring options.
@@ -1015,23 +1015,19 @@ end
 
 
 def confirm_or_create( location )
-# location (a directory) might exist and be either writeable or not.
-# it might not exist and be either writeable (read 'can be created') or not.
-# since we want to be able to specify a "deep" path (topdir/with/children/...) File.writable?() wouldn't work.
-  testfile = File.join( location, `kmuuidgen -n` )
-  testfile_esc = Shellwords.escape testfile
+  testfile = File.join( location, Random.new.rand.to_s )
   if File.exists?( location )
     begin
-      result = `touch #{ testfile_esc } > /dev/null 2>&1`
+      result = FileUtils.touch( testfile )
       File.delete( testfile )
-      return TRUE # location exists and we can write to it
+      return TRUE
     rescue Exception => result
-      return FALSE # location exists but we can't write to it
+      return FALSE
     end
   else
     begin
       result = FileUtils.mkdir_p( location )
-      return TRUE # location created, hence writeable
+      return TRUE
     rescue Exception => result
       return FALSE
     end
@@ -1249,8 +1245,6 @@ module DCTools
   end
   
   def asdcp_digest( asset_file, options )
-    # equiv. `openssl dgst -sha1 -binary #{ file } | openssl base64`.chomp
-    # equiv. `asdcp-test -t #{ file }`.split( ' ' ).first
     etabar_title = "#{ asset_file }: Computing hash value:"
     hash, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options )
     value = Base64::encode64( hash ).chomp
@@ -1819,6 +1813,29 @@ def dc_thumbprint( cert_file )
   tmp = Tempfile.new( 'cinemaslides-' )
   `openssl asn1parse -in #{ cert_file } -out #{ tmp.path } -noout -strparse 4`
   `openssl dgst -sha1 -binary #{ tmp.path } | openssl base64`.chomp
+end
+
+
+def log_jpeg2000_encoder_action( options, file, files, counter )
+  case options.verbosity
+  when 'info'
+    @logger.cr( "#{ options.encoder }: #{ File.basename( file ) } (#{ counter } of #{ files.size })" )
+  when 'debug'
+    @logger.debug( "#{ options.encoder }: #{ File.basename( file ) } (#{ counter } of #{ files.size })" )
+  end
+end
+
+
+def jpeg2000_encoder_action( options, file_esc, asset_esc, fps, openjpeg_cinema_profile, kakadu_cinema_profile, max_bytes_per_image, max_bytes_per_component )
+  case options.encoder
+  when 'openjpeg-tm'
+    # Do not use opendcp_j2k's colorspace transform (-x), files are X'Y'Z' already (Andrae Steiner)
+    `opendcp_j2k -i #{ file_esc } -o #{ asset_esc } -x -r #{ fps }`
+  when 'openjpeg'
+    `image_to_j2k -#{ openjpeg_cinema_profile } -i #{ file_esc } -o #{ asset_esc } > /dev/null 2>&1`
+  when 'kakadu'
+    `kdu_compress -i #{ file_esc } -o #{ asset_esc } Sprofile=#{ kakadu_cinema_profile } Creslengths=#{ max_bytes_per_image } Creslengths:C0=#{ max_bytes_per_image },#{ max_bytes_per_component } Creslengths:C1=#{ max_bytes_per_image },#{ max_bytes_per_component } Creslengths:C2=#{ max_bytes_per_image },#{ max_bytes_per_component }`
+  end
 end
 ###
 
@@ -2856,29 +2873,6 @@ def silence( seconds, samplerate, bps, channelcount )
 end
 
 
-def log_jpeg2000_encoder_action( options, file, files, counter )
-  case options.verbosity
-  when 'info'
-    @logger.cr( "#{ options.encoder }: #{ File.basename( file ) } (#{ counter } of #{ files.size })" )
-  when 'debug'
-    @logger.debug( "#{ options.encoder }: #{ File.basename( file ) } (#{ counter } of #{ files.size })" )
-  end
-end
-
-
-def jpeg2000_encoder_action( options, file_esc, asset_esc, fps, openjpeg_cinema_profile, kakadu_cinema_profile, max_bytes_per_image, max_bytes_per_component )
-  case options.encoder
-  when 'openjpeg-tm'
-    # Do not use opendcp_j2k's colorspace transform (-x), files are X'Y'Z' already (Andrae Steiner)
-    `opendcp_j2k -i #{ file_esc } -o #{ asset_esc } -x -r #{ fps }`
-  when 'openjpeg'
-    `image_to_j2k -#{ openjpeg_cinema_profile } -i #{ file_esc } -o #{ asset_esc } > /dev/null 2>&1`
-  when 'kakadu'
-    `kdu_compress -i #{ file_esc } -o #{ asset_esc } Sprofile=#{ kakadu_cinema_profile } Creslengths=#{ max_bytes_per_image } Creslengths:C0=#{ max_bytes_per_image },#{ max_bytes_per_component } Creslengths:C1=#{ max_bytes_per_image },#{ max_bytes_per_component } Creslengths:C2=#{ max_bytes_per_image },#{ max_bytes_per_component }`
-  end
-end
-
-
 unless @source_audio[ :orig_name ].empty?
   @logger.info( 'Conform audio ...' )
 
@@ -3239,19 +3233,31 @@ when "dcp"
   if @dcp_wrap_stereoscopic == TRUE
     @logger.info( 'Wrap as stereoscopic essence' )
     # ugh, FIXME, for crying out loud
-    opts_params_args = "-L #{ options.dcp_encrypt == TRUE ? ( options.encrypt_headers == TRUE ? '-e ' : '-E ' ) + '-k ' + image_key + ' -j ' + image_key_id : '' } -p #{ fps } -a #{ image_mxf_uuid } -c #{ image_mxf_esc } -3 #{ @j2cdir_esc } #{ @j2cdir_esc }"
+    opts_params_args = "-c #{ image_mxf_esc } -L #{ options.dcp_encrypt == TRUE ? ( options.encrypt_headers == TRUE ? '-e ' : '-E ' ) + '-k ' + image_key + ' -j ' + image_key_id : '' } -p #{ fps } -a #{ image_mxf_uuid } -3 #{ @j2cdir_esc } #{ @j2cdir_esc }"
   else
-    opts_params_args = "-L #{ options.dcp_encrypt == TRUE ? ( options.encrypt_headers == TRUE ? '-e ' : '-E ' ) + '-k ' + image_key + ' -j ' + image_key_id : '' } -p #{ fps } -a #{ image_mxf_uuid } -c #{ image_mxf_esc } #{ @j2cdir_esc }"
+    opts_params_args = "-c #{ image_mxf_esc } -L #{ options.dcp_encrypt == TRUE ? ( options.encrypt_headers == TRUE ? '-e ' : '-E ' ) + '-k ' + image_key + ' -j ' + image_key_id : '' } -p #{ fps } -a #{ image_mxf_uuid } #{ @j2cdir_esc }"
   end
   write_asdcp_track( opts_params_args )
+  if File.exists?( image_mxf_esc )
+    @logger.debug( "Created MXF #{ image_mxf_esc }" )
+  else
+    @logger.critical( "Could not create MXF #{ image_mxf_esc }" )
+    exit
+  end
   @logger.debug( "Image trackfile UUID: #{ image_mxf_uuid }" )
 
   # Make audio trackfile
   unless @source_audio[ :orig_name ].empty?
     @logger.info( 'Write audio trackfile ...' )
-    opts_params_args = "-L #{ options.dcp_encrypt == TRUE ? ( options.encrypt_headers == TRUE ? '-e ' : '-E ' ) + '-k ' + audio_key + ' -j ' + audio_key_id : '' } -l #{ SMPTE_AUDIO_LABEL } -p #{ fps } -a #{ audio_mxf_uuid } -c #{ audio_mxf_esc } #{ @final_audio_esc }"
+    opts_params_args = "-c #{ audio_mxf_esc } -L #{ options.dcp_encrypt == TRUE ? ( options.encrypt_headers == TRUE ? '-e ' : '-E ' ) + '-k ' + audio_key + ' -j ' + audio_key_id : '' } -l #{ SMPTE_AUDIO_LABEL } -p #{ fps } -a #{ audio_mxf_uuid } #{ @final_audio_esc }"
     @logger.debug( "Audio trackfile UUID: #{ audio_mxf_uuid }" )
     write_asdcp_track( opts_params_args ) 
+    if File.exists?( audio_mxf_esc )
+      @logger.debug( "Created MXF #{ audio_mxf_esc }" )
+    else
+      @logger.critical( "Could not create MXF #{ audio_mxf_esc }" )
+      exit
+    end
   end
 
   # Write CompositionPlaylist
