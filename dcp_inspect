@@ -1,7 +1,8 @@
 #!/usr/bin/env ruby
 #
-# dcp_inspect inspects and checks DCP media and directories
-# Copyright 2011-2012 Wolfgang Woehl
+# dcp_inspect checks and validates DCPs (Digital Cinema Packages)
+#
+# 2011-2013 Wolfgang Woehl
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,15 +18,12 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.04.06'
+AppVersion = 'v1.2013.04.13'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
 # schema validation, signature and certificate verification, composition
 # summaries and naming convention checks.
-#
-# Basically anyone who needs to establish the validity of a digital cinema
-# package can put dcp_inspect to good use.
 #
 #
 # Usage:
@@ -33,30 +31,6 @@ AppVersion = 'v1.2013.04.06'
 #   dcp_inspect --help
 #   dcp_inspect /path/to/dir
 #   dcp_inspect /path/to/dir --no-hash
-#
-#
-# And then what?
-#
-#   - If you get errors go bug someone:
-#
-#       Either me (https://github.com/wolfgangw/backports/issues) if you
-#       suspect dcp_inspect to report a false positive or negative
-#
-#       or the author/vendor of the DCP's authoring app.
-#
-#       We all write bugs all the time and your feedback is much appreciated.
-#
-#   - If you get hints think about bugging someone. Try and make an informed
-#     decision whether the issues hinted at might lead to trouble in the field.
-#     Some hints will recommend fixing the issue (e.g. empty Text or Image
-#     elements in DCSubtitle).
-#
-#   - If all you get is info and "0 errors 0 hints":
-#
-#       Either your package is perfectly ok
-#
-#       or you ran into a dcp_inspect bug :) Again, get in touch if you suspect
-#       the latter (https://github.com/wolfgangw/backports/issues).
 #
 #
 # Installation:
@@ -110,6 +84,32 @@ AppVersion = 'v1.2013.04.06'
 #   in backports to keep up-to-date.
 #
 #
+# And then what?
+#
+#   - If you get errors go bug someone:
+#
+#       Either me (https://github.com/wolfgangw/backports/issues) if you
+#       suspect dcp_inspect to report a false positive or negative
+#
+#       or the author/vendor of the DCP's authoring app.
+#
+#       We all write bugs all the time and your feedback is much appreciated.
+#
+#   - If you get hints think about bugging someone. Try and make an informed
+#     decision whether the issues hinted at might lead to trouble in the field.
+#     Some hints will recommend fixing the issue (e.g. empty Text or Image
+#     elements in DCSubtitle). Other hints will be purely informational
+#
+#   - If all you get is info and 0 errors:
+#
+#       Either your package is perfectly ok
+#
+#       or you might still run into issues on a system in the field
+#
+#       or you ran into a dcp_inspect bug :) Again, get in touch if you suspect
+#       the latter (https://github.com/wolfgangw/backports/issues).
+#
+#
 # Thanks to the Nokogiri team. You're a wicked crew.
 # Thanks to Julik for his Timecode library
 #   https://github.com/guerilla-di/timecode
@@ -126,35 +126,6 @@ AppVersion = 'v1.2013.04.06'
 # on a Windows system (it executed but the libxml infrastructure required for
 # schema validation did not work. Wip)
 #
-if RUBY_VERSION <= '1.9'
-  begin
-    require 'rubygems'
-  rescue LoadError
-  end
-end
-[
-'nokogiri',
-'optparse',
-'ostruct',
-'pathname',
-'shellwords',
-'openssl',
-'base64',
-'stringio',
-'fileutils'
-].each do |gem|
-  begin
-    require gem
-  rescue LoadError => e
-    puts e.message
-    case gem
-    when 'nokogiri'
-      puts "Please run 'gem install nokogiri' and try again"
-    end
-    exit GEM_LOAD_ERROR
-  end
-end
-
 # Exit codes
 DCP_OK = 0
 DCP_ERROR = 1
@@ -168,12 +139,36 @@ LOGFILE_WRITE_ERROR = 8
 FILE_ACCESS_ERROR = 9
 LOGFILE_EXISTS_ERROR = 10
 GEM_LOAD_ERROR = 11
+REQUIRED_COMAND_NOT_FOUND = 12
 
-# Signature counters
-@signed_cpls_count = 0
-@signed_cpls_verified_count = 0
-@signed_pkls_count = 0
-@signed_pkls_verified_count = 0
+# Required gems
+if RUBY_VERSION <= '1.9'
+  begin
+    require 'rubygems'
+  rescue LoadError
+  end
+end
+[
+'nokogiri',
+'ttfunk',
+'optparse',
+'ostruct',
+'pathname',
+'shellwords',
+'openssl',
+'base64',
+'stringio',
+'fileutils'
+].each do |gem|
+  begin
+    require gem
+  rescue LoadError => e
+    puts e.message
+    puts "Please run 'gem install #{ gem }' (without the quotes) and try again"
+    exit GEM_LOAD_ERROR
+  end
+end
+
 
 # lib/options.rb
 class Options
@@ -422,6 +417,23 @@ class Numeric
 end
 
 
+# Glyph availability
+module TTFunk
+  class File
+    def provides_glyphs_for?( unicode_string )
+      unicode_string.unpack("U*").all? { |c| cmap.unicode.first[c] > 0 }
+    end
+  end
+end
+
+
+# Signature counters
+@signed_cpls_count = 0
+@signed_cpls_verified_count = 0
+@signed_pkls_count = 0
+@signed_pkls_verified_count = 0
+
+
 # lib/tools.rb
 # date helpers
 require 'date'
@@ -487,12 +499,19 @@ def bytes_from_nice_bytes( nice_bytes )
 end
 
 # plural helper english
-def amount( item, list )
-  "#{ list.size } #{ item }#{ pl list }"
+def amount( item, count )
+  if count.is_a? Array or count.is_a? Hash
+    "#{ count.size } #{ item }#{ pl count }"
+  elsif count.is_a? Fixnum
+    "#{ count } #{ item }#{ pl count }"
+  end
 end
-
-def pl( list )
-  list.size != 1 ? 's' : ''
+def pl( count )
+  if count.is_a? Array or count.is_a? Hash
+    count.size != 1 ? 's' : ''
+  elsif count.is_a? Fixnum
+    count != 1 ? 's' : ''
+  end
 end
 
 # Thanks to Rein Henrichs
@@ -2190,8 +2209,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   report << "CPL file:         #{ cpl_file }"
   report << "CPL type:         #{ cpl_type } (#{ ns[ cpl_ns_prefix ] })"
 
-  # Check ContentTitleText for naming convention
-  #
+  # Scrounge ContentTitleText
   content_title_text = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ContentTitleText" ).text
   if content_title_text.empty?
     hints << "CPL #{ cpl_id }: ContentTitleText is empty"
@@ -2219,10 +2237,11 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
       report << "ContentKind:      #{ content_kind }"
     else
       hints << "CPL #{ cpl_id }: ContentKind has non-standard value #{ content_kind.inspect }"
-      report << "ContentKind:      #{ content_kind } [non-standard value]"
+      report << "ContentKind:      #{ content_kind } [Non-standard value]"
     end
   end
 
+  # IssueDate
   issue_date = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:IssueDate" )
   if issue_date
     if issue_date.text.empty?
@@ -2283,6 +2302,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     end
   end
 
+  # Reels
   reels = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ReelList/#{ cpl_ns_prefix }:Reel" )
   report << "Number of Reels:  #{ reels.size }"
   total_duration = 0
@@ -2300,7 +2320,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
 
   reels.each_with_index do |reel, index|
     reel_no = index + 1
-    report << "Reel #{ reel_no }:"
+    reels_report << "Reel #{ reel_no }:"
     reels_references[ index ] = Hash.new
     durations = Array.new
     edit_rates = Array.new
@@ -2497,6 +2517,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   # are in the dictionary and exist on the medium
                   #
                   text_elements = FALSE
+                  text_elements_values = Array.new
                   image_elements = FALSE
                   load_font_el = xml.xpath( '//LoadFont' )
                   font_el = xml.xpath( '//Font' )
@@ -2508,6 +2529,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                       case node.name
                       when 'Text'
                         text_elements = TRUE
+                        text_elements_values << { :number => spot_number, :text => node.text.gsub( /^\s+|\s+$/, '' ) }
                       when 'Image'
                         image_elements = TRUE
                         unless node.text.empty? # Checked above
@@ -2549,16 +2571,27 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                             end
                             # Get font name
                             begin
-                              require 'ttfunk'
-                              ttfunk = TRUE
-                            rescue LoadError
-                              ttfunk = FALSE
-                            end
-                            begin
-                              if ttfunk
-                                font_fu = TTFunk::File.open font_asset
-                                font_unique_subfamily = font_fu.name.unique_subfamily[ 1 ].to_s
-                                hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Referenced font subfamily: #{ font_unique_subfamily }"
+                              # Scrounge font subfamily name
+                              font_fu = TTFunk::File.open font_asset
+                              font_unique_subfamily = font_fu.name.unique_subfamily[ 1 ].to_s # FIXME not always 2nd element. Why/how?
+                              hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Referenced font subfamily: #{ font_unique_subfamily }"
+
+                              # Check if all glyphs can be rendered with provided font
+                              glyphs_missing = FALSE
+                              text_elements_values.each do |spot|
+                                unless font_fu.provides_glyphs_for?( spot[ :text ] )
+                                  hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: SpotNumber #{ spot[ :number ] }: Font is missing glyphs to render #{ spot[ :text ].inspect } (#{ spot[ :text ].encoding })"
+                                  glyphs_missing = TRUE
+                                  # pick the exact ones
+                                  glyphs_missing_list = Array.new
+                                  spot[ :text ].split( '' ).each do |char|
+                                    glyphs_missing_list << char unless font_fu.provides_glyphs_for?( char )
+                                  end
+                                  hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: SpotNumber #{ spot[ :number ] }: Font is missing glyphs to render #{ glyphs_missing_list.inspect }"
+                                end
+                              end
+                              if glyphs_missing
+                                hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Font #{ font_asset } is missing some required glyphs"
                               end
                             rescue NoMethodError => e
                               errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Referenced font #{ font_asset } not valid: #{ e.message }"
@@ -2632,31 +2665,31 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
         end # if dict[ asset_id ]
       end # if dict
 
-      report << "#{ "%6s" % duration }  #{ edit_rate == 0 ? 'EditRate funk' : Timecode.new( duration, edit_rate ) } @ #{ edit_rate }  #{ asset_id }  #{ asset.node_name }\t(#{ meta_report })"
+      reels_report << "#{ "%6s" % duration }  #{ edit_rate.nil? ? 'EditRate funk' : Timecode.new( duration, edit_rate ) } @ #{ edit_rate }  #{ asset_id }  #{ asset.node_name }\t(#{ meta_report })"
       if meta
         case asset.node_name
         when 'MainStereoscopicPicture'
           unless meta[ 'EssenceType' ] == MStr::Stereoscopic_pictures
-            report << "Essence type mismatch: Expected MainStereoscopicPicture, got #{ meta[ 'EssenceType' ] || 'NIL' }"
-            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + report.last
+            reels_report << "Essence type mismatch: Expected MainStereoscopicPicture, got #{ meta[ 'EssenceType' ] || 'NIL' }"
+            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + reels_report.last
             cpl_errors = TRUE
           end
         when 'MainPicture'
           unless ( meta[ 'EssenceType' ] == MStr::Pictures or meta[ 'EssenceType' ] == MStr::Mpeg2 )
-            report << "Essence type mismatch: Expected MainPicture, got #{ meta[ 'EssenceType' ] || 'NIL' }"
-            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + report.last
+            reels_report << "Essence type mismatch: Expected MainPicture, got #{ meta[ 'EssenceType' ] || 'NIL' }"
+            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + reels_report.last
             cpl_errors = TRUE
           end
         when 'MainSound'
           unless meta[ 'EssenceType' ] == MStr::Audio
-            report << "Essence type mismatch: Expected MainSound, got #{ meta[ 'EssenceType' ] || 'NIL' }"
-            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + report.last
+            reels_report << "Essence type mismatch: Expected MainSound, got #{ meta[ 'EssenceType' ] || 'NIL' }"
+            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + reels_report.last
             cpl_errors = TRUE
           end
         when 'MainSubtitle'
           unless meta[ 'EssenceType' ] == MStr::Timed_text
-            report << "Essence type mismatch: Expected MainSubtitle, got #{ meta[ 'EssenceType' ] || 'NIL' }"
-            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + report.last
+            reels_report << "Essence type mismatch: Expected MainSubtitle, got #{ meta[ 'EssenceType' ] || 'NIL' }"
+            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + reels_report.last
             cpl_errors = TRUE
           end
         end
@@ -2664,22 +2697,25 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
 
     end # assets.each
 
+    # Check reel's duration sanity
     if durations.uniq.size != 1
-      report << "\tDuration mismatch"
-      errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Duration mismatch"
+      reels_report << "\tDuration mismatch"
+      errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Duration mismatch: #{ durations.inspect }"
       cpl_errors = TRUE
     else
       reel_duration = durations.first.to_i / edit_rates.min.to_i # gets it done but ugh
       if edit_rates.min > 0 and reel_duration < 1
-        report << "\tReel duration minimum violated (< 1 second)"
-        errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Reel duration minimum violated (< 1 second)"
+        reels_report << "\tReel duration less than 1 second"
+        errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Reel duration less than 1 second: #{ amount( 'frame', durations.first.to_i ) }"
         cpl_errors = TRUE
       elsif edit_rates.min > 0 and reel_duration < 5 # Doremi TB 65 (2010-03-09)
-        hints << "CPL #{ cpl_id }: Reel #{ reel_no }: Reel duration less than 5 seconds. Doremi TB 65 suggests a 5 second minimum for safe playback on their systems"
+        hints << "CPL #{ cpl_id }: Reel #{ reel_no }: Reel duration less than 5 seconds. Doremi TB 65 suggests a 5 second minimum for safe playback on Doremi systems"
       end
     end
+
+    # Check reel's editrate sanity
     if edit_rates.uniq.size != 1
-      report << "\tEditRate mismatch"
+      reels_report << "\tEditRate mismatch"
       errors << "CPL #{ cpl_id }: Reel #{ reel_no }: EditRate mismatch"
       cpl_errors = TRUE
     end
@@ -2688,8 +2724,8 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     composition_edit_rate = edit_rates.min
   end # reels.each_with_index
 
-  report << 'Total duration:'
-  report << "#{ "%6s" % total_duration }  #{ composition_edit_rate == 0 ? 'EditRate funk' : Timecode.new( total_duration, composition_edit_rate ) } @ #{ composition_edit_rate }" # FIXME edit_rate
+  reels_report << 'Total duration:'
+  reels_report << "#{ "%6s" % total_duration }  #{ composition_edit_rate == 0 ? 'EditRate funk' : Timecode.new( total_duration, composition_edit_rate ) } @ #{ composition_edit_rate }" # FIXME edit_rate
   if composition_edit_rate == 0
     cpl_errors = TRUE
   end
@@ -2703,12 +2739,17 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
         assets_missing_refs = Array.new
         assets_missing_refs << 'Picture' if ! reel_refs[ :picture ]
         assets_missing_refs << 'Sound' if ! reel_refs[ :sound ]
-        report << "SMPTE Reel: Missing reference#{ assets_missing_refs.size > 1 ? 's' : '' }: #{ assets_missing_refs.join( ', ' ) }"
-        errors << "CPL #{ cpl_id }: " + report.last
+        reels_report << "SMPTE Reel: Missing reference#{ assets_missing_refs.size > 1 ? 's' : '' }: #{ assets_missing_refs.join( ', ' ) }"
+        errors << "CPL #{ cpl_id }: " + reels_report.last
         cpl_errors = TRUE
         cpl_reels_references_complete << FALSE
       end
     end
+  end
+
+  # Cosmetics: Interleave reels_report
+  reels_report.each do |rp|
+    report << rp
   end
 
   # Monoscopic/Stereoscopic composition?
@@ -2798,15 +2839,6 @@ def dcp_inspect( options, arg )
   uuid_re = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ # used for filename component
   uuid_rfc4122_re = /^[0-9a-f]{8}-[0-9a-f]{4}-([1-5])[0-9a-f]{3}-[8-9a-b][0-9a-f]{3}-[0-9a-f]{12}$/
 
-  # Nokogiri git master (2012.01.11) implements interface to libxml2's C14N
-  if Nokogiri::XML::Document.new.respond_to?( 'canonicalize' )
-    @c14n_available = TRUE
-  else
-    hints << 'Nokogiri: Installed version of Nokogiri does not support C14N. Signature verification will be skipped'
-    hints << "Nokogiri: Installed version: #{ Nokogiri::VERSION_INFO }"
-    @c14n_available = FALSE
-  end
-
   # collect all files
   # see http://stackoverflow.com/a/2370805 for a portable and generic way to get at a tree's contents
   @package_dir = arg
@@ -2824,7 +2856,6 @@ def dcp_inspect( options, arg )
   # am_candidates = with_etabar( package_dir_tree, options, 'Looking for Assetmap candidates:', 20, '[= ]', @logger ) { |e| ( File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/ ) ? e : nil }
   #
   am_candidates = package_dir_tree.select { |e| File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/ }.sort
-  am_candidates = am_candidates.sort
   if am_candidates.empty?
     errors << 'No Assetmap candidates found'
   else
@@ -3138,6 +3169,7 @@ def dcp_inspect( options, arg )
               if ( hash_listed = asset.xpath( 'Hash' ).text )
                 if options.check_hashes
                   if options.check_hashes_limit == :no_limit or bytes_from_nice_bytes( options.check_hashes_limit ) > size_asset
+                    @check_hashes_hits += 1
                     etabar_title = "#{ id }: Checking hash value:"
                     hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options, logger = @logger )
                     hash_check = Base64.encode64( hash_check ).chomp
@@ -3150,6 +3182,7 @@ def dcp_inspect( options, arg )
                       # info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
                     end
                   else
+                    @check_hashes_limit_hits += 1
                     @logger.debug( "#{ id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit" )
                     hints << "PKL #{ pkl_id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit: Asset #{ id }: #{ asset_file }"
                   end
@@ -3220,7 +3253,7 @@ def dcp_inspect( options, arg )
   end # pkls.each
 
   info << "Inspected: #{ Pathname( arg ).realpath }"
-  info << "Found #{ amount( 'Package', pkls.flatten ) } with total size #{ packages_size_actual == packages_size_listed ? packages_size_actual.to_k : packages_size_actual.to_k + ' (Listed: ' + packages_size_listed.to_k + ')' }"
+  info << "Found #{ amount( 'Package', pkls.flatten ) } with total size #{ packages_size_actual == packages_size_listed ? packages_size_actual.to_k : packages_size_actual.to_k + ' (Listed total: ' + packages_size_listed.to_k + ')' }"
 
   # List all found CPLs
   if cpls.flatten.size > 0
@@ -3264,7 +3297,10 @@ def dcp_inspect( options, arg )
     end
   end
 
-  info << 'Hash checks skipped' if options.check_hashes == false
+  info << 'Hash checks skipped' if options.check_hashes == FALSE
+  info << "Hash checks skipped for assets bigger than #{ @check_hashes_limit_nice }" if @check_hashes_limit_nice
+  info << "Hash checks skipped for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits } total" if @check_hashes_limit_nice
+  info << 'Schema checks skipped' unless options.validate
   info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls.flatten ) } (#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }), #{ amount( 'Composition', cpls.flatten ) } (#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' })"
   info << "#{ amount( 'Error', errors ) }, #{ amount( 'Hint', hints ) }"
 
@@ -3273,7 +3309,7 @@ end
 
 
 def confirm_or_create( location )
-  testfile = File.join( location, Random.new.rand.to_s )
+  testfile = File.join( location, rand.to_s )
   if File.exists?( location )
     begin
       result = FileUtils.touch( testfile )
@@ -3300,14 +3336,41 @@ options = Options.parse( ARGV )
 args = ARGV
 @logger = DLogger.new( prefix = '', options )
 @logger.debug( "#{ AppName } #{ AppVersion }: #{ args }" )
-unless options.validate
-  @logger.info( 'Will skip schema checks' )
+
+
+# Check required tools
+required_command_not_found = FALSE
+[ 'asdcp-test', 'kmuuidgen' ].each do |command|
+  if ! command_exists? command
+    @logger.info( "Required command #{ command } not found. Please run digital-cinema-tools-setup or install the missing component manually" )
+    required_command_not_found = TRUE
+  end
 end
+exit REQUIRED_COMAND_NOT_FOUND if required_command_not_found
+
+
+# Check Nokogiri C14N support
+# Nokogiri git master (2012.01.11) implements interface to libxml2's C14N
+if Nokogiri::XML::Document.new.respond_to?( 'canonicalize' )
+  @c14n_available = TRUE
+else
+  @c14n_available = FALSE
+  @logger.info 'Signature verification: Installed version of Nokogiri does not support C14N. Signature verification will be skipped'
+  @logger.info 'Signature verification: Signature verification is a crucial component of full DCP validation'
+  @logger.info 'Signature verification: Please consider upgrading your Nokogiri installation'
+  @logger.info "Nokogiri: Installed version: #{ Nokogiri::VERSION_INFO }"
+end
+
+
 # Check --hash-limit argument
+@check_hashes_hits = 0
+@check_hashes_limit_hits = 0
 unless options.check_hashes_limit == :no_limit
-  if options.check_hashes_limit =~ /\d+(\.?\d+)?\s?(kb|mb|gb)/
-    @logger.info( "Will skip hash checks for files bigger than #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k }" )
+  if options.check_hashes_limit =~ /\d+(\.?\d+)?\s?(kb|mb|gb)?/
+    @check_hashes_limit_nice = bytes_from_nice_bytes( options.check_hashes_limit ).to_k
+    @logger.info( "Will skip hash checks for files bigger than #{ @check_hashes_limit_nice }" )
   else
+    @check_hashes_limit_nice = NIL
     @logger.info( "Option --hash-limit argument #{ options.check_hashes_limit.inspect } does not compute.\nUse integer or decimal plus an optional KB, MB or GB symbol, e.g. 700KB or 1.5GB" )
     exit BAD_HASH_LIMIT_ARG
   end
