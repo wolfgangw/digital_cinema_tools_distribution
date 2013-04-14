@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.04.13'
+AppVersion = 'v1.2013.04.14'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -3171,28 +3171,33 @@ def dcp_inspect( options, arg )
 
               # Check listed and actual digests
               if ( hash_listed = asset.xpath( 'Hash' ).text )
-                if options.check_hashes
-                  if options.check_hashes_limit == :no_limit or bytes_from_nice_bytes( options.check_hashes_limit ) > size_asset
-                    @check_hashes_hits += 1
-                    etabar_title = "#{ id }: Checking hash value:"
-                    hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options, logger = @logger )
-                    hash_check = Base64.encode64( hash_check ).chomp
-                    if hash_listed != hash_check
-                      eta.preserve_terminal_title_with_message( 'Mismatch' )
-                      errors << "PKL #{ pkl_id }: Hash mismatch: #{ id }: PKL: #{ hash_listed } Asset: #{ hash_check }"
-                      pkl_errors = TRUE
+                if hash_listed.empty?
+                  errors << "PKL #{ pkl_id }: Hash element is empty: See PKL file #{ pkl_file } line #{ asset.xpath( 'Hash' ).first.line }"
+                  pkl_errors = TRUE
+                else
+                  if options.check_hashes
+                    if options.check_hashes_limit == :no_limit or bytes_from_nice_bytes( options.check_hashes_limit ) > size_asset
+                      @check_hashes_hits += 1
+                      etabar_title = "#{ id }: Checking hash value:"
+                      hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options, logger = @logger )
+                      hash_check = Base64.encode64( hash_check ).chomp
+                      if hash_listed != hash_check
+                        eta.preserve_terminal_title_with_message( 'Mismatch' )
+                        errors << "PKL #{ pkl_id }: Hash mismatch: #{ id }: PKL: #{ hash_listed } Asset: #{ hash_check }"
+                        pkl_errors = TRUE
+                      else
+                        eta.preserve_terminal_title_with_message( 'OK' )
+                        # info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
+                      end
                     else
-                      eta.preserve_terminal_title_with_message( 'OK' )
-                      # info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
+                      @check_hashes_limit_hits += 1
+                      @logger.debug( "#{ id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit" )
+                      hints << "PKL #{ pkl_id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit: Asset #{ id }: #{ asset_file }"
                     end
-                  else
-                    @check_hashes_limit_hits += 1
-                    @logger.debug( "#{ id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit" )
-                    hints << "PKL #{ pkl_id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit: Asset #{ id }: #{ asset_file }"
                   end
                 end
               else
-                errors << "PKL #{ pkl_id }: Hash tag missing or bad content: #{ asset_file }: #{ type.empty? ? '<Type not specified in PKL>' : type }: #{ id }"
+                errors << "PKL #{ pkl_id }: Hash element missing or bad content: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }: #{ id }"
                 pkl_errors = TRUE
               end
 
