@@ -3165,7 +3165,7 @@ def dcp_inspect( options, arg )
                 package_size_listed += size_listed
                 package_size_actual += size_asset
               else
-                errors << "PKL #{ pkl_id }: Size tag missing or bad content: #{ id }: #{ asset_file }: #{ type.empty? ? '<Type not specified in PKL>' : type }"
+                errors << "PKL #{ pkl_id }: Size tag missing or bad content: #{ id }: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }"
                 pkl_errors = TRUE
               end
 
@@ -3173,6 +3173,7 @@ def dcp_inspect( options, arg )
               if ( hash_listed = asset.xpath( 'Hash' ).text )
                 if hash_listed.empty?
                   errors << "PKL #{ pkl_id }: Hash element is empty: See PKL file #{ pkl_file } line #{ asset.xpath( 'Hash' ).first.line }"
+                  errors << "PKL #{ pkl_id }: Asset has no associated hash value in metadata: #{ id }: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }"
                   pkl_errors = TRUE
                 else
                   if options.check_hashes
