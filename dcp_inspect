@@ -3250,30 +3250,32 @@ def dcp_inspect( options, arg )
               end
 
               # Check listed and actual digests
-              if ( hash_listed = asset.xpath( 'Hash' ).text )
-                if hash_listed.empty?
-                  errors << "PKL #{ pkl_id }: Hash element is empty: See PKL file #{ pkl_file } line #{ asset.xpath( 'Hash' ).first.line }"
-                  errors << "PKL #{ pkl_id }: Asset has no associated hash value in metadata: #{ id }: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }"
-                  pkl_errors = TRUE
-                else
-                  if options.check_hashes
-                    if options.check_hashes_limit == :no_limit or bytes_from_nice_bytes( options.check_hashes_limit ) > size_asset
-                      @check_hashes_hits += 1
-                      etabar_title = "#{ id }: Checking hash value:"
-                      hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options, logger = @logger )
-                      hash_check = Base64.encode64( hash_check ).chomp
-                      if hash_listed != hash_check
-                        eta.preserve_terminal_title_with_message( 'Mismatch' )
-                        errors << "PKL #{ pkl_id }: Hash mismatch: #{ id }: PKL: #{ hash_listed } Asset: #{ hash_check }"
-                        pkl_errors = TRUE
+              if ! asset.xpath( 'Hash' ).empty?
+                if ( hash_listed = asset.xpath( 'Hash' ).text )
+                  if hash_listed.empty?
+                    errors << "PKL #{ pkl_id }: Hash element is empty: See PKL file #{ pkl_file } line #{ asset.xpath( 'Hash' ).first.line }"
+                    errors << "PKL #{ pkl_id }: Asset has no associated hash value in metadata: #{ id }: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }"
+                    pkl_errors = TRUE
+                  else
+                    if options.check_hashes
+                      if options.check_hashes_limit == :no_limit or bytes_from_nice_bytes( options.check_hashes_limit ) > size_asset
+                        @check_hashes_hits += 1
+                        etabar_title = "#{ id }: Checking hash value:"
+                        hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options, logger = @logger )
+                        hash_check = Base64.encode64( hash_check ).chomp
+                        if hash_listed != hash_check
+                          eta.preserve_terminal_title_with_message( 'Mismatch' )
+                          errors << "PKL #{ pkl_id }: Hash mismatch: #{ id }: PKL: #{ hash_listed } Asset: #{ hash_check }"
+                          pkl_errors = TRUE
+                        else
+                          eta.preserve_terminal_title_with_message( 'OK' )
+                          # info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
+                        end
                       else
-                        eta.preserve_terminal_title_with_message( 'OK' )
-                        # info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
+                        @check_hashes_limit_hits += 1
+                        @logger.debug( "#{ id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit" )
+                        hints << "PKL #{ pkl_id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit: Asset #{ id }: #{ asset_file }"
                       end
-                    else
-                      @check_hashes_limit_hits += 1
-                      @logger.debug( "#{ id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit" )
-                      hints << "PKL #{ pkl_id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit: Asset #{ id }: #{ asset_file }"
                     end
                   end
                 end
