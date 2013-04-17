@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.04.16'
+AppVersion = 'v1.2013.04.17'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -1206,14 +1206,15 @@ class DC_Signer_Crypto_Compliance
 
       # 2.1.11 Public key thumbprint dnQualifier
       #
-      # This works for rubies < 1.9.3:
-      #   asn1 = Base64.decode64( cert.public_key.to_pem.split( "\n" )[ 1 .. -2 ].join )
-      #   dnq_calc = Base64.encode64( OpenSSL::Digest.new( 'sha1', asn1 ).digest ).chomp
-      #
-      # rubies >= 1.9.3 changed the default encoding of public key so do this instead:
-      #
-      pkey_der = OpenSSL::ASN1::Sequence( [ OpenSSL::ASN1::Integer( cert.public_key.n ), OpenSSL::ASN1::Integer( cert.public_key.e ) ] ).to_der
-      dnq_calc = Base64.encode64( OpenSSL::Digest.new( 'sha1', pkey_der ).digest ).chomp
+      if RUBY_VERSION < '1.9.3'
+        # works for rubies < 1.9.3:
+        asn1 = Base64.decode64( cert.public_key.to_pem.split( "\n" )[ 1 .. -2 ].join )
+        dnq_calc = Base64.encode64( OpenSSL::Digest.new( 'sha1', asn1 ).digest ).chomp
+      else
+        # rubies >= 1.9.3 changed the default encoding of public key so do this instead:
+        pkey_der = OpenSSL::ASN1::Sequence( [ OpenSSL::ASN1::Integer( cert.public_key.n ), OpenSSL::ASN1::Integer( cert.public_key.e ) ] ).to_der
+        dnq_calc = Base64.encode64( OpenSSL::Digest.new( 'sha1', pkey_der ).digest ).chomp
+      end
       #
       field_dnq = find_field( 'dnQualifier', cert.subject )
       if field_dnq.empty?
@@ -2025,6 +2026,19 @@ def get_asset_uuid( file )
   return id
 end
 
+def element_text( xml, xpath_query, ns )
+  text = xml.xpath( xpath_query, ns )
+  if text.empty?
+    nil
+  else
+    text
+  end
+end
+
+def uuid_from_urn_scheme( string )
+  string.split( 'urn:uuid:' ).last
+end
+
 # Returns subject, issuer and serial (from signing certificate) and x509serialnumber (from Signer..X509SerialNumber)
 def signer_info( xml, sig )
   sig_info = Hash.new
@@ -2189,6 +2203,7 @@ def font?( file )
 end
 
 
+# And the error goes to ...
 def error_output
   where = Array.new
   where << 'below' if @logger.prints_errors
@@ -2327,8 +2342,8 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
         cpl_errors = TRUE
       end
       if issue_date_dt
-        if issue_date_dt > now_dt
-          hints << "CPL #{ cpl_id }: IssueDate #{ issue_date.text.inspect } in the future: Ahead of now (#{ now_dt.to_s }) by #{ distance_of_time_in_words( issue_date_dt, now_dt ) }"
+        if issue_date_dt >= now_dt
+          info << "CPL #{ cpl_id }: Composition #{ content_title_text } was issued in the future: IssueDate #{ issue_date.text.inspect } ahead of now (#{ now_dt.to_s }) by #{ distance_of_time_in_words( issue_date_dt, now_dt ) }"
         elsif issue_date_dt < now_dt
           info << "CPL #{ cpl_id }: Composition #{ content_title_text } was issued #{ distance_of_time_in_words( issue_date_dt, now_dt ) } ago"
         end
@@ -2976,8 +2991,6 @@ def dcp_inspect( options, arg )
   end
   am_files = am_candidates
   @logger.debug ''
-  # info about multiple Assetmaps found
-  info << "Found #{ am_files.size } Assetmaps" unless am_files.size == 1
 
   # Process all Assetmaps
   @logger.debug( "Found #{ amount( 'Assetmap', am_files ) }" )
@@ -3027,10 +3040,10 @@ def dcp_inspect( options, arg )
 
         # Assetmap dictionary
         dict[ index ][ listed_id ] = Pathname( File.join( am_base, path ) ).cleanpath.to_s
+        asset_file = package dict[ index ][ listed_id ]
         @logger.debug( "#{ listed_id }: #{ dict[ index ][ listed_id ] }#{ File.exists?( package dict[ index ][ listed_id ] ) ? '' : ' (file missing)' }" )
 
         # Check listed_id vs actual asset_id
-        asset_file = package dict[ index ][ listed_id ]
         if File.exists?( asset_file )
           asset_id = get_asset_uuid( asset_file )
           if asset_id
@@ -3069,6 +3082,11 @@ def dcp_inspect( options, arg )
               am_errors = TRUE
             end
           end
+        end
+
+        # Check for whitespace in asset filename
+        if path.scan( /\s+/ ).size != 0
+          hints << "AM #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } contains whitespace"
         end
 
       end
@@ -3255,6 +3273,7 @@ def dcp_inspect( options, arg )
                   if hash_listed.empty?
                     errors << "PKL #{ pkl_id }: Hash element is empty: See PKL file #{ pkl_file } line #{ asset.xpath( 'Hash' ).first.line }"
                     errors << "PKL #{ pkl_id }: Asset has no associated hash value in metadata: #{ id }: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }"
+                    @logger.debug "#{ id }: Checking hash value: Asset has no associated hash value in metadata: See errors #{ error_output }"
                     pkl_errors = TRUE
                   else
                     if options.check_hashes
@@ -3344,9 +3363,6 @@ def dcp_inspect( options, arg )
     end # am_pkls.each
   end # pkls.each
 
-  info << "Inspected: #{ Pathname( arg ).realpath }"
-  info << "Found #{ amount( 'Package', pkls.flatten ) } with total size #{ packages_size_actual == packages_size_listed ? packages_size_actual.to_k : packages_size_actual.to_k + ' (Listed total: ' + packages_size_listed.to_k + ')' }"
-
   # List all found CPLs
   if cpls.flatten.size > 0
     @logger.debug( "Found #{ amount( 'Composition', cpls.flatten ) }" )
@@ -3389,6 +3405,10 @@ def dcp_inspect( options, arg )
     end
   end
 
+  # Info summary block
+  info << "#{ AppName } #{ AppVersion } on #{ datetime_friendly DateTime.now }"
+  info << "Inspected: #{ Pathname( arg ).realpath }"
+  info << "Found #{ amount( 'Package', pkls.flatten ) } with total size #{ packages_size_actual == packages_size_listed ? packages_size_actual.to_k : packages_size_actual.to_k + ' (Listed total: ' + packages_size_listed.to_k + ')' }"
   info << 'Hash checks skipped' if options.check_hashes == FALSE
   info << "Hash checks skipped for assets bigger than #{ @check_hashes_limit_nice }" if @check_hashes_limit_nice
   info << "Hash checks skipped for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits } total" if @check_hashes_limit_nice
