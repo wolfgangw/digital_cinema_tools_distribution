@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2013.04.13'
+setup_version='v1.2013.04.18'
 #
 # Usage:
 #
@@ -149,9 +149,18 @@ then
   echo
   echo 'Do not run this installer as root'
   echo 'Do not run this installer via sudo'
-  echo 'This Installer will ask for privileges if and when required'
+  echo 'This installer will ask for privileges if and when required'
   echo
-  exit 1
+  echo 'That said:'
+  echo
+  echo 'If you know exactly why you would want to'
+  echo "continue as root -- usually you don't want to --"
+  read -p 'then type root and press [ENTER]: ' run_as_root_confirm
+  if ! [ "$run_as_root_confirm" == "root" ]
+  then
+    exit 1
+  fi
+  echo 'Continuing as root ...'
 fi
 
 
