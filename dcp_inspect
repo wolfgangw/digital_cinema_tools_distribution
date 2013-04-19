@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.04.17'
+AppVersion = 'v1.2013.04.20'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -2238,6 +2238,8 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   else
     cpl_type = 'Unknown'
     errors << "CPL #{ cpl_id }: Default namespace unknown: #{ ns[ cpl_ns_prefix ] }: #{ cpl_file }"
+    # FIXME Nokogiri's XML::Document#collect_namespaces is broken
+    errors << "CPL #{ cpl_id }: Default namespace unknown: FIXME: This might be a dcp_inspect bug. Fix due"
     cpl_errors = TRUE
   end
   cpl_referenced_assets_types << cpl_type
@@ -2343,9 +2345,9 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
       end
       if issue_date_dt
         if issue_date_dt >= now_dt
-          info << "CPL #{ cpl_id }: Composition #{ content_title_text } was issued in the future: IssueDate #{ issue_date.text.inspect } ahead of now (#{ now_dt.to_s }) by #{ distance_of_time_in_words( issue_date_dt, now_dt ) }"
+          info << "CPL #{ cpl_id }: Composition #{ content_title_text.empty? ? '[ContentTitleText empty]' : content_title_text } was issued in the future: IssueDate #{ issue_date.text.inspect } ahead of now (#{ now_dt.to_s }) by #{ distance_of_time_in_words( issue_date_dt, now_dt ) }"
         elsif issue_date_dt < now_dt
-          info << "CPL #{ cpl_id }: Composition #{ content_title_text } was issued #{ distance_of_time_in_words( issue_date_dt, now_dt ) } ago"
+          info << "CPL #{ cpl_id }: Composition #{ content_title_text.empty? ? '[ContentTitleText empty]' : content_title_text } was issued #{ distance_of_time_in_words( issue_date_dt, now_dt ) } ago"
         end
         issue_date_friendly = datetime_friendly( issue_date_dt )
         report << "IssueDate:        #{ issue_date.text } (#{ issue_date_friendly })"
@@ -2416,9 +2418,11 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   broken_assets = Array.new
   reels_references = Array.new
   is_stereoscopic = Array.new # build a flag for naming convention checks
+  composition_aspect_ratios = Array.new
 
   reels.each_with_index do |reel, index|
     reel_no = index + 1
+    cpl_reel = "CPL #{ cpl_id }: Reel #{ reel_no }"
     reels_report << "Reel #{ reel_no }:"
     reels_references[ index ] = Hash.new
     durations = Array.new
@@ -2431,7 +2435,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     asset_node_names = assets.collect { |a| a.node_name }
     assets_required_unique = asset_node_names - [ 'ClosedCaption', 'MainCaption', 'ClosedSubtitle' ]
     if assets_required_unique.uniq.size != assets_required_unique.size
-      errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Found duplicate asset kinds"
+      errors << "#{ cpl_reel }: Found duplicate asset kinds"
       cpl_errors = TRUE
     end
 
@@ -2465,8 +2469,13 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
       entry_point = asset.xpath( "#{ cpl_ns_prefix }:EntryPoint", asset_ns ).text.to_i
       duration = asset.xpath( "#{ cpl_ns_prefix }:Duration", asset_ns ).text.to_i
       # FIXME Timecode will die on edit_rate == 0
-      n, d = asset.xpath( "#{ cpl_ns_prefix }:EditRate", asset_ns ).text.split( ' ' ).map { |num| num.to_i }
-      if n and d then edit_rate = Rational( n, d ) else edit_rate = 0 end
+      cpl_asset_edit_rate_text = asset.xpath( "#{ cpl_ns_prefix }:EditRate", asset_ns ).text
+      n, d = cpl_asset_edit_rate_text.split( ' ' ).map { |num| num.to_i }
+      if n and d
+        edit_rate = Rational( n, d ).to_f
+      else
+        edit_rate = nil
+      end
       durations << duration
       edit_rates << edit_rate
 
@@ -2479,6 +2488,15 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
             meta = MxfTools.mxf_inspect( asset_file )
             # MXF?
             if meta
+
+              # Get asset edit rate early
+              begin
+                n, d = ( meta[ 'EditRate' ] || meta[ 'SampleRate' ] ).split( '/' ).map { |num| num.to_i }
+                asset_edit_rate = Rational( n, d ).to_f
+              rescue Exception => e
+                errors << "#{ cpl_reel }: Could not scrounge edit rate from #{ asset.node_name } asset #{ asset_id }"
+                cpl_errors = TRUE
+              end
 
               # Label types Interop/SMPTE
               case meta[ 'Label Set Type' ]
@@ -2496,40 +2514,85 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
 
               # IntrinsicDuration/EntryPoint/Duration sane?
               if intrinsic_duration - entry_point < duration
-                errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Duration #{ duration } in #{ asset.node_name } does not compute: IntrinsicDuration #{ intrinsic_duration } - EntryPoint #{ entry_point } < Duration #{ duration }"
+                errors << "#{ cpl_reel }: Duration #{ duration } in #{ asset.node_name } does not compute: IntrinsicDuration #{ intrinsic_duration } - EntryPoint #{ entry_point } < Duration #{ duration }"
                 cpl_errors = TRUE
               end
               if entry_point >= intrinsic_duration
                 exceed_frames = entry_point + 1 - intrinsic_duration
-                errors << "CPL #{ cpl_id }: Reel #{ reel_no }: EntryPoint #{ entry_point } in #{ asset.node_name } exceeds IntrinsicDuration #{ intrinsic_duration } by #{ exceed_frames } frame#{ exceed_frames != 1 ? 's' : '' }"
+                errors << "#{ cpl_reel }: EntryPoint #{ entry_point } in #{ asset.node_name } exceeds IntrinsicDuration #{ intrinsic_duration } by #{ exceed_frames } frame#{ exceed_frames != 1 ? 's' : '' }"
                 cpl_errors = TRUE
               end
               if intrinsic_duration != meta[ 'ContainerDuration' ].to_i
-                errors << "CPL #{ cpl_id }: Reel #{ reel_no }: IntrinsicDuration #{ intrinsic_duration } in #{ asset.node_name } does not match ContainerDuration #{ meta[ 'ContainerDuration' ] } of asset #{ asset_id }"
+                errors << "#{ cpl_reel }: IntrinsicDuration #{ intrinsic_duration } in #{ asset.node_name } does not match ContainerDuration #{ meta[ 'ContainerDuration' ].nil? ? '[NaN]' : meta[ 'ContainerDuration' ] } of asset #{ asset_id }"
                 cpl_errors = TRUE
               end
 
-              # Check audio sampling rate and bps
+              # Check picture
+              case asset.node_name
+              when 'MainPicture', 'MainStereoscopicPicture'
+                picture_stored_width, picture_stored_height = meta[ 'StoredWidth' ], meta[ 'StoredHeight' ]
+                picture_aspect_ratio = ( picture_stored_width.to_f / picture_stored_height.to_f ).round( 3 )
+                case picture_aspect_ratio
+                when 1.896 # Full container
+                  picture_aspect_ratio_moniker = 'C'
+                when 1.85 # Flat
+                  picture_aspect_ratio_moniker = 'F'
+                when 2.387 # Scope
+                  picture_aspect_ratio_moniker = 'S'
+                when 1.778 # HD
+                  picture_aspect_ratio_moniker = 'HD'
+                  hints << "#{ cpl_reel }: MainPicture has non-DCI aspect ratio #{ [ picture_stored_width, picture_stored_height ].join( 'x' ) } (#{ picture_aspect_ratio_moniker }): Playback with proper non-standard masking recommended"
+                else
+                  picture_aspect_ratio_moniker = picture_aspect_ratio.to_s
+                  hints << "#{ cpl_reel }: MainPicture has non-DCI aspect ratio #{ [ picture_stored_width, picture_stored_height ].join( 'x' ) } (#{ picture_aspect_ratio_moniker }): Playback with proper non-standard masking recommended"
+                end
+                composition_aspect_ratios << picture_aspect_ratio
+              end
+
+              # Check audio
               case asset.node_name
               when 'MainSound'
+                # Sampling rate
                 audio_sampling_rate = meta[ 'AudioSamplingRate' ]
                 if audio_sampling_rate != '48000/1' and audio_sampling_rate != '96000/1'
-                  errors << "CPL #{ cpl_id }: Reel #{ reel_no }: MainSound sampling rate #{ audio_sampling_rate } Hz. Expected 48k or 96k"
+                  errors << "#{ cpl_reel }: MainSound sampling rate #{ audio_sampling_rate } Hz. Expected 48k or 96k"
                   cpl_errors = TRUE
                 end
-                audio_quantization_bits = meta[ 'QuantizationBits' ]
-                if audio_quantization_bits != '24'
-                  errors << "CPL #{ cpl_id }: Reel #{ reel_no }: MainSound quantization #{ audio_quantization_bits } bps. Expected 24 bps"
+                # Bits per sample
+                audio_quantization_bits = meta[ 'QuantizationBits' ].to_i
+                if audio_quantization_bits != 24
+                  errors << "#{ cpl_reel }: MainSound quantization #{ audio_quantization_bits } bps. Expected 24 bps"
+                  cpl_errors = TRUE
+                end
+                # Channel configuration
+                audio_channel_count = meta[ 'ChannelCount' ].to_i
+                case audio_channel_count
+                when 1, 3, 4, 5
+                  errors << "#{ cpl_reel }: MainSound has #{ amount( 'channel', audio_channel_count ) }: Use 5.1, 7.1, 7.1DS or wild track (2.0 is expected to mostly work)"
+                  cpl_errors = TRUE
+                when 2
+                  hints << "#{ cpl_reel }: MainSound has 2 channels: Expected to mostly work. Use 5.1, 7.1, 7.1DS or wild track to make sure"
+                end
+                # Block align
+                audio_block_align = meta[ 'BlockAlign' ].to_i
+                if audio_block_align != audio_channel_count * 3 # don't use audio_quantization_bits here -- anything other than 24 bps is an error
+                  errors << "#{ cpl_reel }: MainSound has unexpected BlockAlign value #{ audio_block_align }: Expected #{ audio_channel_count * 3 }: Check audio source"
+                  cpl_errors = TRUE
+                end
+                # Edit rate
+                if asset_edit_rate != edit_rate
+                  errors << "#{ cpl_reel }: MainSound EditRate #{ edit_rate } does not match asset EditRate #{ asset_edit_rate }"
                   cpl_errors = TRUE
                 end
               end
 
+              # This meta_report (and edit_rate) abomination below needs to go. Ugh
               meta_report = [
                 meta[ 'Label Set Type' ] || 'Label Set Type:' + MStr::AssetTypeUnknown,
-                meta[ 'ContainerDuration' ] ? Timecode.new( meta[ 'ContainerDuration' ].to_i, edit_rate ).to_s : 'ContainerDuration:' + MStr::AssetTypeUnknown,
+                meta[ 'ContainerDuration' ] ? meta[ 'EditRate' ] ? Timecode.new( meta[ 'ContainerDuration' ].to_i, asset_edit_rate ).to_s : '[NaN]' : 'ContainerDuration:' + MStr::AssetTypeUnknown,
                 meta[ 'EncryptedEssence' ] ? meta[ 'EncryptedEssence' ] == 'Yes' ? 'encrypted' : 'unencrypted' : 'Encrypted:' + MStr::AssetTypeUnknown,
                 asset.node_name =~ /Picture/ ? ( meta[ 'StoredWidth' ] || 'StoredWidth:' + MStr::AssetTypeUnknown ) + 'x' + ( meta[ 'StoredHeight' ] || 'StoredHeight:' + MStr::AssetTypeUnknown ) : '',
-                asset.node_name =~ /Sound/ ? ( meta[ 'ChannelCount' ] || 'ChannelCount:' + MStr::AssetTypeUnknown ) + ' channels' : '',
+                asset.node_name =~ /Sound/ ? ( amount( 'channel', meta[ 'ChannelCount' ].to_i ) || 'ChannelCount:' + MStr::AssetTypeUnknown ) : '',
                 asset.node_name =~ /Sound/ ? audio_sampling_rate == '48000/1' ? '48 kHz' : audio_sampling_rate == '96000/1' ? '96 kHz' : audio_sampling_rate : '',
                 asset.node_name =~ /Sound/ ? ( meta[ 'QuantizationBits' ] || 'QuantizationBits:' + MStr::AssetTypeUnknown ) + ' bps' : '',
                 meta[ 'EssenceType' ] || 'EssenceType:' + MStr::AssetTypeUnknown
@@ -2599,13 +2662,13 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                     spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : NIL )
                     if sub.children.empty? or ( sub.children.size == 1 and sub.children.first.is_a? Nokogiri::XML::Text )
                       empty_subtitles += 1
-                      errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Empty Subtitle element#{ spot_number ? ': SpotNumber ' + spot_number : '' }"
+                      errors << "#{ cpl_reel }: DCSubtitle: Empty Subtitle element#{ spot_number ? ': SpotNumber ' + spot_number : '' }"
                       cpl_errors = TRUE
                     elsif ( nodeset = sub.xpath( '*/Text|Text|*/Image|Image' ) )
                       nodeset.each do |node|
                         if node.text == ''
                           empty_subtitles += 1
-                          hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Empty #{ node.name } element#{ spot_number ? ': SpotNumber ' + spot_number : '' }. While not a specification error this can lead to playback problems in the field. Consider fixing"
+                          hints << "#{ cpl_reel }: DCSubtitle: Empty #{ node.name } element#{ spot_number ? ': SpotNumber ' + spot_number : '' }. While not a specification error this can lead to playback problems in the field. Consider fixing"
                         end
                       end
                     end
@@ -2635,14 +2698,14 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                           asset_name = File.join( asset_id, node.text )
                           if dict.values.include? asset_name
                             unless File.exists?( package asset_name )
-                              errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not found on the medium"
+                              errors << "#{ cpl_reel }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not found on the medium"
                               cpl_errors = TRUE
                             end
                           else
-                            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not in AssetMap"
+                            errors << "#{ cpl_reel }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not in AssetMap"
                             cpl_errors = TRUE
                             if File.exists?( package asset_name )
-                              hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not in AssetMap but present on the medium"
+                              hints << "#{ cpl_reel }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not in AssetMap but present on the medium"
                             end
                           end
                         end
@@ -2653,7 +2716,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   # Check referenced font file
                   if text_elements
                     if load_font_el.empty?
-                      hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: No LoadFont element found. Playback will use a default font"
+                      hints << "#{ cpl_reel }: DCSubtitle: No LoadFont element found. Playback will use a default font"
                     else
                       load_font_uri = load_font_el.first.attributes[ 'URI' ].value
                       font_asset = File.join( asset_id, File.basename( load_font_uri ) )
@@ -2665,7 +2728,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                             # Check for font max size recommendation
                             font_asset_size = File.size font_asset
                             if font_asset_size > 655360 # 640 KB
-                              errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Font #{ font_asset } size #{ font_asset_size.to_k } exceeds 640 KB"
+                              errors << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } size #{ font_asset_size.to_k } exceeds 640 KB"
                               cpl_errors = TRUE
                             end
                             # Get font name
@@ -2673,40 +2736,39 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                               # Scrounge font subfamily name
                               font_fu = TTFunk::File.open font_asset
                               font_unique_subfamily = font_fu.name.unique_subfamily[ 1 ].to_s # FIXME not always 2nd element. Why/how?
-                              hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Referenced font subfamily: #{ font_unique_subfamily }"
+                              hints << "#{ cpl_reel }: DCSubtitle: Referenced font subfamily: #{ font_unique_subfamily }"
 
                               # Check if all glyphs can be rendered with provided font
                               glyphs_missing = FALSE
                               text_elements_values.each do |spot|
                                 unless font_fu.provides_glyphs_for?( spot[ :text ] )
-                                  hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: SpotNumber #{ spot[ :number ] }: Font is missing glyphs to render #{ spot[ :text ].inspect } (#{ spot[ :text ].encoding })"
                                   glyphs_missing = TRUE
                                   # pick the exact ones
                                   glyphs_missing_list = Array.new
                                   spot[ :text ].split( '' ).each do |char|
                                     glyphs_missing_list << char unless font_fu.provides_glyphs_for?( char )
                                   end
-                                  hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: SpotNumber #{ spot[ :number ] }: Font is missing glyphs to render #{ glyphs_missing_list.inspect }"
+                                  hints << "#{ cpl_reel }: DCSubtitle: SpotNumber #{ spot[ :number ] }: Font is missing #{ amount( 'glyph', glyphs_missing_list ) } to render #{ spot[ :text ].inspect } (#{ spot[ :text ].encoding }): #{ glyphs_missing_list.inspect }"
                                 end
                               end
                               if glyphs_missing
-                                hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Font #{ font_asset } is missing some required glyphs"
+                                hints << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } is missing some required glyphs"
                               end
                             rescue NoMethodError => e
-                              errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Referenced font #{ font_asset } not valid: #{ e.message }"
+                              errors << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset } not valid: #{ e.message }"
                               cpl_errors = TRUE
                             end
                           else
-                            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Font #{ font_asset } referenced in LoadFont is neither #{ MStr::TTF } nor #{ MStr::OTF }"
+                            errors << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } referenced in LoadFont is neither #{ MStr::TTF } nor #{ MStr::OTF }"
                             cpl_errors = TRUE
                           end
                         end
                       else
-                        errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Referenced font #{ font_asset } not in AssetMap"
+                        errors << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset } not in AssetMap"
                         cpl_errors = TRUE
                       end
                       if load_font_el.size > 1
-                        hints << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Found multiple LoadFont elements. Playback will use 1st: #{ load_font_uri }"
+                        hints << "#{ cpl_reel }: DCSubtitle: Found multiple LoadFont elements. Playback will use 1st: #{ load_font_uri }"
                       end
                     end
                   end
@@ -2720,12 +2782,12 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   end
                   font_ids.uniq!
                   if font_ids.size > 1
-                    errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: Multiple Font Ids referenced: #{ font_ids.inspect }"
+                    errors << "#{ cpl_reel }: DCSubtitle: Multiple Font Ids referenced: #{ font_ids.inspect }"
                     cpl_errors = TRUE
                   end
                   if load_font_el.empty?
                     if font_ids.size > 0
-                      errors << "CPL #{ cpl_id }: Reel #{ reel_no }: DCSubtitle: No Font Id declared via LoadFont but referenced Font Ids found: #{ font_ids.inspect }"
+                      errors << "#{ cpl_reel }: DCSubtitle: No Font Id declared via LoadFont but referenced Font Ids found: #{ font_ids.inspect }"
                     end
                   end
 
@@ -2769,26 +2831,26 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
         case asset.node_name
         when 'MainStereoscopicPicture'
           unless meta[ 'EssenceType' ] == MStr::Stereoscopic_pictures
-            reels_report << "Essence type mismatch: Expected MainStereoscopicPicture, got #{ meta[ 'EssenceType' ] || 'NIL' }"
-            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + reels_report.last
+            reels_report << "Essence type mismatch: Expected MainStereoscopicPicture, got #{ meta[ 'EssenceType' ] || '[NIL]' }"
+            errors << "#{ cpl_reel }: " + reels_report.last
             cpl_errors = TRUE
           end
         when 'MainPicture'
           unless ( meta[ 'EssenceType' ] == MStr::Pictures or meta[ 'EssenceType' ] == MStr::Mpeg2 )
-            reels_report << "Essence type mismatch: Expected MainPicture, got #{ meta[ 'EssenceType' ] || 'NIL' }"
-            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + reels_report.last
+            reels_report << "Essence type mismatch: Expected MainPicture, got #{ meta[ 'EssenceType' ] || '[NIL]' }"
+            errors << "#{ cpl_reel }: " + reels_report.last
             cpl_errors = TRUE
           end
         when 'MainSound'
           unless meta[ 'EssenceType' ] == MStr::Audio
-            reels_report << "Essence type mismatch: Expected MainSound, got #{ meta[ 'EssenceType' ] || 'NIL' }"
-            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + reels_report.last
+            reels_report << "Essence type mismatch: Expected MainSound, got #{ meta[ 'EssenceType' ] || '[NIL]' }"
+            errors << "#{ cpl_reel }: " + reels_report.last
             cpl_errors = TRUE
           end
         when 'MainSubtitle'
           unless meta[ 'EssenceType' ] == MStr::Timed_text
-            reels_report << "Essence type mismatch: Expected MainSubtitle, got #{ meta[ 'EssenceType' ] || 'NIL' }"
-            errors << "CPL #{ cpl_id }: Reel #{ reel_no }: " + reels_report.last
+            reels_report << "Essence type mismatch: Expected MainSubtitle, got #{ meta[ 'EssenceType' ] || '[NIL]' }"
+            errors << "#{ cpl_reel }: " + reels_report.last
             cpl_errors = TRUE
           end
         end
@@ -2799,23 +2861,23 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     # Check reel's duration sanity
     if durations.uniq.size != 1
       reels_report << "\tDuration mismatch"
-      errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Duration mismatch: #{ durations.inspect }"
+      errors << "#{ cpl_reel }: Duration mismatch: #{ durations.inspect }"
       cpl_errors = TRUE
     else
       reel_duration = durations.first.to_i / edit_rates.min.to_i # gets it done but ugh
       if edit_rates.min > 0 and reel_duration < 1
         reels_report << "\tReel duration less than 1 second"
-        errors << "CPL #{ cpl_id }: Reel #{ reel_no }: Reel duration less than 1 second: #{ amount( 'frame', durations.first.to_i ) }"
+        errors << "#{ cpl_reel }: Reel duration less than 1 second: #{ amount( 'frame', durations.first.to_i ) }"
         cpl_errors = TRUE
       elsif edit_rates.min > 0 and reel_duration < 5 # Doremi TB 65 (2010-03-09)
-        hints << "CPL #{ cpl_id }: Reel #{ reel_no }: Reel duration less than 5 seconds. Doremi TB 65 suggests a 5 second minimum for safe playback on Doremi systems"
+        hints << "#{ cpl_reel }: Reel duration less than 5 seconds. Doremi TB 65 suggests a 5 second minimum for safe playback on Doremi systems"
       end
     end
 
     # Check reel's editrate sanity
     if edit_rates.uniq.size != 1
       reels_report << "\tEditRate mismatch"
-      errors << "CPL #{ cpl_id }: Reel #{ reel_no }: EditRate mismatch"
+      errors << "#{ cpl_reel }: EditRate mismatch"
       cpl_errors = TRUE
     end
 
@@ -2824,7 +2886,11 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   end # reels.each_with_index
 
   reels_report << 'Total duration:'
-  reels_report << "#{ "%6s" % total_duration }  #{ composition_edit_rate == 0 ? 'EditRate funk' : Timecode.new( total_duration, composition_edit_rate ) } @ #{ composition_edit_rate }" # FIXME edit_rate
+  begin
+    reels_report << "#{ "%6s" % total_duration }  #{ composition_edit_rate == 0 ? 'EditRate funk' : Timecode.new( total_duration, composition_edit_rate ) } @ #{ composition_edit_rate }" # FIXME edit_rate
+  rescue Exception => e
+    errors << "CPL #{ cpl_id }: Exception in reel report: #{ e.message }"
+  end
   if composition_edit_rate == 0
     cpl_errors = TRUE
   end
@@ -2919,6 +2985,53 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   end
   if cpl_errors == TRUE
     report << "There were errors. See CPL #{ cpl_id } errors #{ error_output }"
+  end
+
+  # Set up composition_aspect_ratio
+  composition_aspect_ratio = NIL
+  if composition_aspect_ratios.size == reels.size
+    if composition_aspect_ratios.uniq.size == 1
+      case composition_aspect_ratios.first
+      when 1.896
+        composition_aspect_ratio = { :abbrev => 'C', :name => 'Full Container' }
+      when 1.85
+        composition_aspect_ratio = { :abbrev => 'F', :name => 'Flat' }
+      when 2.387
+        composition_aspect_ratio = { :abbrev => 'S', :name => 'Scope' }
+      when 1.778
+        composition_aspect_ratio = { :abbrev => 'HD', :name => 'HD' }
+      else
+        composition_aspect_ratio = { :abbrev => composition_aspect_ratios.first.to_s, :name => composition_aspect_ratios.first.to_s }
+      end
+    else
+      errors << "CPL #{ cpl_id }: Found different asset aspect ratios: #{ composition_aspect_ratios.inspect }"
+      cpl_errors = TRUE
+    end
+  else
+    errors << "CPL #{ cpl_id }: Could not scrounge #{ amount( 'aspect ratio', reels.size ) } from #{ amount( 'reel', reels.size ) }"
+    cpl_errors = TRUE
+  end
+
+  #
+  # Example for comparing naming fields with asset metadata
+  #
+  # Aspect ratio
+  if naming_matches[ :aspect_ratio ]
+    if composition_aspect_ratio
+      if naming_matches[ :aspect_ratio ] != composition_aspect_ratio[ :abbrev ]
+        case naming_matches[ :aspect_ratio ]
+        when 'C'
+          aspect_ratio_claim = 'Full Container'
+        when 'F'
+          aspect_ratio_claim = 'Flat'
+        when 'S'
+          aspect_ratio_claim = 'Scope'
+        else
+          aspect_ratio_claim = naming_matches[ :aspect_ratio ]
+        end
+        hints << "CPL #{ cpl_id }: Naming convention: Part aspect_ratio claims #{ aspect_ratio_claim } but composition aspect ratio is #{ composition_aspect_ratio[ :name ] }"
+      end
+    end
   end
 
   return report, errors, hints, info
@@ -3019,7 +3132,7 @@ def dcp_inspect( options, arg )
     assets = xml.xpath( '//Asset' )
 
     @logger.debug( "AM #{ am_id }: #{ am_file }"  )
-    @logger.debug( "AM #{ am_id } lists #{ amount( 'asset', assets ) }:" )
+    @logger.debug( "AM #{ am_id } lists #{ amount( 'asset', assets.size ) }:" )
 
     # Store asset info in a dictionary (uuid => path, relative to package root)
     # look for PackingList(s)
@@ -3229,7 +3342,7 @@ def dcp_inspect( options, arg )
         package_size_actual = 0
         pkl_cpls = Array.new
 
-        @logger.debug( "PKL #{ pkl_id } lists #{ amount( 'asset', pkl_assets ) }" )
+        @logger.debug( "PKL #{ pkl_id } lists #{ amount( 'asset', pkl_assets.size ) }" )
 
         pkl_assets.each do |asset|
           id = asset.xpath( 'Id' ).text.split( ':' ).last
