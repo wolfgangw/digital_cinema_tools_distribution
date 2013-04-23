@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.04.20'
+AppVersion = 'v1.2013.04.23'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -2068,6 +2068,7 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
   required_parts.delete( :i3d_specs ) unless ( is_stereoscopic && i3d_specs_required )
   if ( is_stereoscopic && i3d_specs_required ) then expected_number_of_parts = 12 else expected_number_of_parts = 11 end
   required_parts.each do |rp| misses[ rp ] = FALSE end
+  hints << "CPL #{ cpl_id }: Naming convention: ContentTitleText #{ title.inspect } contains whitespace" if title =~ /\s+/
 
   #
   # Try to anchor :studio and :facility to :date. Ugh
@@ -2178,7 +2179,7 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
   elsif original_parts.size > expected_number_of_parts
     hints << "CPL #{ cpl_id }: Naming convention: ContentTitleText #{ title.inspect } has more parts than expected (matching #{ matches }, missing #{ misses })"
   elsif original_parts.size == 1
-    hints << "CPL #{ cpl_id }: Naming convention: ContentTitleText #{ title.inspect } has only 1 part. Expected #{ expected_number_of_parts }#{ misses.size > 0 ? " (missing #{ misses })" : '' }"
+    hints << "CPL #{ cpl_id }: Naming convention: ContentTitleText #{ title.inspect } has only 1 part. Expected #{ expected_number_of_parts }#{ misses.size > 0 ? " (missing #{ misses.keys.join( ', ' ) })" : '' }"
   elsif original_parts.size == expected_number_of_parts
     hints << "CPL #{ cpl_id }: Naming convention: Expected number of parts present in #{ title.inspect }"
   end
@@ -2791,7 +2792,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                     end
                   end
 
-                  meta_report = "DCSubtitle, #{ first_time_in } '#{ first_time_in_text.nil? ? '<NIL>' : first_time_in_text }' - #{ last_time_out } '#{ last_time_out_text.nil? ? '<NIL>' : last_time_out_text }'#{ empty_subtitles > 0 ? ' Error: ' + empty_subtitles.to_s + ' empty Subtitle element' + ( empty_subtitles > 1 ? 's' : '' ) : '' }"
+                  meta_report = "DCSubtitle, #{ first_time_in } '#{ first_time_in_text.nil? ? '[NIL]' : first_time_in_text }' - #{ last_time_out } '#{ last_time_out_text.nil? ? '[NIL]' : last_time_out_text }'#{ empty_subtitles > 0 ? ' Error: ' + empty_subtitles.to_s + ' empty Subtitle element' + ( empty_subtitles > 1 ? 's' : '' ) : '' }"
 
                 else
                   meta_report = 'DCSubtitle, no Subtitle found'
