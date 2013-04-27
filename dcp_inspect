@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.04.23'
+AppVersion = 'v1.2013.04.27'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -202,7 +202,7 @@ BANNER
       opts.on( '-s', '--as-asset-store', 'Simulate asset store by merging all collected AM dictionaries' ) do
         options.as_asset_store = TRUE
       end
-      opts.on( '-l', '--logfile logfile', String, 'Specify logfile. Will receive full output' ) do |p|
+      opts.on( '-l', '--logfile logfile', String, 'Write full report to logfile' ) do |p|
         options.logfile = p
       end
       opts.on( '-L', '--overwrite-logfile', 'Force writing of logfile (Default: Do not overwrite existing logfile)' ) do
@@ -2420,6 +2420,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   reels_references = Array.new
   is_stereoscopic = Array.new # build a flag for naming convention checks
   composition_aspect_ratios = Array.new
+  composition_resolutions = Array.new
 
   reels.each_with_index do |reel, index|
     reel_no = index + 1
@@ -2532,7 +2533,10 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
               case asset.node_name
               when 'MainPicture', 'MainStereoscopicPicture'
                 picture_stored_width, picture_stored_height = meta[ 'StoredWidth' ], meta[ 'StoredHeight' ]
+                picture_dimensions = "#{ picture_stored_width }x#{ picture_stored_height }"
                 picture_aspect_ratio = ( picture_stored_width.to_f / picture_stored_height.to_f ).round( 3 )
+
+                # aspect ratio
                 case picture_aspect_ratio
                 when 1.896 # Full container
                   picture_aspect_ratio_moniker = 'C'
@@ -2542,12 +2546,25 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   picture_aspect_ratio_moniker = 'S'
                 when 1.778 # HD
                   picture_aspect_ratio_moniker = 'HD'
-                  hints << "#{ cpl_reel }: MainPicture has non-DCI aspect ratio #{ [ picture_stored_width, picture_stored_height ].join( 'x' ) } (#{ picture_aspect_ratio_moniker }): Playback with proper non-standard masking recommended"
+                  hints << "#{ cpl_reel }: #{ asset.node_name } has non-DCI aspect ratio #{ picture_aspect_ratio } (#{ picture_dimensions }, #{ picture_aspect_ratio_moniker }): Playback with proper non-standard masking recommended"
                 else
                   picture_aspect_ratio_moniker = picture_aspect_ratio.to_s
-                  hints << "#{ cpl_reel }: MainPicture has non-DCI aspect ratio #{ [ picture_stored_width, picture_stored_height ].join( 'x' ) } (#{ picture_aspect_ratio_moniker }): Playback with proper non-standard masking recommended"
+                  hints << "#{ cpl_reel }: #{ asset.node_name } has non-DCI aspect ratio #{ picture_aspect_ratio } (#{ picture_dimensions }, #{ picture_aspect_ratio_moniker }): Playback with proper non-standard masking recommended"
                 end
                 composition_aspect_ratios << picture_aspect_ratio
+
+                # dimensions
+                case picture_dimensions
+                when '1998x1080', '2048x858', '2048x1080'
+                  picture_dimensions_moniker = '2K'
+                when '3996x2160', '4096x1716', '4096x2160'
+                  picture_dimensions_moniker = '4K'
+                else
+                  picture_dimensions_moniker = picture_dimensions
+                  hints << "#{ cpl_reel }: #{ asset.node_name } has non-DCI pixel dimensions #{ picture_dimensions }"
+                end
+                composition_resolutions << picture_dimensions_moniker
+
               end
 
               # Check audio
@@ -3009,7 +3026,28 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
       cpl_errors = TRUE
     end
   else
-    errors << "CPL #{ cpl_id }: Could not scrounge #{ amount( 'aspect ratio', reels.size ) } from #{ amount( 'reel', reels.size ) }"
+    errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'aspect ratio', reels.size ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_aspect_ratios.size }"
+    cpl_errors = TRUE
+  end
+
+  # Set up composition_resolution
+  composition_resolution = NIL
+  if composition_resolutions.size == reels.size
+    if composition_resolutions.uniq.size == 1
+      case composition_resolutions.first
+      when '2K'
+        composition_resolution = { :abbrev => '2K' }
+      when '4K'
+        composition_resolution = { :abbrev => '4K' }
+      else
+        composition_resolution = { :abbrev => composition_resolutions.first }
+      end
+    else
+      errors << "CPL #{ cpl_id }: Found different picture resolutions: #{ composition_resolutions.inspect }"
+      cpl_errors = TRUE
+    end
+  else
+    errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'picture resolution', reels.size ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_resolutions.size }"
     cpl_errors = TRUE
   end
 
@@ -3034,6 +3072,15 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
       end
     end
   end
+  # Resolution
+  if naming_matches[ :resolution ]
+    if composition_resolution
+      if naming_matches[ :resolution ] != composition_resolution[ :abbrev ]
+        resolution_claim = naming_matches[ :resolution ]
+        hints << "CPL #{ cpl_id }: Naming convention: Part resolution claims #{ resolution_claim } but composition resolution is #{ composition_resolution[ :abbrev ] }"
+      end
+    end
+  end
 
   return report, errors, hints, info
 end # cpl_inspect_xml
@@ -3053,11 +3100,19 @@ def dcp_inspect( options, arg )
   uuid_rfc4122_re = /^[0-9a-f]{8}-[0-9a-f]{4}-([1-5])[0-9a-f]{3}-[8-9a-b][0-9a-f]{3}-[0-9a-f]{12}$/
 
   # collect all files
-  # see http://stackoverflow.com/a/2370805 for a portable and generic way to get at a tree's contents
   @package_dir = arg
   package_dir_tree = Array.new
   begin
     Dir.chdir( @package_dir ) { |d| package_dir_tree = Dir[ "**/*" ] }
+    #
+    # Alternatively consider
+    #
+    # require 'find'
+    # package_dir_tree = Find.find( @package_dir ).to_a
+    #
+    # which will not work out-of-the-box, though (see different path results from Dir and Find).
+    # Will need this for superfluous files check.
+    #
   rescue Exception => e
     @logger.info e.message
     exit FILE_ACCESS_ERROR
@@ -3066,20 +3121,31 @@ def dcp_inspect( options, arg )
   #
   # Find files called what Assetmap(s) would be called.
   # Don't assume they're actually Assetmaps before checking.
-  # am_candidates = with_etabar( package_dir_tree, options, 'Looking for Assetmap candidates:', 20, '[= ]', @logger ) { |e| ( File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/ ) ? e : nil }
+  am_candidates = with_etabar( package_dir_tree, options, 'Looking for Assetmap candidates:', 20, '[= ]', @logger ) { |e|
+    (
+      File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or
+      File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/
+    ) ? e : nil
+  }
   #
-  am_candidates = package_dir_tree.select { |e| File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/ }.sort
+  # am_candidates = package_dir_tree.select { |e|
+  #   File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or
+  #     File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/
+  # }.sort
+  #
+
   if am_candidates.empty?
     errors << 'No Assetmap candidates found'
   else
     @logger.debug( "Found #{ amount( 'Assetmap candidate', am_candidates ) }: #{ am_candidates.inspect }" )
+    @logger.debug( "Found #{ amount( 'file', package_dir_tree ) } in total" )
   end
 
   # Check XML for Assetmap content
   unless am_candidates.empty?
     am_candidates_tmp = am_candidates.dup
     am_candidates.each do |am_candidate|
-      am_file = package( am_candidate )
+      am_file = package am_candidate
       xml = get_xml_of_type( 'AssetMap', am_file )
       if xml
 
