@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.04.27'
+AppVersion = 'v1.2013.04.28'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -2559,9 +2559,13 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   picture_dimensions_moniker = '2K'
                 when '3996x2160', '4096x1716', '4096x2160'
                   picture_dimensions_moniker = '4K'
+                when '1920x1080'
+                  picture_dimensions_moniker = 'HD'
+                  hints << "#{ cpl_reel }: #{ asset.node_name } has non-DCI pixel dimensions (#{ picture_dimensions }, #{ picture_dimensions_moniker })"
                 else
                   picture_dimensions_moniker = picture_dimensions
-                  hints << "#{ cpl_reel }: #{ asset.node_name } has non-DCI pixel dimensions #{ picture_dimensions }"
+                  errors << "#{ cpl_reel }: #{ asset.node_name } has non-DCI pixel dimensions (#{ picture_dimensions })"
+                  cpl_errors = TRUE
                 end
                 composition_resolutions << picture_dimensions_moniker
 
@@ -3039,6 +3043,8 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
         composition_resolution = { :abbrev => '2K' }
       when '4K'
         composition_resolution = { :abbrev => '4K' }
+      when 'HD'
+        composition_resolution = { :abbrev => 'HD' }
       else
         composition_resolution = { :abbrev => composition_resolutions.first }
       end
@@ -3052,7 +3058,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   end
 
   #
-  # Example for comparing naming fields with asset metadata
+  # Examples for comparing naming fields with asset metadata
   #
   # Aspect ratio
   if naming_matches[ :aspect_ratio ]
