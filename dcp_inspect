@@ -2421,6 +2421,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   is_stereoscopic = Array.new # build a flag for naming convention checks
   composition_aspect_ratios = Array.new
   composition_resolutions = Array.new
+  composition_channel_counts = Array.new
 
   reels.each_with_index do |reel, index|
     reel_no = index + 1
@@ -2574,33 +2575,49 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
               # Check audio
               case asset.node_name
               when 'MainSound'
+
                 # Sampling rate
                 audio_sampling_rate = meta[ 'AudioSamplingRate' ]
                 if audio_sampling_rate != '48000/1' and audio_sampling_rate != '96000/1'
                   errors << "#{ cpl_reel }: MainSound sampling rate #{ audio_sampling_rate } Hz. Expected 48k or 96k"
                   cpl_errors = TRUE
                 end
+
                 # Bits per sample
                 audio_quantization_bits = meta[ 'QuantizationBits' ].to_i
                 if audio_quantization_bits != 24
                   errors << "#{ cpl_reel }: MainSound quantization #{ audio_quantization_bits } bps. Expected 24 bps"
                   cpl_errors = TRUE
                 end
+
                 # Channel configuration
                 audio_channel_count = meta[ 'ChannelCount' ].to_i
                 case audio_channel_count
                 when 1, 3, 4, 5
                   errors << "#{ cpl_reel }: MainSound has #{ amount( 'channel', audio_channel_count ) }: Use 5.1, 7.1, 7.1DS or wild track (2.0 is expected to mostly work)"
                   cpl_errors = TRUE
+                  audio_channel_count_moniker = audio_channel_count.to_s
                 when 2
                   hints << "#{ cpl_reel }: MainSound has 2 channels: Expected to mostly work. Use 5.1, 7.1, 7.1DS or wild track to make sure"
+                  audio_channel_count_moniker = '20'
+                when 6
+                  audio_channel_count_moniker = '51'
+                when 8
+                  audio_channel_count_moniker = '71'
+                when 12
+                  audio_channel_count_moniker = '11.1'
+                else
+                  audio_channel_count_moniker = audio_channel_count.to_s
                 end
+                composition_channel_counts << audio_channel_count_moniker
+
                 # Block align
                 audio_block_align = meta[ 'BlockAlign' ].to_i
                 if audio_block_align != audio_channel_count * 3 # don't use audio_quantization_bits here -- anything other than 24 bps is an error
                   errors << "#{ cpl_reel }: MainSound has unexpected BlockAlign value #{ audio_block_align }: Expected #{ audio_channel_count * 3 }: Check audio source"
                   cpl_errors = TRUE
                 end
+
                 # Edit rate
                 if asset_edit_rate != edit_rate
                   errors << "#{ cpl_reel }: MainSound EditRate #{ edit_rate } does not match asset EditRate #{ asset_edit_rate }"
@@ -3057,6 +3074,19 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     cpl_errors = TRUE
   end
 
+  # Set up composition_channel_count
+  composition_channel_count = NIL
+  if composition_channel_counts.size == reels.size
+    if composition_channel_counts.uniq.size == 1
+      composition_channel_count = { :abbrev => composition_channel_counts.uniq.first }
+    else
+      errors << "CPL #{ cpl_id }: Found different audio types: #{ composition_channel_counts.inspect }"
+    end
+  else
+    errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'audio type', reels.size ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_channel_counts.size }"
+    cpl_errors = TRUE
+  end
+
   #
   # Examples for comparing naming fields with asset metadata
   #
@@ -3078,12 +3108,23 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
       end
     end
   end
+  #
   # Resolution
   if naming_matches[ :resolution ]
     if composition_resolution
       if naming_matches[ :resolution ] != composition_resolution[ :abbrev ]
         resolution_claim = naming_matches[ :resolution ]
         hints << "CPL #{ cpl_id }: Naming convention: Part resolution claims #{ resolution_claim } but composition resolution is #{ composition_resolution[ :abbrev ] }"
+      end
+    end
+  end
+  #
+  # Audio channels
+  if naming_matches[ :audio_type ]
+    if composition_channel_count
+      if naming_matches[ :audio_type ].split( '-' ).first != composition_channel_count[ :abbrev ]
+        channel_count_claim = naming_matches[ :audio_type ].split( '-' ).first
+        hints << "CPL #{ cpl_id }: Naming convention: Part audio type claims #{ channel_count_claim } but compoition audio type is #{ composition_channel_count[ :abbrev ] }"
       end
     end
   end
