@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.04.28'
+AppVersion = 'v1.2013.04.29'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -3057,7 +3057,12 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     if composition_resolutions.uniq.size == 1
       case composition_resolutions.first
       when '2K'
-        composition_resolution = { :abbrev => '2K' }
+        case composition_edit_rate
+        when 48.0
+          composition_resolution = { :abbrev => '48' } # yeah, well. Look it up in 3.9, it's true :) (Changed in 8.2)
+        else
+          composition_resolution = { :abbrev => '2K' }
+        end
       when '4K'
         composition_resolution = { :abbrev => '4K' }
       when 'HD'
@@ -3109,12 +3114,19 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     end
   end
   #
-  # Resolution
+  # Resolution (with a little composition_edit_rate tango because of the 2K@48fps hoopla in 3.9)
   if naming_matches[ :resolution ]
     if composition_resolution
       if naming_matches[ :resolution ] != composition_resolution[ :abbrev ]
-        resolution_claim = naming_matches[ :resolution ]
-        hints << "CPL #{ cpl_id }: Naming convention: Part resolution claims #{ resolution_claim } but composition resolution is #{ composition_resolution[ :abbrev ] }"
+        case naming_matches[ :resolution ]
+        when '48'
+          if composition_edit_rate != 48.0
+            hints << "CPL #{ cpl_id }: Naming convention: Part resolution #{ naming_matches[ :resolution ].inspect } (implying 2K) claims 48 fps but composition framerate is #{ composition_edit_rate == 0 ? '[Broken]' : composition_edit_rate.to_s + ' fps' }"
+          end
+        else
+          resolution_claim = naming_matches[ :resolution ]
+          hints << "CPL #{ cpl_id }: Naming convention: Part resolution claims #{ resolution_claim } but composition resolution is #{ composition_resolution[ :abbrev ] }"
+        end
       end
     end
   end
