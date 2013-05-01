@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.04.29'
+AppVersion = 'v1.2013.05.01'
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -1916,7 +1916,7 @@ def validate_xml( xml, file )
     return TRUE, errors
   else
     validation_errors.each do |e|
-      errors << "Schema check: #{ File.basename xsd_file } #{ file }: #{ e }"
+      errors << "Schema check: #{ File.basename xsd_file } #{ file } line #{ e.line }: #{ e }"
     end
     return FALSE, errors
   end
