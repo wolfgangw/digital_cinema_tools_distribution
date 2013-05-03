@@ -3720,7 +3720,7 @@ def dcp_inspect( options, arg )
   info << "Hash checks skipped for assets bigger than #{ @check_hashes_limit_nice }" if @check_hashes_limit_nice
   info << "Hash checks skipped for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits } total" if @check_hashes_limit_nice
   info << 'Schema checks skipped' unless options.validate
-  info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls.flatten ) } (#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }), #{ amount( 'Composition', cpls.flatten ) } (#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' })"
+  info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls.flatten ) } (#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }), #{ amount( 'Composition', cpls.flatten ) } (#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' }, #{ cpls.flatten.size - @encrypted_compositions > 0 ? ( cpls.flatten.size - @encrypted_compositions ).to_s + ' plaintext/' : '' }#{ amount( 'KDM', @encrypted_compositions ) } required)"
   info << "#{ amount( 'Error', errors ) }, #{ amount( 'Hint', hints ) }"
 
   return { :errors => errors, :hints => hints, :info => info, :am_files => am_files, :pkls => pkls, :cpls => cpls, :pkls_missing => pkls_missing, :cpls_missing => cpls_missing }
