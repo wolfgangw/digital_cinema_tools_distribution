@@ -18,7 +18,8 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.05.03'
+AppVersion = 'v1.2013.05.06'
+AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
 # cinema packages (DCP). This includes integrity checks, asset inspection,
@@ -291,6 +292,46 @@ class DLogger
 end
 
 
+# Workaround Nokogiri::XML::Document#collect_namespaces peculiarity
+# (see https://github.com/sparklemotion/nokogiri/issues/885 for details)
+#
+# collect_all_namespaces_href_keys will return
+#
+#   {
+#     "http://www.w3.org/XML/1998/namespace"              =>  ["xml"],
+#     "http://www.smpte-ra.org/schemas/429-7/2006/CPL"    =>  [nil],
+#     "http://isdcf.com/schemas/draft/2011/cpl-metadata"  =>  ["meta"],
+#     "http://www.w3.org/2000/09/xmldsig#"                =>  [nil]
+#   }
+#
+# where nil implies xmlns.
+# This is an example where multiple default namespace definitions exist
+# and are used in different document fragments.
+#
+# collect_all_namespaces_prefix_keys will return
+#
+#   {
+#     "xml"   =>  ["http://www.w3.org/XML/1998/namespace"],
+#     "nil"   =>  ["http://www.smpte-ra.org/schemas/429-7/2006/CPL", "http://www.w3.org/2000/09/xmldsig#"],
+#     "meta"  =>  ["http://isdcf.com/schemas/draft/2011/cpl-metadata"]
+#   }
+#
+class Nokogiri::XML::Document
+  def collect_all_namespaces_href_keys
+    xpath( "//namespace::*" ).inject( {} ) do |hash, ns|
+      ( hash[ ns.href ] ||= [] ) << ns.prefix unless ( hash[ ns.href ] and hash[ ns.href ].include? ns.prefix )
+      hash
+    end
+  end
+  def collect_all_namespaces_prefix_keys
+    xpath( "//namespace::*" ).inject( {} ) do |hash, ns|
+      ( hash[ ns.prefix ] ||= [] ) << ns.href unless ( hash[ ns.prefix ] and hash[ ns.prefix ].include? ns.href )
+      hash
+    end
+  end
+end
+
+
 # lib/mxf.rb
 module MxfTools
   def mxf_inspect( filename )
@@ -332,6 +373,7 @@ module MStr
   Interop_am  = 'http://www.digicine.com/PROTO-ASDCP-AM-20040311#'
   Interop_pkl = 'http://www.digicine.com/PROTO-ASDCP-PKL-20040311#'
   Interop_cpl = 'http://www.digicine.com/PROTO-ASDCP-CPL-20040511#'
+  Composition_metadata_href = 'http://isdcf.com/schemas/draft/2011/cpl-metadata'
 
   Ns_Xmldsig  = 'http://www.w3.org/2000/09/xmldsig#'
 
@@ -449,6 +491,7 @@ end
 def datetime_friendly( dt ) # return something in the form of "Tuesday Nov 30 2010 (18:56)"
   "#{ DateTime::DAYNAMES[ dt.wday ] } #{ DateTime::ABBR_MONTHNAMES[ dt.month ] } #{ dt.day.to_s } #{ dt.year.to_s } #{ '%02d' % dt.hour.to_s }:#{ '%02d' % dt.min.to_s }"
 end
+RunDatetime = datetime_friendly DateTime.now
 
 def yyyymmdd( datetime ) # used in KDM filenames. See http://www.kdmnamingconvention.com/
   datetime.to_s.split( 'T' ).first.gsub( /-/,'' )
@@ -554,6 +597,9 @@ def amount( item, count )
   elsif count.is_a? Fixnum
     "#{ count } #{ item }#{ pl count }"
   end
+end
+def plural( item, count )
+  "#{ item }#{ pl count }"
 end
 def pl( count )
   if count.is_a? Array or count.is_a? Hash
@@ -1456,18 +1502,22 @@ class DC_Signature_Verification
     end
   end
 
+  #
+  # FIXME
+  # Looking only at the first prefix returned from collect_all_namespaces_href_keys
+  # for a given namespace will fall on its nose when there would be multiple prefixes
+  # for the same namespace. E.g. I think in a Signature it would be entirely valid to
+  # use different prefixes for different portions, all evaluating to the same namespace.
+  #
+  # Good enough for now but ktfim
+  #
   def namespace_prefix( doc, ns )
-    doc_ns = doc.collect_namespaces
-    if RUBY_VERSION < '1.9'
-      if doc_ns.index( ns )
-        prefix = doc_ns.index( ns ).split( 'xmlns:' ).last
-      end
+    doc_ns = doc.collect_all_namespaces_href_keys
+    if doc_ns.key?( ns )
+      doc_ns[ ns ].first.nil? ? 'xmlns' : doc_ns[ ns ].first
     else
-      if doc_ns.key( ns )
-        prefix = doc_ns.key( ns ).split( 'xmlns:' ).last
-      end
+      'xmlns'
     end
-    return prefix ||= 'xmlns'
   end
 
   def signature_namespace_and_prefix( doc )
@@ -1876,21 +1926,25 @@ def digest_with_etabar( digest_algorithm, title, file, pbar_width, looks_like, o
   return dgst.digest, eta
 end
 
+# lib/xml.rb
+#
+# FIXME
+# Looking only at the first prefix returned from collect_all_namespaces_href_keys
+# for a given namespace will fall on its nose when there would be multiple prefixes
+# for the same namespace. E.g. I think in a Signature it would be entirely valid to
+# use different prefixes for different portions, all evaluating to the same namespace.
+#
+# Good enough for now but ktfim
+#
 def namespace_prefix( doc, ns )
-  doc_ns = doc.collect_namespaces
-  if RUBY_VERSION < '1.9'
-    if doc_ns.index( ns )
-      prefix = doc_ns.index( ns ).split( 'xmlns:' ).last
-    end
+  doc_ns = doc.collect_all_namespaces_href_keys
+  if doc_ns.key?( ns )
+    doc_ns[ ns ].first.nil? ? 'xmlns' : doc_ns[ ns ].first
   else
-    if doc_ns.key( ns )
-      prefix = doc_ns.key( ns ).split( 'xmlns:' ).last
-    end
+    'xmlns'
   end
-  return prefix ||= 'xmlns'
 end
 
-# lib/xml.rb
 def validate_xml( xml, file )
   errors = Array.new
   asdcp_type = xml.root.node_name
@@ -2221,9 +2275,6 @@ end
 # lib/cpl.rb
 def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   cpl_errors = FALSE
-  # FIXME Nokogiri's XML::Document#collect_namespaces is broken
-  # See https://github.com/sparklemotion/nokogiri/issues/885
-  ns = xml.collect_namespaces 
   report = Array.new
   reels_report = Array.new
   cpl_referenced_assets = Array.new
@@ -2232,19 +2283,22 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   cpl_referenced_assets_types = Array.new
   cpl_reels_references_complete = Array.new
 
+  ns = xml.collect_all_namespaces_href_keys
+  cpl_ns = xml.root.namespace.href
   cpl_ns_prefix = namespace_prefix( xml, xml.root.namespace.href )
   cpl_id = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Id" ).text.split( ':' ).last
   cpl_file = package dict[ cpl_id ]
-  case ns[ cpl_ns_prefix ]
+
+  case cpl_ns
   when MStr::Smpte_cpl
     cpl_type = 'SMPTE'
   when MStr::Interop_cpl
     cpl_type = 'Interop'
   else
     cpl_type = 'Unknown'
-    errors << "CPL #{ cpl_id }: Default namespace unknown: #{ ns[ cpl_ns_prefix ] }: #{ cpl_file }"
-    # FIXME Nokogiri's XML::Document#collect_namespaces is broken
-    errors << "CPL #{ cpl_id }: Default namespace unknown: FIXME: This might be a dcp_inspect bug. Fix due"
+    errors << "CPL #{ cpl_id }: Default namespace unknown: #{ cpl_ns }: #{ cpl_file }"
+    errors << "CPL #{ cpl_id }: Default namespace unknown: This might be a dcp_inspect bug. If you think it is ..."
+    errors << "CPL #{ cpl_id }: Default namespace unknown: ... please file an issue at https://github.com/wolfgangw/backports/issues/new"
     cpl_errors = TRUE
   end
   cpl_referenced_assets_types << cpl_type
@@ -2299,7 +2353,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
 
   report << "CPL Id:           #{ cpl_id }"
   report << "CPL file:         #{ cpl_file }"
-  report << "CPL type:         #{ cpl_type } (#{ ns[ cpl_ns_prefix ] })"
+  report << "CPL type:         #{ cpl_type } (#{ cpl_ns })"
 
   # Scrounge ContentTitleText
   content_title_text = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ContentTitleText" ).text
@@ -2398,8 +2452,8 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   end
 
   # Metadata // CMA
-  if ns.keys.include?( 'xmlns:meta' )
-    cma = xml.xpath( '//meta:CompositionMetadataAsset/meta:*', ns )
+  if ns.keys.include? MStr::Composition_metadata_href
+    cma = xml.xpath( '//meta:CompositionMetadataAsset/meta:*', 'meta' => MStr::Composition_metadata_href )
     if cma
       report << 'CompositionMetadataAsset:'
       cma.each do |e|
@@ -2976,7 +3030,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
 
     total_duration += durations.min # FIXME ugh
     composition_edit_rate = edit_rates.min
-  end # reels.each_with_index
+  end # reels loop
 
   reels_report << 'Total duration:'
   begin
@@ -2988,20 +3042,42 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     cpl_errors = TRUE
   end
 
-  # Check if this is a SMPTE composition and reels reference both picture and sound (required in SMPTE CPL)
-  if cpl_referenced_assets_types.uniq.size == 1 and cpl_referenced_assets_types.uniq.first == MStr::AssetTypeSmpte
-    reels_references.each_with_index do |reel_refs, index|
-      if reel_refs[ :picture ] and reel_refs[ :sound ]
-        cpl_reels_references_complete << TRUE
-      else
-        assets_missing_refs = Array.new
-        assets_missing_refs << 'Picture' if ! reel_refs[ :picture ]
-        assets_missing_refs << 'Sound' if ! reel_refs[ :sound ]
-        reels_report << "SMPTE Reel: Missing reference#{ assets_missing_refs.size > 1 ? 's' : '' }: #{ assets_missing_refs.join( ', ' ) }"
-        errors << "CPL #{ cpl_id }: " + reels_report.last
+  # Composition type SMPTE/Interop/Undetermined?
+  assets_status_list = cpl_referenced_assets.map { |e| e.values }.flatten
+  if cpl_referenced_assets_types.uniq.size == 1 and assets_status_list.uniq.size == 1 and assets_status_list.uniq.first == TRUE
+    composition_type = cpl_referenced_assets_types.uniq.first
+    report << "Composition type: #{ composition_type }"
+  else
+    # FIXME Composition type Mixed error or hint?
+    composition_type = ( cpl_referenced_assets_types.include?( MStr::AssetTypeUnknown ) ? MStr::AssetTypeUndetermined : assets_status_list.include?( FALSE ) ? MStr::AssetTypeUndetermined : MStr::AssetTypeMixed )
+    report << "Composition type: #{ composition_type }: #{ cpl_referenced_assets_types.inspect }"
+    if broken_assets.size != 0
+      errors << "CPL #{ cpl_id }: Composition type: #{ composition_type }"
+      cpl_errors = TRUE
+    else
+      hints << "CPL #{ cpl_id }: Composition type: #{ composition_type }: Supplemental/VF/External"
+    end
+  end
+
+  # Check if reels reference both picture and sound. If not report an error for SMPTE CPL and a hint for Interop CPL
+  # See SMPTE ST 429-2:2009 section 9.1 for the requirement
+  reels_references.each_with_index do |reel_refs, index|
+    if reel_refs[ :picture ] and reel_refs[ :sound ] # :picture covers both MainPicture and MainStereoscopicPicture
+      cpl_reels_references_complete << TRUE
+    else
+      reel_no = index + 1
+      assets_missing_refs = Array.new
+      assets_missing_refs << 'MainPicture or MainStereoscopicPicture' if ! reel_refs[ :picture ]
+      assets_missing_refs << 'MainSound' if ! reel_refs[ :sound ]
+      reels_report << "#{ composition_type }: Reel #{ reel_no }: Missing #{ amount( 'reference', assets_missing_refs ) }: #{ assets_missing_refs.join( ', ' ) }"
+      case composition_type
+      when MStr::AssetTypeSmpte
+        errors << "CPL #{ cpl_id }: #{ reels_report.last }"
         cpl_errors = TRUE
-        cpl_reels_references_complete << FALSE
+      else
+        hints << "CPL #{ cpl_id }: #{ reels_report.last }"
       end
+      cpl_reels_references_complete << FALSE
     end
   end
 
@@ -3038,23 +3114,6 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     cpl_errors = TRUE
   end
 
-  # Composition type SMPTE/Interop/Undetermined?
-  assets_status_list = cpl_referenced_assets.map { |e| e.values }.flatten
-  if cpl_referenced_assets_types.uniq.size == 1 and assets_status_list.uniq.size == 1 and assets_status_list.uniq.first == TRUE
-    composition_type = cpl_referenced_assets_types.uniq.first
-    report << "Composition type: #{ composition_type }"
-  else
-    # FIXME Composition type Mixed error or hint?
-    composition_type = ( cpl_referenced_assets_types.include?( MStr::AssetTypeUnknown ) ? MStr::AssetTypeUndetermined : assets_status_list.include?( FALSE ) ? MStr::AssetTypeUndetermined : MStr::AssetTypeMixed )
-    report << "Composition type: #{ composition_type }: #{ cpl_referenced_assets_types.inspect }"
-    if broken_assets.size != 0
-      errors << "CPL #{ cpl_id }: Composition type: #{ composition_type }"
-      cpl_errors = TRUE
-    else
-      hints << "CPL #{ cpl_id }: Composition type: #{ composition_type }: Supplemental/VF/External"
-    end
-  end
-
   # Naming convention
   case composition_type
   when MStr::AssetTypeInterop
@@ -3084,9 +3143,15 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   elsif cpl_reels_references_complete.include?( FALSE )
     incomplete_reels = Array.new
     cpl_reels_references_complete.each_with_index do |e, i| incomplete_reels << ( i + 1 ).to_s if e == FALSE end
-    report << "Composition incomplete: SMPTE reels require both MainPicture and MainSound: Reel#{ incomplete_reels.size != 1 ? 's' : '' } #{ incomplete_reels.join( ', ' ) } incomplete"
-    errors << "CPL #{ cpl_id }: #{ report.last }"
-    cpl_errors = TRUE
+    case composition_type
+    when MStr::AssetTypeSmpte
+      report << "Composition incomplete: SMPTE reels require both MainPicture or MainStereoscopicPicture and MainSound: #{ plural( 'Reel', incomplete_reels ) } #{ incomplete_reels.join( ', ' ) } incomplete"
+      errors << "CPL #{ cpl_id }: #{ report.last }"
+      cpl_errors = TRUE
+    else
+      report << "Composition warning: Reference both MainPicture or MainStereoscopicPicture and MainSound in reels in order to avoid playback issues in the field: See #{ plural( 'reel', incomplete_reels ) } #{ incomplete_reels.join( ', ' ) }"
+      hints << "CPL #{ cpl_id }: #{ report.last }"
+    end
   else
     report << 'Composition complete'
   end
@@ -3713,14 +3778,22 @@ def dcp_inspect( options, arg )
   end
 
   # Info summary block
-  info << "#{ AppName } #{ AppVersion } on #{ datetime_friendly DateTime.now }"
+  pkls = pkls.flatten
+  cpls = cpls.flatten
+  execution_time_seconds = Time.now - AppStartSeconds
+  execution_time = Timecode.new( execution_time_seconds.round, 60 ).to_s
+  total_size = "#{ packages_size_actual == packages_size_listed ? packages_size_actual.to_k : packages_size_actual.to_k + ' (Listed total: ' + packages_size_listed.to_k + ')' }"
+  pkls_signature_info = "#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }"
+  cpls_signature_info = "#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' }"
+  cpls_encryption_info = "#{ cpls.size - @encrypted_compositions > 0 ? ( cpls.size - @encrypted_compositions ).to_s + ' plaintext/' : '' }#{ amount( 'KDM', @encrypted_compositions ) } required)"
+  info << "#{ AppName } #{ AppVersion } on #{ RunDatetime } (#{ execution_time })"
   info << "Inspected: #{ Pathname( arg ).realpath }"
-  info << "Found #{ amount( 'Package', pkls.flatten ) } with total size #{ packages_size_actual == packages_size_listed ? packages_size_actual.to_k : packages_size_actual.to_k + ' (Listed total: ' + packages_size_listed.to_k + ')' }"
+  info << "Found #{ amount( 'Package', pkls ) } with total size #{ total_size }"
   info << 'Hash checks skipped' if options.check_hashes == FALSE
   info << "Hash checks skipped for assets bigger than #{ @check_hashes_limit_nice }" if @check_hashes_limit_nice
   info << "Hash checks skipped for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits } total" if @check_hashes_limit_nice
   info << 'Schema checks skipped' unless options.validate
-  info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls.flatten ) } (#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }), #{ amount( 'Composition', cpls.flatten ) } (#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' }, #{ cpls.flatten.size - @encrypted_compositions > 0 ? ( cpls.flatten.size - @encrypted_compositions ).to_s + ' plaintext/' : '' }#{ amount( 'KDM', @encrypted_compositions ) } required)"
+  info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls ) } (#{ pkls_signature_info }), #{ amount( 'Composition', cpls ) } (#{ cpls_signature_info }, #{ cpls_encryption_info }"
   info << "#{ amount( 'Error', errors ) }, #{ amount( 'Hint', hints ) }"
 
   return { :errors => errors, :hints => hints, :info => info, :am_files => am_files, :pkls => pkls, :cpls => cpls, :pkls_missing => pkls_missing, :cpls_missing => cpls_missing }
