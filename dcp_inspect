@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.05.10'
+AppVersion = 'v1.2013.05.15'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -140,7 +140,10 @@ LOGFILE_WRITE_ERROR = 8
 FILE_ACCESS_ERROR = 9
 LOGFILE_EXISTS_ERROR = 10
 GEM_LOAD_ERROR = 11
-REQUIRED_COMAND_NOT_FOUND = 12
+REQUIRED_COMMAND_NOT_FOUND = 12
+ENV_DCP_INSPECT_DIR_NOT_SET = 13
+DCP_INSPECT_DIR_NOT_WRITABLE = 14
+AUTOLOGFILE_WRITE_ERROR = 15
 
 # Required gems
 if RUBY_VERSION <= '1.9'
@@ -150,16 +153,16 @@ if RUBY_VERSION <= '1.9'
   end
 end
 [
-'nokogiri',
-'ttfunk',
-'optparse',
-'ostruct',
-'pathname',
-'shellwords',
-'openssl',
-'base64',
-'stringio',
-'fileutils'
+  'nokogiri',
+  'ttfunk',
+  'optparse',
+  'ostruct',
+  'pathname',
+  'shellwords',
+  'openssl',
+  'base64',
+  'stringio',
+  'fileutils'
 ].each do |gem|
   begin
     require gem
@@ -491,7 +494,8 @@ end
 def datetime_friendly( dt ) # return something in the form of "Tuesday Nov 30 2010 (18:56)"
   "#{ DateTime::DAYNAMES[ dt.wday ] } #{ DateTime::ABBR_MONTHNAMES[ dt.month ] } #{ dt.day.to_s } #{ dt.year.to_s } #{ '%02d' % dt.hour.to_s }:#{ '%02d' % dt.min.to_s }"
 end
-RunDatetime = datetime_friendly DateTime.now
+RunDatetime = time_to_datetime AppStartSeconds
+RunDatetime_friendly = datetime_friendly RunDatetime
 
 def yyyymmdd( datetime ) # used in KDM filenames. See http://www.kdmnamingconvention.com/
   datetime.to_s.split( 'T' ).first.gsub( /-/,'' )
@@ -2962,8 +2966,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
           cpl_referenced_assets << { asset_id => FALSE }
           cpl_referenced_assets_types << MStr::AssetTypeUnknown
           meta_report = 'Referenced asset file not listed in Assetmap dictionary: Supplemental/VF/External'
-          hint_info = [ "#{ cpl_reel }", asset.node_name ].join
-          hints << "#{ hint_info }: Referenced asset file not listed in Assetmap dictionary: Supplemental/VF/External"
+          hints << "#{ cpl_reel }: #{ asset.node_name }: Referenced asset file not listed in Assetmap dictionary: Supplemental/VF/External"
 
           # Infer encryption from presence of KeyId
           if key_id
@@ -3453,7 +3456,8 @@ def dcp_inspect( options, arg )
               listed_asset_length = asset.xpath( 'ChunkList/Chunk/Length' ).text.to_i
               asset_size = File.size asset_file
               unless listed_asset_length == asset_size
-                hints << "AM #{ am_id }: Length mismatch: Asset: #{ listed_id }: Listed length: #{ listed_asset_length } (#{ listed_asset_length.to_k }) Asset on medium: #{ asset_size } (#{ asset_size.to_k })"
+                errors << "AM #{ am_id }: Mismatch in optional Length element: Asset: #{ listed_id }: Listed length: #{ listed_asset_length } (#{ listed_asset_length.to_k }) Asset on medium: #{ asset_size } (#{ asset_size.to_k })"
+                am_errors = TRUE
               end
             rescue Exception => e
               errors << "AM #{ am_id }: Length check fail: #{ e.message }"
@@ -3792,7 +3796,7 @@ def dcp_inspect( options, arg )
   pkls_signature_info = "#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }"
   cpls_signature_info = "#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' }"
   cpls_encryption_info = "#{ cpls.size - @encrypted_compositions > 0 ? ( cpls.size - @encrypted_compositions ).to_s + ' plaintext/' : '' }#{ amount( 'KDM', @encrypted_compositions ) } required)"
-  info << "#{ AppName } #{ AppVersion } on #{ RunDatetime } (#{ execution_time })"
+  info << "#{ AppName } #{ AppVersion } on #{ RunDatetime_friendly } (#{ execution_time })"
   info << "Inspected: #{ Pathname( arg ).realpath }"
   info << "Found #{ amount( 'Package', pkls ) } with total size #{ total_size }"
   info << 'Hash checks skipped' if options.check_hashes == FALSE
@@ -3844,7 +3848,7 @@ required_command_not_found = FALSE
     required_command_not_found = TRUE
   end
 end
-exit REQUIRED_COMAND_NOT_FOUND if required_command_not_found
+exit REQUIRED_COMMAND_NOT_FOUND if required_command_not_found
 
 
 # Check Nokogiri C14N support
