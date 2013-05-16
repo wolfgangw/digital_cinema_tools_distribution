@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.05.15'
+AppVersion = 'v1.2013.05.16'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -393,8 +393,8 @@ module MStr
   # http://digitalcinemanamingconvention.com
   Naming_convention_v_3_9 = {
     :film_title       => { :re => /^[-A-Z0-9]{1,14}$/,                        :field_re => /^[-a-zA-Z0-9]+$/ },
-    :content_type     => { :re => /^(FTR|FTR-\d|TST|TLR|TLR-\d|TLR\d-2D|TLR\d-3D|RTG-F|RTG-T1|TSR|TSR-\d|POL|PSA|ADV|SHR|XSN)$/,
-                                                                              :field_re => /^(TST\d|TST-\d)$/},
+    :content_type     => { :re => /^(FTR|FTR-\d|TST|TST-\d|TLR|TLR-\d|TLR\d-2D|TLR\d-3D|RTG-F|RTG-T|TSR|TSR-\d|POL|PSA|ADV|ADV-\d|SHR|SHR-\d|XSN)$/,
+                                                                              :field_re => /^(FTR\d|TST\d|TLR\d|TSR\d|ADV\d|SHR\d)$/},
     :aspect_ratio     => { :re => /^(F|S|C)$/ },
     :language         => { :re => /^[A-Z]{2,3}-[A-Z]{2,3}$/,                  :field_re => /^[a-zA-Z]{2,3}-[a-zA-Z]{2,3}$/ },
     :territory_rating => { :re => /^([A-Z]{2}-[+A-Z]{1,3}|INT-TD|INT-TL)$/,   :field_re => /^([A-Z]{2}-[+A-Z]{1,3}|INT|INT-|INT-XX|ITL-TD|ITL-TL)$/ },
