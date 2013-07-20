@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.05.18'
+AppVersion = 'v1.2013.07.20'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -531,6 +531,12 @@ def seconds_from_hms( timestring ) # hh:mm:ss.fraction
   minutes = a[ 1 ].to_i
   secs = a[ 2 ].to_f
   return ( hours * 3600 + minutes * 60 + secs )
+end
+
+def time_string( t )
+  return "--:--:--" if t.nil?
+  t = t.to_i; s = t % 60; m  = ( t / 60 ) % 60; h = t / 3600
+  "%02d:%02d:%02d" % [ h, m, s ]
 end
 
 # Adapted from actionpack-3.2.11/lib/action_view/helpers/date_helper.rb
@@ -2031,6 +2037,7 @@ def get_xml_of_type( asdcp_type, file )
     @logger.info "#{ file }: #{ e.message }"
     return FALSE
   end
+
   unless xml.errors.empty?
     xml.errors.each do |error|
       # expected errors from non-xml
@@ -2040,9 +2047,13 @@ def get_xml_of_type( asdcp_type, file )
     return FALSE
   end
 
-  case xml.root.node_name
-  when asdcp_type
-    return xml
+  if xml.root
+    case xml.root.node_name
+    when asdcp_type
+      return xml
+    else
+      return FALSE
+    end
   else
     return FALSE
   end
@@ -2402,7 +2413,12 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   rescue
   end
 
-  report << "AnnotationText:   #{ xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:AnnotationText" ).text }"
+  annotation_text = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:AnnotationText" ).text
+  if annotation_text.empty?
+    report << "AnnotationText:   [Empty]"
+  else
+    report << "AnnotationText:   #{ annotation_text }"
+  end
 
   # Check ContentKind
   content_kind = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ContentKind" ).text
@@ -2482,7 +2498,10 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     report << 'Creator:          [Not present]'
   end
 
+  #
   # Metadata // CMA
+  # For now this is merely a printout. We don't check against actual asset metadata
+  #
   if ns.keys.include? MStr::Composition_metadata_href
     cma = xml.xpath( '//meta:CompositionMetadataAsset/meta:*', 'meta' => MStr::Composition_metadata_href )
     if cma
@@ -2967,7 +2986,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                 cpl_referenced_assets_types << MStr::AssetTypeUnknown
                 meta_report = 'File found but not AS-DCP MXF'
 
-                # Infer encryption from presence of KeyId
+                # We don't have meta. Infer encryption from presence of KeyId
                 if key_id
                   cpl_referenced_assets_encrypted_inferred_from_key_id << asset_id
                 end
@@ -3325,7 +3344,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     if composition_channel_count
       if naming_matches[ :audio_type ].split( '-' ).first != composition_channel_count[ :abbrev ]
         channel_count_claim = naming_matches[ :audio_type ].split( '-' ).first
-        hints << "CPL #{ cpl_id }: Naming convention: Part audio type claims #{ channel_count_claim } but compoition audio type is #{ composition_channel_count[ :abbrev ] }"
+        hints << "CPL #{ cpl_id }: Naming convention: Part audio type claims #{ channel_count_claim } but composition audio type is #{ composition_channel_count[ :abbrev ] }"
       end
     end
   end
@@ -3712,11 +3731,11 @@ def dcp_inspect( options, arg )
                         hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options, logger = @logger )
                         hash_check = Base64.encode64( hash_check ).chomp
                         if hash_listed != hash_check
-                          eta.preserve_terminal_title_with_message( 'Mismatch' )
+                          eta.preserve_terminal_title_with_message( "Mismatch (#{ time_string( eta.elapsed ) })" )
                           errors << "PKL #{ pkl_id }: Hash mismatch: #{ id }: PKL: #{ hash_listed } Asset: #{ hash_check }"
                           pkl_errors = TRUE
                         else
-                          eta.preserve_terminal_title_with_message( 'OK' )
+                          eta.preserve_terminal_title_with_message( "OK (#{ time_string( eta.elapsed ) })" )
                           # info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
                         end
                       else
@@ -3917,7 +3936,7 @@ if File.exists?( XSDDir ) and File.ftype( XSDDir ) == 'directory'
     c = File.read local_xml_catalog
     m = c.match( /xml:base="file:\/\/(.+)">/ )
     if m[ 1 ] != File.join( XSDDir, '' )
-      File.open( local_xml_catalog, 'w' ) { |f| f.write c.gsub( m[ 1 ], File.join( XSDDir, '' ) ); f.close }
+      File.write( local_xml_catalog, c.gsub( m[ 1 ], File.join( XSDDir, '' ) ) )
     end
   else
     @logger.info "Local XML Catalog #{ local_xml_catalog } not found"
@@ -3967,7 +3986,7 @@ if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( a
   if options.logfile_autolog
     autologfile = File.join( ENV[ 'DCP_INSPECT_DIR' ], [ Pathname( args[ 0 ] ).realpath.to_s.gsub( '/', '___' ), RunDatetime.to_s.gsub( /\D/, '-' ), AppVersion.split( '.' ).join, rand( 65536 ).to_s( 16 ) ].join( '_' ) + ".#{ AppName }" )
     begin
-      File.open( autologfile, 'w' ) { |f| f.write @logger.full_log_blob }
+      File.write( autologfile, @logger.full_log_blob )
       @logger.info "See autolog at #{ autologfile }"
     rescue Exception => e
       @logger.info e.message
@@ -3978,7 +3997,7 @@ if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( a
   # Write logfile
   if options.logfile
     begin
-      File.open( options.logfile, 'w' ) { |f| f.write @logger.full_log_blob }
+      File.write( options.logfile, @logger.full_log_blob )
       @logger.info "See logfile at #{ options.logfile }"
     rescue Exception => e
       @logger.info e.message
