@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2013.04.18'
+setup_version='v1.2013.07.20'
 #
 # Usage:
 #
@@ -91,8 +91,8 @@ openjpeg_install_dir=$bindir/openjpeg
 
 # Handle SMPTE and Interop trackfiles: ASDCPLib
 cinecert='download.cinecert.com/asdcplib'
-asdcplib_version='1.11.49'
-asdcplib_version_tarball_md5='474cd60d74c791f4f0746ebf8e7ff3b0'
+asdcplib_version='1.12.50'
+asdcplib_version_tarball_md5='20a731fb55d375f734b3c8837f414bfa'
 asdcplib_tarball="asdcplib-$asdcplib_version.tar.gz"
 asdcplib_tarball_url="http://$cinecert/$asdcplib_tarball"
 asdcplib_dir=$libdir/asdcplib
