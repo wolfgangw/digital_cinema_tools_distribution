@@ -3309,7 +3309,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   #
   # Content kind vs the corresponding ContentTitleText particle
   if naming_matches[ :content_kind ]
-    naming_content_kind_moniker = naming_matches[ :content_kind ].downcase.to_sym
+    naming_content_kind_moniker = naming_matches[ :content_kind ].split( '-' ).first.downcase.to_sym
     if MStr::Cpl_standard_content_moniker_map[ naming_content_kind_moniker ] != content_kind.to_sym
       hints << "CPL #{ cpl_id }: Naming convention: Part content_kind claims #{ MStr::Cpl_standard_content_moniker_map[ naming_content_kind_moniker ] } but CPL ContentKind says #{ content_kind }"
     end
