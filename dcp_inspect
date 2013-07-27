@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.07.20'
+AppVersion = 'v1.2013.07.27'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -393,11 +393,11 @@ module MStr
     Interop_cpl => 'PROTO-ASDCP-CPL-20040511.xsd'
   }
 
-  # Digital Cinema Naming Convention V.3.9
+  # Digital Cinema Naming Convention V.3.9 (superseded by V.8.3 2013)
   # http://digitalcinemanamingconvention.com
   Naming_convention_v_3_9 = {
     :film_title       => { :re => /^[-A-Z0-9]{1,14}$/,                        :field_re => /^[-a-zA-Z0-9]+$/ },
-    :content_type     => { :re => /^(FTR|FTR-\d|TST|TST-\d|TLR|TLR-\d|TLR\d-2D|TLR\d-3D|RTG-F|RTG-T|TSR|TSR-\d|POL|PSA|ADV|ADV-\d|SHR|SHR-\d|XSN)$/,
+    :content_kind     => { :re => /^(FTR|FTR-\d|TST|TST-\d|TLR|TLR-\d|TLR\d-2D|TLR\d-3D|RTG-F|RTG-T|TSR|TSR-\d|POL|PSA|ADV|ADV-\d|SHR|SHR-\d|XSN)$/,
                                                                               :field_re => /^(FTR\d|TST\d|TLR\d|TSR\d|ADV\d|SHR\d)$/},
     :aspect_ratio     => { :re => /^(F|S|C)$/ },
     :language         => { :re => /^[A-Z]{2,3}-[A-Z]{2,3}$/,                  :field_re => /^[a-zA-Z]{2,3}-[a-zA-Z]{2,3}$/ },
@@ -431,6 +431,7 @@ module MStr
   OTF = 'Font CFF-based'
 
   Cpl_standard_content = [ 'feature', 'trailer', 'test', 'teaser', 'rating', 'advertisement', 'short', 'transitional', 'psa', 'policy' ]
+  Cpl_standard_content_moniker_map = { :ftr => :feature, :trl => :trailer, :tst => :test, :tsr => :teaser, :rtg => :rating, :pol => :policy, :adv => :advertisement, :shr => :short, :xsn => :transitional, :psa => :psa, :pol => :policy  }
 end # module MStr
 
 
@@ -2133,7 +2134,10 @@ end
 #
 # Consider the naming convention checks performed here
 # to be a work in progress.
-# See http://digitalcinemanamingconvention.com for the V.3.9 nomenclature
+# As of Q2 2013 this code still assumes the world is using V.3.9
+#
+# See http://digitalcinemanamingconvention.com for the new V.8.3 nomenclature
+# which was released in Q2 2013.
 #
 def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_required, hints )
   matches = Hash.new
@@ -3302,6 +3306,15 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
 
   #
   # Examples for comparing naming fields with asset metadata
+  #
+  # Content kind vs the corresponding ContentTitleText particle
+  if naming_matches[ :content_kind ]
+    naming_content_kind_moniker = naming_matches[ :content_kind ].downcase.to_sym
+    if MStr::Cpl_standard_content_moniker_map[ naming_content_kind_moniker ] != content_kind.to_sym
+      hints << "CPL #{ cpl_id }: Naming convention: Part content_kind claims #{ MStr::Cpl_standard_content_moniker_map[ naming_content_kind_moniker ] } but CPL ContentKind says #{ content_kind }"
+    end
+    #
+  end
   #
   # Aspect ratio
   if naming_matches[ :aspect_ratio ]
