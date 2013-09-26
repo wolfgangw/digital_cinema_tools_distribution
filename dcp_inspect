@@ -2869,8 +2869,9 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   #
                   if durations.size > 1 # Assume we have one previous asset duration
                     begin
-                      if last_time_out > Timecode.new( durations[ 0 .. -2 ].min, edit_rates[ 0 .. -2 ].min )
-                        errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut exceeds reel duration"
+                      reel_duration_prelim = Timecode.new( durations[ 0 .. -2 ].min, edit_rates[ 0 .. -2 ].min )
+                      if last_time_out > reel_duration_prelim
+                        errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut #{ last_time_out.to_s } exceeds reel duration #{ reel_duration_prelim }"
                         cpl_errors = TRUE
                       end
                     rescue Exception => e
