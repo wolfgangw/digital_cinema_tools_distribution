@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.08.26'
+AppVersion = 'v1.2013.09.26'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -2774,7 +2774,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
               # This meta_report (and edit_rate) abomination below needs to go. Ugh
               meta_report = [
                 meta[ 'Label Set Type' ] || 'Label Set Type:' + MStr::AssetTypeUnknown,
-                meta[ 'ContainerDuration' ] ? meta[ 'EditRate' ] ? Timecode.new( meta[ 'ContainerDuration' ].to_i, asset_edit_rate ).to_s : '[NaN]' : 'ContainerDuration:' + MStr::AssetTypeUnknown,
+                meta[ 'ContainerDuration' ] ? meta[ 'EditRate' ] || meta[ 'SampleRate' ] ? Timecode.new( meta[ 'ContainerDuration' ].to_i, asset_edit_rate ).to_s : '[NaN]' : 'ContainerDuration:' + MStr::AssetTypeUnknown,
                 meta[ 'EncryptedEssence' ] ? meta[ 'EncryptedEssence' ] == 'Yes' ? 'encrypted' : 'unencrypted' : 'Encrypted:' + MStr::AssetTypeUnknown,
                 asset.node_name =~ /Picture/ ? ( meta[ 'StoredWidth' ] || 'StoredWidth:' + MStr::AssetTypeUnknown ) + 'x' + ( meta[ 'StoredHeight' ] || 'StoredHeight:' + MStr::AssetTypeUnknown ) : '',
                 asset.node_name =~ /Sound/ ? ( amount( 'channel', meta[ 'ChannelCount' ].to_i ) || 'ChannelCount:' + MStr::AssetTypeUnknown ) : '',
@@ -2794,9 +2794,9 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                 if options.validate
                   begin
                     valid, errors, cpl_errors = validation( errors, cpl_errors, xml, asset_file, asset_id, 'DCSubtitle' )
-                    report << "DCSubtitle #{ asset_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }"
+                    report << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }"
                   rescue Exception => e
-                    errors << "DCSubtitle #{ asset_id }: Exception in Schema check: #{ e.message }"
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Exception in Schema check: #{ e.message }"
                     cpl_errors = TRUE
                     report << errors.last
                   end
@@ -2804,6 +2804,20 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
 
                 xml.remove_namespaces!
                 if ( subtitles = xml.xpath( '//Subtitle' ) and subtitles.size > 0 )
+
+                  #
+                  # Check for TC range violations
+                  #
+                  subtitles.each do |sub|
+                    [ 'TimeIn', 'TimeOut' ].each do |tc_attr|
+                      begin
+                        tc = Timecode.parse_with_ticks( sub.attributes[ tc_attr ].value, edit_rate )
+                      rescue Exception => e
+                        spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : NIL )
+                        errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Spot #{ spot_number }: #{ e.inspect }"
+                      end
+                    end
+                  end
 
                   #
                   # Scan all subtitles to find actual first_time_in and last_time_out
@@ -2835,9 +2849,36 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                     first_time_in = Timecode.parse_with_ticks( first_time_in, edit_rate )
                     last_time_out = Timecode.parse_with_ticks( last_time_out, edit_rate )
                   rescue Exception => e
-                    errors << "Timecode: #{ asset_file }: #{ e.message }"
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Timecode: #{ e.message }"
                     cpl_errors = TRUE
                   end
+
+                  #
+                  # Cross-check duration/reel duration and last TimeOut
+                  # We don't have reel_duration yet so here's an indirect way to tell if something's wrong
+                  # Boy-oh-boy, this an ugly hack which exposes nicely the essential design flaw
+                  #
+                  # duration (self) and last TimeOut
+                  #
+                  if last_time_out.to_i > duration
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut #{ last_time_out.to_s } exceeds MainSubtitle duration #{ Timecode.new( duration, edit_rate ).to_s }"
+                    cpl_errors = TRUE
+                  end
+                  #
+                  # reel duration (preliminary) and last TimeOut
+                  #
+                  if durations.size > 1 # Assume we have one previous asset duration
+                    begin
+                      if last_time_out > Timecode.new( durations[ 0 .. -2 ].min, edit_rates[ 0 .. -2 ].min )
+                        errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut exceeds reel duration"
+                        cpl_errors = TRUE
+                      end
+                    rescue Exception => e
+                      errors << "#{ cp_reel }: DCSubtitle #{ asset_id }: Timecode: #{ e.message }"
+                      cpl_errors = TRUE
+                    end
+                  end
+
 
                   #
                   # Check for empty elements. Thanks to Mattias Mattsson, Lilian Lefranc and Johann Hohenwarter for the field feedback
@@ -2921,7 +2962,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                               # Scrounge font subfamily name
                               font_fu = TTFunk::File.open font_asset
                               font_unique_subfamily = font_fu.name.unique_subfamily[ 1 ].to_s # FIXME not always 2nd element. Why/how?
-                              hints << "#{ cpl_reel }: DCSubtitle: Referenced font subfamily: #{ font_unique_subfamily }"
+                              info << "#{ cpl_reel }: DCSubtitle: Referenced font subfamily: #{ font_unique_subfamily }"
 
                               # Check if all glyphs can be rendered with provided font
                               glyphs_missing = FALSE
@@ -3310,7 +3351,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   # Content kind vs the corresponding ContentTitleText particle
   if naming_matches[ :content_kind ]
     naming_content_kind_moniker = naming_matches[ :content_kind ].split( '-' ).first.downcase.to_sym
-    if MStr::Cpl_standard_content_moniker_map[ naming_content_kind_moniker ] != content_kind.to_sym
+    if MStr::Cpl_standard_content_moniker_map[ naming_content_kind_moniker ] != content_kind.downcase.to_sym
       hints << "CPL #{ cpl_id }: Naming convention: Part content_kind claims #{ MStr::Cpl_standard_content_moniker_map[ naming_content_kind_moniker ] } but CPL ContentKind says #{ content_kind }"
     end
     #
@@ -3886,7 +3927,7 @@ def dcp_inspect( options, arg )
   info << "#{ amount( 'Error', errors ) }, #{ amount( 'Hint', hints ) }"
 
   return { :errors => errors, :hints => hints, :info => info, :am_files => am_files, :pkls => pkls, :cpls => cpls, :pkls_missing => pkls_missing, :cpls_missing => cpls_missing }
-end
+end # dcp_inspect
 
 
 #
