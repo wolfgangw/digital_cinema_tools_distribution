@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.09.26'
+AppVersion = 'v1.2013.09.29'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -1028,6 +1028,18 @@ class Timecode
     @value ||= validate!
   end
 end # Timecode
+
+# TC helper: parse both hh:mm:ss:ttt and hh:mm:ss.sss TC formats used in DCSubtitle
+def parse_dcsubtitle_tc_string( tc_string, fps )
+  case tc_string
+  when /\d\d:\d\d:\d\d:\d\d\d/ # hh:mm:ss:ttt
+    Timecode.parse_with_ticks( tc_string, fps )
+  when /\d\d:\d\d:\d\d\.\d\d\d/ # hh:mm:ss.sss
+    Timecode.parse( tc_string, fps )
+  else
+    NIL
+  end
+end
 
 
 class DC_Signer_Crypto_Compliance
@@ -2809,9 +2821,10 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   # Check for TC range violations
                   #
                   subtitles.each do |sub|
-                    [ 'TimeIn', 'TimeOut' ].each do |tc_attr|
+                    [ 'TimeIn', 'TimeOut' ].each do |tc_attr_name|
+                      tc_string = sub.attributes[ tc_attr_name ].value
                       begin
-                        tc = Timecode.parse_with_ticks( sub.attributes[ tc_attr ].value, edit_rate )
+                        tc = parse_dcsubtitle_tc_string( tc_string, edit_rate )
                       rescue Exception => e
                         spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : NIL )
                         errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Spot #{ spot_number }: #{ e.inspect }"
@@ -2846,8 +2859,8 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   end
 
                   begin
-                    first_time_in = Timecode.parse_with_ticks( first_time_in, edit_rate )
-                    last_time_out = Timecode.parse_with_ticks( last_time_out, edit_rate )
+                    first_time_in = parse_dcsubtitle_tc_string( first_time_in, edit_rate )
+                    last_time_out = parse_dcsubtitle_tc_string( last_time_out, edit_rate )
                   rescue Exception => e
                     errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Timecode: #{ e.message }"
                     cpl_errors = TRUE
@@ -2875,7 +2888,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                         cpl_errors = TRUE
                       end
                     rescue Exception => e
-                      errors << "#{ cp_reel }: DCSubtitle #{ asset_id }: Timecode: #{ e.message }"
+                      errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Timecode: #{ e.message }"
                       cpl_errors = TRUE
                     end
                   end
@@ -3015,6 +3028,17 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   if load_font_el.empty?
                     if font_ids.size > 0
                       errors << "#{ cpl_reel }: DCSubtitle: No Font Id declared via LoadFont but referenced Font Ids found: #{ font_ids.inspect }"
+                      cpl_errors = TRUE
+                    end
+                  else
+                    if load_font_el.first.attributes[ 'Id' ]
+                      load_font_id = load_font_el.first.attributes[ 'Id' ].value
+                      font_ids.each do |font_id|
+                        if font_id != load_font_id
+                          errors << "#{ cpl_reel }: DCSubtitle: Referenced font Id '#{ font_id }' does not match the Id '#{ load_font_id }' declared in LoadFont. Font cannot be loaded"
+                          cpl_errors = TRUE
+                        end
+                      end
                     end
                   end
 
