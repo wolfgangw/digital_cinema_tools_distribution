@@ -161,6 +161,7 @@ then
     exit 1
   fi
   echo 'Continuing as root ...'
+  sleep 3
 fi
 
 
