@@ -165,6 +165,7 @@ then
 fi
 
 
+#
 # Which OS distribution are we on?
 #
 # Who'da thunk it that finding this would be so messy:
@@ -172,6 +173,8 @@ fi
 # Ubuntu doesn't have lsb_release initially but has the *-release file
 # openSuSE has os-release and SuSE-release and lsb_release
 # and Debian 6.0.4 has lsb_release but no *-release file
+# Mint 15 has lsb_release and lsb-release
+#
 if [ -f /etc/fedora-release ]
 then
   os_dist=redhat
@@ -182,6 +185,9 @@ elif [ -f /etc/SuSE-release ]
 then
   os_dist=opensuse
 elif [ -f /etc/lsb-release ] && grep -P 'Ubuntu' /etc/lsb-release &> /dev/null
+then
+  os_dist=ubuntu
+elif [ -f /etc/lsb-release ] && grep -P 'LinuxMint' /etc/lsb-release &> /dev/null
 then
   os_dist=ubuntu
 elif command_exists lsb_release
