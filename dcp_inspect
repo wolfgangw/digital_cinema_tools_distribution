@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.09.29'
+AppVersion = 'v1.2013.10.11'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -2837,25 +2837,63 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   # Last subtitle is not necessarily the last displayed
                   # Scrounge content snippets along the way
                   #
+                  #
+                  # See CRAWL which sports empty Subtitle elements
+                  #
+                  # TI spec 2.9 Subtitle says
+                  #
+                  #   "The Subtitle element is a parent element. It includes [...] one or more child elements [...]"
+                  #
+                  # The XSD we're using right now (DCSubtitle.v1.mattsson.xsd), though, has
+                  #
+                  #     <xs:choice minOccurs="0" maxOccurs="unbounded">
+                  #       <xs:element minOccurs="0" maxOccurs="unbounded" ref="Font"/>
+                  #       <xs:element minOccurs="0" maxOccurs="unbounded" ref="Text"/>
+                  #       <xs:element ref="Image"/>
+                  #     </xs:choice>
+                  #
+                  # Correctness tbd
+                  #
+                  #
+                  # First
+                  #
                   first_time_in = subtitles.first.attributes[ 'TimeIn' ].value
-                  first_nodeset = subtitles.first.xpath( '*/Text|Text|*/Image|Image' )
-                  first_time_in_text = truncate( first_nodeset.first.text.gsub( /^\s+|\s+$/, '' ), 3 ) # first line
+                  nodeset = subtitles.first.xpath( '*/Text|Text|*/Image|Image' )
+                  if nodeset.empty?
+                    first_time_in_text = '[No child element]'
+                    hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: First Subtitle element has neither Text nor Image"
+                  else
+                    first_time_in_text = truncate( nodeset.first.text.gsub( /^\s+|\s+$/, '' ), 3 ) # first line
+                  end
                   subtitles[ 1 .. -1 ].each do |sub|
                     if first_time_in < sub.attributes[ 'TimeIn' ].value
                       break
                     end
                     first_time_in = sub.attributes[ 'TimeIn' ].value
                   end
+                  #
+                  # Last
+                  #
                   last_time_out = subtitles.last.attributes[ 'TimeOut' ].value
-                  last_nodeset = subtitles.last.xpath( '*/Text|Text|*/Image|Image' )
-                  last_time_out_text = truncate( last_nodeset.last.text.gsub( /^\s+|\s+$/, '' ), 3 )
+                  nodeset = subtitles.last.xpath( '*/Text|Text|*/Image|Image' )
+                  if nodeset.empty?
+                    last_time_out_text = '[No child element]'
+                    hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last Subtitle element has neither Text nor Image"
+                  else
+                    last_time_out_text = truncate( nodeset.last.text.gsub( /^\s+|\s+$/, '' ), 3 )
+                  end
                   subtitles.reverse[ 1 .. -1 ].each do |sub|
                     if last_time_out > sub.attributes[ 'TimeOut' ].value
                       break
                     end
                     last_time_out = sub.attributes[ 'TimeOut' ].value
                     nodeset = sub.xpath( '*/Text|Text|*/Image|Image' )
-                    last_time_out_text = truncate( nodeset.last.text.gsub( /^\s+|\s+$/, '' ), 3 ) # last line
+                    if nodeset.empty?
+                      last_time_out_text = '[No child element]'
+                      hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last to-be-displayed Subtitle element has neither Text nor Image"
+                    else
+                      last_time_out_text = truncate( nodeset.last.text.gsub( /^\s+|\s+$/, '' ), 3 ) # last line
+                    end
                   end
 
                   begin
@@ -3042,7 +3080,8 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                     end
                   end
 
-                  meta_report = "DCSubtitle, #{ first_time_in } '#{ first_time_in_text.nil? ? '[NIL]' : first_time_in_text }' - #{ last_time_out } '#{ last_time_out_text.nil? ? '[NIL]' : last_time_out_text }'#{ empty_subtitles > 0 ? ' Error: ' + empty_subtitles.to_s + ' empty Subtitle element' + ( empty_subtitles > 1 ? 's' : '' ) : '' }"
+                  # DCSubtitle meta report
+                  meta_report = "DCSubtitle, #{ amount( 'subtitle', subtitles.to_a ) }, #{ first_time_in } '#{ first_time_in_text.nil? ? '[NIL]' : first_time_in_text }' - #{ last_time_out } '#{ last_time_out_text.nil? ? '[NIL]' : last_time_out_text }'#{ empty_subtitles > 0 ? ' Error: ' + empty_subtitles.to_s + ' empty Subtitle element' + ( empty_subtitles > 1 ? 's' : '' ) : '' }"
 
                 else
                   meta_report = 'DCSubtitle, no Subtitle found'
