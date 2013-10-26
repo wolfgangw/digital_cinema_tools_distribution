@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2013.10.03'
+setup_version='v1.2013.10.10'
 #
 # Usage:
 #
-#   * Ubuntu / Debian / openSUSE: Run
+#   * Ubuntu / Debian / Mint / Raspbian / openSuSE: Run
 #       wget http://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
 #     in a terminal
 #
@@ -168,14 +168,19 @@ fi
 #
 # Which OS distribution are we on?
 #
-# Who'da thunk it that finding this would be so messy:
-# Fedora has lsb_release and *-release files pre-installed,
-# Ubuntu doesn't have lsb_release initially but has the *-release file
-# openSuSE has os-release and SuSE-release and lsb_release
-# and Debian 6.0.4 has lsb_release but no *-release file
-# Mint 15 has lsb_release and lsb-release
+# Who'da thunk it that figuring out OS would be so messy:
 #
-if [ -f /etc/fedora-release ]
+#   - Fedora has lsb_release and *-release files pre-installed,
+#   - Ubuntu doesn't have lsb_release initially, has os-release and lsb-release
+#   - openSuSE has os-release, SuSE-release and lsb_release
+#   - Debian 6.0.4 has lsb_release but no *-release files
+#   - Mint 15 has lsb_release and lsb-release
+#   - Raspbian (Debian 7) has os-release and no lsb*
+#
+if [ -f /etc/os-release ] && grep -P 'Debian' /etc/os-release &> /dev/null
+then
+  os_dist=debian
+elif [ -f /etc/fedora-release ]
 then
   os_dist=redhat
 elif [ -f /etc/redhat-release ]
