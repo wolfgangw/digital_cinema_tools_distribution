@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.09.29'
+AppVersion = 'v1.2013.10.26'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -432,6 +432,16 @@ module MStr
 
   Cpl_standard_content = [ 'feature', 'trailer', 'test', 'teaser', 'rating', 'advertisement', 'short', 'transitional', 'psa', 'policy' ]
   Cpl_standard_content_moniker_map = { :ftr => :feature, :tlr => :trailer, :tst => :test, :tsr => :teaser, :rtg => :rating, :pol => :policy, :adv => :advertisement, :shr => :short, :xsn => :transitional, :psa => :psa, :pol => :policy  }
+
+  #
+  # RFC-4122:
+  # The hexadecimal values "a" through "f" are output as
+  # lower case characters and are case insensitive on input.
+  #
+  Uuid_re = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+  Uuid_particle_re = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ # used for filename component
+  Uuid_rfc4122_re = /^[0-9a-f]{8}-[0-9a-f]{4}-([1-5])[0-9a-f]{3}-[8-9a-b][0-9a-f]{3}-[0-9a-f]{12}$/
+
 end # module MStr
 
 
@@ -2409,7 +2419,15 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     end
   end
 
-  report << "CPL Id:           #{ cpl_id }"
+  # CPL:Id RFC-4122 compliant?
+  if cpl_id !~ MStr::Uuid_rfc4122_re
+    report << "CPL Id:           #{ cpl_id } [Not RFC-4122 compliant]"
+    errors << "CPL #{ cpl_id }: Value of CompositionPlaylist:Id is not RFC-422 compliant"
+    cpl_errors = TRUE
+  else
+    report << "CPL Id:           #{ cpl_id }"
+  end
+
   report << "CPL file:         #{ cpl_file }"
   report << "CPL type:         #{ cpl_type } (#{ cpl_ns })"
 
@@ -2516,7 +2534,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
 
   #
   # Metadata // CMA
-  # For now this is merely a printout. We don't check against actual asset metadata
+  # FIXME: For now this is merely a printout. We don't check against actual asset metadata
   #
   if ns.keys.include? MStr::Composition_metadata_href
     cma = xml.xpath( '//meta:CompositionMetadataAsset/meta:*', 'meta' => MStr::Composition_metadata_href )
@@ -2622,6 +2640,12 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
             meta = MxfTools.mxf_inspect( asset_file )
             # MXF?
             if meta
+
+              # Check asset Id for RFC-4122 compliance. All assets except DCSubtitle require this
+              if asset_id !~ MStr::Uuid_rfc4122_re
+                errors << "#{ cpl_reel }: Listed asset Id #{ asset_id } is not RFC-4122 compliant"
+                cpl_errors = TRUE
+              end
 
               # Get asset edit rate early
               begin
@@ -2837,25 +2861,63 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   # Last subtitle is not necessarily the last displayed
                   # Scrounge content snippets along the way
                   #
+                  #
+                  # See CRAWL which sports empty Subtitle elements
+                  #
+                  # TI spec 2.9 Subtitle says
+                  #
+                  #   "The Subtitle element is a parent element. It includes [...] one or more child elements [...]"
+                  #
+                  # The XSD we're using right now (DCSubtitle.v1.mattsson.xsd), though, has
+                  #
+                  #     <xs:choice minOccurs="0" maxOccurs="unbounded">
+                  #       <xs:element minOccurs="0" maxOccurs="unbounded" ref="Font"/>
+                  #       <xs:element minOccurs="0" maxOccurs="unbounded" ref="Text"/>
+                  #       <xs:element ref="Image"/>
+                  #     </xs:choice>
+                  #
+                  # Correctness tbd
+                  #
+                  #
+                  # First
+                  #
                   first_time_in = subtitles.first.attributes[ 'TimeIn' ].value
-                  first_nodeset = subtitles.first.xpath( '*/Text|Text|*/Image|Image' )
-                  first_time_in_text = truncate( first_nodeset.first.text.gsub( /^\s+|\s+$/, '' ), 3 ) # first line
+                  nodeset = subtitles.first.xpath( '*/Text|Text|*/Image|Image' )
+                  if nodeset.empty?
+                    first_time_in_text = '[No child element]'
+                    hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: First Subtitle element has neither Text nor Image"
+                  else
+                    first_time_in_text = truncate( nodeset.first.text.gsub( /^\s+|\s+$/, '' ), 3 ) # first line
+                  end
                   subtitles[ 1 .. -1 ].each do |sub|
                     if first_time_in < sub.attributes[ 'TimeIn' ].value
                       break
                     end
                     first_time_in = sub.attributes[ 'TimeIn' ].value
                   end
+                  #
+                  # Last
+                  #
                   last_time_out = subtitles.last.attributes[ 'TimeOut' ].value
-                  last_nodeset = subtitles.last.xpath( '*/Text|Text|*/Image|Image' )
-                  last_time_out_text = truncate( last_nodeset.last.text.gsub( /^\s+|\s+$/, '' ), 3 )
+                  nodeset = subtitles.last.xpath( '*/Text|Text|*/Image|Image' )
+                  if nodeset.empty?
+                    last_time_out_text = '[No child element]'
+                    hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last Subtitle element has neither Text nor Image"
+                  else
+                    last_time_out_text = truncate( nodeset.last.text.gsub( /^\s+|\s+$/, '' ), 3 )
+                  end
                   subtitles.reverse[ 1 .. -1 ].each do |sub|
                     if last_time_out > sub.attributes[ 'TimeOut' ].value
                       break
                     end
                     last_time_out = sub.attributes[ 'TimeOut' ].value
                     nodeset = sub.xpath( '*/Text|Text|*/Image|Image' )
-                    last_time_out_text = truncate( nodeset.last.text.gsub( /^\s+|\s+$/, '' ), 3 ) # last line
+                    if nodeset.empty?
+                      last_time_out_text = '[No child element]'
+                      hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last to-be-displayed Subtitle element has neither Text nor Image"
+                    else
+                      last_time_out_text = truncate( nodeset.last.text.gsub( /^\s+|\s+$/, '' ), 3 ) # last line
+                    end
                   end
 
                   begin
@@ -3042,7 +3104,8 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                     end
                   end
 
-                  meta_report = "DCSubtitle, #{ first_time_in } '#{ first_time_in_text.nil? ? '[NIL]' : first_time_in_text }' - #{ last_time_out } '#{ last_time_out_text.nil? ? '[NIL]' : last_time_out_text }'#{ empty_subtitles > 0 ? ' Error: ' + empty_subtitles.to_s + ' empty Subtitle element' + ( empty_subtitles > 1 ? 's' : '' ) : '' }"
+                  # DCSubtitle meta report
+                  meta_report = "DCSubtitle, #{ amount( 'subtitle', subtitles.to_a ) }, #{ first_time_in } '#{ first_time_in_text.nil? ? '[NIL]' : first_time_in_text }' - #{ last_time_out } '#{ last_time_out_text.nil? ? '[NIL]' : last_time_out_text }'#{ empty_subtitles > 0 ? ' Error: ' + empty_subtitles.to_s + ' empty Subtitle element' + ( empty_subtitles > 1 ? 's' : '' ) : '' }"
 
                 else
                   meta_report = 'DCSubtitle, no Subtitle found'
@@ -3437,13 +3500,6 @@ def dcp_inspect( options, arg )
   hints = Array.new
   hints << 'Schema checks were skipped' unless options.validate
   info = Array.new
-  #
-  # RFC-4122:
-  # The hexadecimal values "a" through "f" are output as
-  # lower case characters and are case insensitive on input.
-  #
-  uuid_re = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ # used for filename component
-  uuid_rfc4122_re = /^[0-9a-f]{8}-[0-9a-f]{4}-([1-5])[0-9a-f]{3}-[8-9a-b][0-9a-f]{3}-[0-9a-f]{12}$/
 
   # collect all files
   @package_dir = arg
@@ -3531,6 +3587,7 @@ def dcp_inspect( options, arg )
     pkls_missing << Array.new
     am_base = File.dirname am_file
     xml = xml?( package am_file )
+    am_ns = xml.namespaces[ 'xmlns' ]
     # FIXME
     xml.remove_namespaces!
     am_id = get_asset_uuid( package am_file )
@@ -3553,13 +3610,18 @@ def dcp_inspect( options, arg )
 
       listed_id = asset.xpath( 'Id' ).text.split( ':' ).last
       # FIXME ChunkList.size == 1 is an assumption and wrong at that. Could be > 1
-      path = asset.xpath( 'ChunkList/Chunk/Path' ).text.split( /file:\/+/ ).last
       # using AM listed path for listing message, not package path, because this is what we're looking at right now:
-      if listed_id !~ uuid_rfc4122_re
-        errors << "AM #{ am_id }: Listed in Assetmap: Not an RFC-4122 UUID: #{ listed_id }: #{ path }"
+      path = asset.xpath( 'ChunkList/Chunk/Path' ).text.split( /file:\/+/ ).last
+
+      # Check for UUID specs. Defer RFC-4122 compliance check to a later stage where we know asset kind
+      # DCSubtitle does not require RFC-4122 UUID
+      if listed_id.downcase !~ MStr::Uuid_re
+        errors << "AM #{ am_id }: Listed in Assetmap: Not a UUID: #{ path }: #{ listed_id }"
         am_errors = TRUE
       end
-      if path.nil? # example: mc t28 ASSETMAP.xml
+
+      # Path element present? See e.g. mc t28 ASSETMAP.xml
+      if path.nil?
         errors << "AM #{ am_id }: No path for asset: #{ listed_id }"
         am_errors = TRUE
       else
@@ -3573,8 +3635,8 @@ def dcp_inspect( options, arg )
         if File.exists?( asset_file )
           asset_id = get_asset_uuid( asset_file )
           if asset_id
-            unless asset_id =~ uuid_rfc4122_re
-              errors << "AM #{ am_id }: Asset UUID: Not an RFC-4122 UUID: #{ asset_file }: #{ asset_id }"
+            unless asset_id.downcase =~ MStr::Uuid_re
+              errors << "AM #{ am_id }: Asset UUID: Not a UUID: #{ asset_file }: #{ asset_id }"
               am_errors = TRUE
             end
             if listed_id.downcase != asset_id.downcase
@@ -3620,14 +3682,25 @@ def dcp_inspect( options, arg )
 
       # PackingList?
       unless asset.xpath( 'PackingList' ).empty?
-        pkls[ index ] << listed_id
+        case am_ns
+        when MStr::Interop_am
+          pkls[ index ] << listed_id
+        when MStr::Smpte_am
+          if asset.xpath( 'PackingList' ).text == 'true'
+            pkls[ index ] << listed_id
+          else
+            errors << "AM #{ am_id }: SMPTE AM requires a PackingList element to contain the value 'true' (value is missing). Continuing anyway"
+            am_errors = TRUE
+            pkls[ index ] << listed_id
+          end
+        end
       end
 
       # Check if possible uuid component in the asset filename matches the actual asset uuid
       if dict[ index ][ listed_id ]
         file_basename = File.basename( dict[ index ][ listed_id ] )
-        if file_basename =~ uuid_re
-          unless file_basename.match( uuid_re )[ 0 ] == listed_id
+        if file_basename =~ MStr::Uuid_particle_re
+          unless file_basename.match( MStr::Uuid_particle_re )[ 0 ] == listed_id
             hints << "Asset UUID and filename UUID component mismatch: #{ listed_id } -> #{ file_basename }"
           end
         end
@@ -3770,7 +3843,7 @@ def dcp_inspect( options, arg )
             pkl_errors = TRUE
           end
           # List all assets listed in PKL and report AM mapping status
-          @logger.debug( "#{ id }: #{ type.empty? ? '<Type not specified in PKL>' : type }: #{ dict[ index ][ id ] ? File.exists?( package dict[ index ][ id ] ) ? dict[ index ][ id ] : dict[ index ][ id ] + ' (missing)' : 'Asset UUID not in assetmap dictionary' }" )
+          @logger.debug( "#{ id }: #{ type.empty? ? '[Type not specified in PKL]' : type }: #{ dict[ index ][ id ] ? File.exists?( package dict[ index ][ id ] ) ? dict[ index ][ id ] : dict[ index ][ id ] + ' (missing)' : 'Asset UUID not in assetmap dictionary' }" )
 
           if dict[ index ].keys.include?( id )
             asset_file = package dict[ index ][ id ]
