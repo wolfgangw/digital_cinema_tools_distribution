@@ -3591,7 +3591,7 @@ def dcp_inspect( options, arg )
     pkls_missing << Array.new
     am_base = File.dirname am_file
     xml = xml?( package am_file )
-    am_ns = xml.namespaces[ 'xmlns' ]
+    am_ns = xml.namespaces[ 'xmlns' ] || xml.namespaces[ 'xmlns:am' ]
     # FIXME
     xml.remove_namespaces!
     am_id = get_asset_uuid( package am_file )
