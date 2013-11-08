@@ -250,7 +250,7 @@ class DLogger
   attr_reader :is_quiet, :prints_errors, :prints_hints, :prints_info, :prints_debug, :prints_cr, :prints_cpl, :writes_logfile, :logfile, :writes_autolog
   def initialize( prefix, options )
     @prefix = prefix
-    @full_log = ( options.logfile || options.logfile_autolog ? Array.new : NIL )
+    @full_log = ( options.logfile || options.logfile_autolog || options.logfile_append ? Array.new : NIL )
 
     case options.verbosity
     when 'quiet'  then @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, FALSE, FALSE, FALSE, FALSE, FALSE ]
