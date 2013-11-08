@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.10.29'
+AppVersion = 'v1.2013.11.08'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -185,6 +185,7 @@ class Options
     options.as_asset_store = FALSE
     options.verbosity = 'debug'
     options.logfile = NIL
+    options.logfile_append = NIL
     options.logfile_autolog = FALSE
     options.overwrite_logfile = FALSE
     options.verbosity_choices = [ 'quiet', 'errors', 'hints', 'info', 'cpl', 'debug', 'trace_func' ]
@@ -209,6 +210,9 @@ BANNER
       end
       opts.on( '-l', '--logfile path', String, 'Write full report to logfile at path' ) do |p|
         options.logfile = p
+      end
+      opts.on( '--logfile-append path', String, 'Append full report to logfile at path' ) do |p|
+        options.logfile_append = p
       end
       opts.on( '--autolog', "Write full report to $DCP_INSPECT_DIR. (Default: Don't)" ) do
         options.logfile_autolog = TRUE
@@ -2463,7 +2467,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     if MStr::Cpl_standard_content.include? content_kind
       report << "ContentKind:      #{ content_kind }"
     else
-      hints << "CPL #{ cpl_id }: ContentKind has non-standard value #{ content_kind.inspect }"
+      hints << "CPL #{ cpl_id }: ContentKind has non-standard value #{ content_kind.inspect }. May result in display problems with player UIs"
       report << "ContentKind:      #{ content_kind } [Non-standard value]"
     end
   end
@@ -4129,6 +4133,12 @@ if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( a
       exit LOGFILE_WRITE_ERROR
     end
   end
+  if options.logfile_append
+    if ! confirm_or_create( File.dirname options.logfile_append )
+      puts " Cannot append to requested logfile at #{ options.logfile_append }. Please specify another location"
+      exit LOGFILE_WRITE_ERROR
+    end
+  end
 
   # Inspection
   inspection = dcp_inspect( options, args[ 0 ] )
@@ -4151,6 +4161,15 @@ if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( a
     begin
       File.write( options.logfile, @logger.full_log_blob )
       @logger.info "See logfile at #{ options.logfile }"
+    rescue Exception => e
+      @logger.info e.message
+      exit LOGFILE_WRITE_ERROR
+    end
+  end
+  if options.logfile_append
+    begin
+      File.open( options.logfile_append, 'a' ) { |logfile| logfile.write @logger.full_log_blob }
+      @logger.info "See additions to logfile at #{ options.logfile_append }"
     rescue Exception => e
       @logger.info e.message
       exit LOGFILE_WRITE_ERROR
