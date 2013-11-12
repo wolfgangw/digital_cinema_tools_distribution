@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.11.09'
+AppVersion = 'v1.2013.11.12'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -144,6 +144,7 @@ REQUIRED_COMMAND_NOT_FOUND = 12
 ENV_DCP_INSPECT_DIR_NOT_SET = 13
 DCP_INSPECT_DIR_NOT_WRITABLE = 14
 AUTOLOGFILE_WRITE_ERROR = 15
+MKFIFO_FAIL = 16
 
 # Required gems
 if RUBY_VERSION <= '1.9'
@@ -162,7 +163,8 @@ end
   'openssl',
   'base64',
   'stringio',
-  'fileutils'
+  'fileutils',
+  'open3'
 ].each do |gem|
   begin
     require gem
@@ -181,6 +183,8 @@ class Options
     options = OpenStruct.new
     options.check_hashes = TRUE
     options.check_hashes_limit = :no_limit
+    options.image_analysis = FALSE # not yet implemented
+    options.audio_analysis = TRUE
     options.validate = TRUE
     options.as_asset_store = FALSE
     options.verbosity = 'debug'
@@ -196,11 +200,17 @@ class Options
 Usage: #{ AppName } [options] <location>
 
 BANNER
-      opts.on( '--nh', '--no-hash', 'Skip asset hash checks' ) do
+      opts.on( '--nh', '--no-hash', 'No asset hash checks' ) do
         options.check_hashes = FALSE
       end
       opts.on( '--hl', '--hash-limit limit', String, 'Limit asset hash checks to assets smaller than limit. E.g. 700KB, 50MB or 1GB (Default: No limit)' ) do |p|
         options.check_hashes_limit = p.downcase
+      end
+      opts.on( '--no-ia', '--no-image-analysis', 'No image analysis (Image analysis not yet implemented)' ) do
+        options.image_analysis = FALSE
+      end
+      opts.on( '--no-aa', '--no-audio-analysis', 'No audio analysis' ) do
+        options.audio_analysis = FALSE
       end
       opts.on( '--no-schema', 'Skip schema checks' ) do
         options.validate = FALSE
@@ -211,7 +221,7 @@ BANNER
       opts.on( '-l', '--logfile path', String, 'Write full report to logfile at path' ) do |p|
         options.logfile = p
       end
-      opts.on( '--logfile-append path', String, 'Append full report to logfile at path' ) do |p|
+      opts.on( '--la', '--logfile-append path', String, 'Append full report to logfile at path' ) do |p|
         options.logfile_append = p
       end
       opts.on( '--autolog', "Write full report to $DCP_INSPECT_DIR. (Default: Don't)" ) do
@@ -343,8 +353,87 @@ class Nokogiri::XML::Document
 end
 
 
+class Ramdisk
+  attr_reader :device
+  def initialize( diskname, size )
+    @diskname = diskname
+    @size = size
+    @device = NIL
+    result = make_ramdisk
+  end
+
+  def eject
+    case RUBY_PLATFORM
+    when /darwin/
+      out, err, status = Open3.capture3( "hdiutil eject #{ self.path }" )
+    else
+      out, err, status = Open3.capture3( "rm -rf #{ self.path }" ) 
+    end
+  end
+
+  def path
+    case RUBY_PLATFORM
+    when /darwin/
+      "/Volumes/#{ @diskname }"
+    else
+      "/dev/shm/#{ @diskname }"
+    end
+  end
+
+  private
+
+  def make_ramdisk
+    case RUBY_PLATFORM
+    when /darwin/
+      out, err, status = Open3.capture3( "hdiutil attach -nomount ram://#{ @size }" )
+      @device = out.chomp
+      out, err, status = Open3.capture3( "diskutil erasevolume HFS+ '#{ @diskname }' #{ @device }" )
+      TRUE
+    when /linux/
+      out, err, status = Open3.capture3( "mkdir #{ self.path }" )
+      @device = self.path
+      TRUE # we just write to /dev/shm
+    else
+      FALSE
+    end
+  end
+end
+
+
+def parse_sox_stats( stats_str )
+  [ 'DC offset', 'Min level', 'Max level', 'Pk lev dB', 'RMS lev dB', 'RMS Pk dB', 'RMS Tr dB', 'Crest factor', 'Flat factor', 'Pk count', 'Bit-depth', 'Num samples', 'Length s', 'Scale max', 'Window s' ].inject( {} ) do |hash, item|
+    values = stats_str.match( /^#{ item }.+$/ )[ 0 ].split( /\s+/ ).reject { |e| item =~ /#{ e }/ }
+    key = item.downcase.gsub( /\W/, '_' ).to_sym
+    hash[ key ] = { :overall => values[ 0 ], :channels => values[ 1 .. -1 ] }
+    hash
+  end
+end
+
+
+def audio_characteristics( asset_file, entry_point, duration, key = NIL )
+  pid = Process.spawn( "asdcp-unwrap -f #{ entry_point } -d #{ duration } #{ key ? "-k #{ key }" : '' } #{ Shellwords.escape asset_file } #{ @fifo } 2>/dev/null" )
+  Process.detach pid
+  system( 'sleep 0.2' )
+  # asdcp-unwrap behaviour change after 1.9.45
+  if File.exists?( @fifo + '_1.wav' )
+    asdcplib_outfile = @fifo + '_1.wav'
+  elsif File.exists? @fifo
+    asdcplib_outfile = @fifo
+  else # bummer
+    return {}
+  end
+  out, err, status = Open3.capture3( "sox #{ asdcplib_outfile } -n stats" )
+  parse_sox_stats( err )
+end
+
+
 # lib/mxf.rb
 module MxfTools
+  def asdcplib_version
+    out, err, status = Open3.capture3( 'asdcp-unwrap -V' )
+    major, minor, patchlevel = out.scan( /(\d)\.(\d+)\.(\d+)/ )[0].map { |e| e.to_i }
+  end
+
   def mxf_inspect( filename )
     list = Shell.asdcp_mxf_info( filename )
     if list =~ /EditRate and SampleRate do not match/ and list =~ /File may contain JPEG Interop stereoscopic images/
@@ -2584,6 +2673,7 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
   composition_aspect_ratios = Array.new
   composition_resolutions = Array.new
   composition_channel_counts = Array.new
+  audio_stats_for_reel = Hash.new
   supplemental_refs = { :main_picture => 0, :main_sound => 0, :main_subtitle => 0, :main_caption => 0 }
 
   reels.each_with_index do |reel, index|
@@ -2607,6 +2697,11 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
 
     # Check a whole bunch of other things
     assets.each do |asset|
+
+      #
+      # CompositionMetadataAsset is already handled
+      # Defer handling of MainMarkers to later on when we know reel duration
+      #
       next if asset.node_name == 'CompositionMetadataAsset'
 
       # Collect reel referenced EssenceTypes (mainly to check for SMPTE reel completeness)
@@ -2648,7 +2743,13 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
       else
         edit_rate = nil
       end
-      durations << duration
+
+      case asset.node_name
+      when 'MainMarkers'
+        # MainMarkers does not have Duration
+      else
+        durations << duration
+      end
       edit_rates << edit_rate
 
       if dict
@@ -2717,18 +2818,22 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                 cpl_errors = TRUE
               end
 
-              # IntrinsicDuration/EntryPoint/Duration sane?
+              # IntrinsicDuration / EntryPoint / Duration sane?
+              sane_IntrinsicDuration_EntryPoint_Duration = TRUE
               if intrinsic_duration - entry_point < duration
                 errors << "#{ cpl_reel }: Duration #{ duration } in #{ asset.node_name } does not compute: IntrinsicDuration #{ intrinsic_duration } - EntryPoint #{ entry_point } < Duration #{ duration }"
+                sane_IntrinsicDuration_EntryPoint_Duration = FALSE
                 cpl_errors = TRUE
               end
               if entry_point >= intrinsic_duration
                 exceed_frames = entry_point + 1 - intrinsic_duration
-                errors << "#{ cpl_reel }: EntryPoint #{ entry_point } in #{ asset.node_name } exceeds IntrinsicDuration #{ intrinsic_duration } by #{ exceed_frames } frame#{ exceed_frames != 1 ? 's' : '' }"
+                errors << "#{ cpl_reel }: EntryPoint #{ entry_point } in #{ asset.node_name } exceeds IntrinsicDuration #{ intrinsic_duration } by #{ amount( 'frame', exceed_frames ) }"
+                sane_IntrinsicDuration_EntryPoint_Duration = FALSE
                 cpl_errors = TRUE
               end
               if intrinsic_duration != meta[ 'ContainerDuration' ].to_i
                 errors << "#{ cpl_reel }: IntrinsicDuration #{ intrinsic_duration } in #{ asset.node_name } does not match ContainerDuration #{ meta[ 'ContainerDuration' ].nil? ? '[NaN]' : meta[ 'ContainerDuration' ] } of asset #{ asset_id }"
+                sane_IntrinsicDuration_EntryPoint_Duration = FALSE
                 cpl_errors = TRUE
               end
 
@@ -2825,17 +2930,57 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                   errors << "#{ cpl_reel }: MainSound EditRate #{ edit_rate } does not match asset EditRate #{ asset_edit_rate }"
                   cpl_errors = TRUE
                 end
-              end
+
+                # Audio characteristics (Levels, RMS, silent channels)
+                audio_stats_for_reel[ reel_no ] = Hash.new
+                dkdms = Hash.new
+                if options.audio_analysis
+                  if sane_IntrinsicDuration_EntryPoint_Duration
+                    audio_stats_for_reel[ reel_no ][ asset_id ] = NIL
+                    if meta[ 'EncryptedEssence' ] == 'Yes'
+                      if dkdms[ cpl_id ]
+                        if dkdms[ cpl_id ][ asset_key_id ]
+                          key = dkdms[ cpl_id ][ asset_key_id ]
+                        else
+                          hints << "#{ cpl_reel }: MainSound: Audio analysis requested but got no key for asset #{ asset_id }: Not yet implemented"
+                          key = NIL
+                        end
+                      else
+                        hints << "#{ cpl_reel }: MainSound: Audio analysis requested but got no DKDM for CPL #{ cpl_id }: Not yet implemented"
+                        key = NIL
+                      end
+                    else
+                      key = NIL
+                    end
+                    if @dcp_inspect_temp
+                      if key
+                        audio_stats_for_reel[ reel_no ][ asset_id ] = audio_characteristics( asset_file, entry_point, duration, key )
+                      elsif meta[ 'EncryptedEssence' ] == 'No'
+                        @logger.cr "#{ cpl_reel }: Audio analysis ..."
+                        audio_stats_for_reel[ reel_no ][ asset_id ] = audio_characteristics( asset_file, entry_point, duration, key )
+                        @logger.info "#{ cpl_reel }: Audio analysis: Done"
+                      end
+
+                    else
+                      hints << "#{ cpl_reel }: MainSound: Audio analysis requested but got no temp location to write to"
+                    end
+                  end
+                end
+
+
+              end # asset examination
 
               # This meta_report (and edit_rate) abomination below needs to go. Ugh
               meta_report = [
                 meta[ 'Label Set Type' ] || 'Label Set Type:' + MStr::AssetTypeUnknown,
                 meta[ 'ContainerDuration' ] ? meta[ 'EditRate' ] || meta[ 'SampleRate' ] ? Timecode.new( meta[ 'ContainerDuration' ].to_i, asset_edit_rate ).to_s : '[NaN]' : 'ContainerDuration:' + MStr::AssetTypeUnknown,
-                meta[ 'EncryptedEssence' ] ? meta[ 'EncryptedEssence' ] == 'Yes' ? 'encrypted' : 'unencrypted' : 'Encrypted:' + MStr::AssetTypeUnknown,
+                meta[ 'EncryptedEssence' ] ? meta[ 'EncryptedEssence' ] == 'Yes' ? 'encrypted' : 'plaintext' : 'Encrypted:' + MStr::AssetTypeUnknown,
                 asset.node_name =~ /Picture/ ? ( meta[ 'StoredWidth' ] || 'StoredWidth:' + MStr::AssetTypeUnknown ) + 'x' + ( meta[ 'StoredHeight' ] || 'StoredHeight:' + MStr::AssetTypeUnknown ) : '',
                 asset.node_name =~ /Sound/ ? ( amount( 'channel', meta[ 'ChannelCount' ].to_i ) || 'ChannelCount:' + MStr::AssetTypeUnknown ) : '',
                 asset.node_name =~ /Sound/ ? audio_sampling_rate == '48000/1' ? '48 kHz' : audio_sampling_rate == '96000/1' ? '96 kHz' : audio_sampling_rate : '',
                 asset.node_name =~ /Sound/ ? ( meta[ 'QuantizationBits' ] || 'QuantizationBits:' + MStr::AssetTypeUnknown ) + ' bps' : '',
+                audio_stats_for_reel[ reel_no ] ? audio_stats_for_reel[ reel_no ][ asset_id ] ? asset.node_name =~ /Sound/ ? "RMS #{ audio_stats_for_reel[ reel_no ][ asset_id ][ :rms_lev_db ][ :overall ] } dB"  : '' : '' : '',
+                audio_stats_for_reel[ reel_no ] ? audio_stats_for_reel[ reel_no ][ asset_id ] ? asset.node_name =~ /Sound/ ? "Peak #{ audio_stats_for_reel[ reel_no ][ asset_id ][ :pk_lev_db ][ :overall ] } dB"  : '' : '' : '',
                 meta[ 'EssenceType' ] || 'EssenceType:' + MStr::AssetTypeUnknown
               ].reject { |e| e.nil? or e.empty? }.join( ', ' )
 
@@ -3163,31 +3308,42 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
 
         else # ok case: Supplemental/VF/External
 
-          cpl_referenced_assets << { asset_id => FALSE }
-          cpl_referenced_assets_types << MStr::AssetTypeUnknown
-          meta_report = 'Referenced asset file not listed in Assetmap dictionary: Supplemental/VF/External'
-          hints << "#{ cpl_reel }: #{ asset.node_name }: #{ meta_report }"
           case asset.node_name
-          when 'MainPicture', 'MainStereoscopicPicture'
-            supplemental_refs[ :main_picture ] += 1
-          when 'MainSound'
-            supplemental_refs[ :main_sound ] += 1
-          when 'MainSubtitle'
-            supplemental_refs[ :main_subtitle ] += 1
-          when 'MainCaption'
-            supplemental_refs[ :main_caption ] += 1
-          end
+          when 'MainMarkers'
+            markers = asset.xpath( "#{ cpl_ns_prefix }:MarkerList/#{ cpl_ns_prefix }:Marker", asset_ns )
+            markers.each do |marker|
+              label = marker.xpath( "#{ cpl_ns_prefix }:Label" ).text
+            end
+            meta_report = "We have MainMarkers"
+          else
 
-          # Infer encryption from presence of KeyId
-          if key_id
-            cpl_referenced_assets_encrypted_inferred_from_key_id << asset_id
+            cpl_referenced_assets << { asset_id => FALSE }
+            cpl_referenced_assets_types << MStr::AssetTypeUnknown
+            meta_report = 'Referenced asset file not listed in Assetmap dictionary: Supplemental/VF/External'
+            hints << "#{ cpl_reel }: #{ asset.node_name }: #{ meta_report }"
+            case asset.node_name
+            when 'MainPicture', 'MainStereoscopicPicture'
+              supplemental_refs[ :main_picture ] += 1
+            when 'MainSound'
+              supplemental_refs[ :main_sound ] += 1
+            when 'MainSubtitle'
+              supplemental_refs[ :main_subtitle ] += 1
+            when 'MainCaption'
+              supplemental_refs[ :main_caption ] += 1
+            end
+
+            # Infer encryption from presence of KeyId
+            if key_id
+              cpl_referenced_assets_encrypted_inferred_from_key_id << asset_id
+            end
+
           end
 
         end # if dict[ asset_id ]
       end # if dict
 
       begin
-        reels_report << "#{ "%6s" % duration }  #{ edit_rate.nil? ? 'EditRate funk' : Timecode.new( duration, edit_rate ) } @ #{ edit_rate }  #{ asset_id }  #{ asset.node_name }\t(#{ meta_report })"
+        reels_report << "#{ "%6s" % duration }  #{ edit_rate.nil? ? 'EditRate funk' : Timecode.new( duration, edit_rate ) } @ #{ edit_rate }  #{ asset_id.split( '-' ).first }  #{ asset.node_name }\t(#{ meta_report })"
       rescue Exception => e
         errors << "#{ cpl_reel }: Duration #{ duration }: EditRate #{ edit_rate }: #{ e.message }"
         cpl_errors = TRUE
@@ -3261,6 +3417,39 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
     cpl_errors = TRUE
   end
 
+  # Cosmetics: Interleave reels_report
+  reels_report.each do |rp|
+    report << rp
+  end
+
+  # Composition requires KDM?
+  if cpl_referenced_assets_encrypted.size > 0
+    report << 'Composition crypto: Requires KDM for playback'
+    composition_requires_kdm = TRUE
+    @encrypted_compositions += 1
+  elsif cpl_referenced_assets_encrypted_inferred_from_key_id.size > 0
+    report << 'Composition crypto: Requires KDM for playback'
+    composition_requires_kdm = TRUE
+    @encrypted_compositions += 1
+  else
+    report << 'Composition crypto: Plaintext (no KDM required)'
+    composition_requires_kdm = FALSE
+  end
+
+  # Monoscopic/Stereoscopic composition?
+  if is_stereoscopic.uniq.size == 1 and is_stereoscopic.uniq.first == TRUE
+    report << 'Composition kind: 3D/Stereoscopic'
+    is_stereoscopic = TRUE
+  elsif is_stereoscopic.uniq.size == 1 and is_stereoscopic.uniq.first == FALSE
+    report << 'Composition kind: 2D/Monoscopic'
+    is_stereoscopic = FALSE
+  elsif is_stereoscopic.uniq.size == 2
+    report << 'Composition references monoscopic and stereoscopic elements'
+    is_stereoscopic = TRUE
+    errors << "CPL #{ cpl_id }: " + report.last
+    cpl_errors = TRUE
+  end
+
   # Composition type SMPTE/Interop/Undetermined?
   assets_status_list = cpl_referenced_assets.map { |e| e.values }.flatten
   if cpl_referenced_assets_types.uniq.size == 1 and assets_status_list.uniq.size == 1 and assets_status_list.uniq.first == TRUE
@@ -3298,39 +3487,6 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
       end
       cpl_reels_references_complete << FALSE
     end
-  end
-
-  # Cosmetics: Interleave reels_report
-  reels_report.each do |rp|
-    report << rp
-  end
-
-  # Composition requires KDM?
-  if cpl_referenced_assets_encrypted.size > 0
-    report << 'Composition requires KDM for playback'
-    composition_requires_kdm = TRUE
-    @encrypted_compositions += 1
-  elsif cpl_referenced_assets_encrypted_inferred_from_key_id.size > 0
-    report << 'Composition requires KDM for playback'
-    composition_requires_kdm = TRUE
-    @encrypted_compositions += 1
-  else
-    report << 'Composition is plaintext (no KDM required)'
-    composition_requires_kdm = FALSE
-  end
-
-  # Monoscopic/Stereoscopic composition?
-  if is_stereoscopic.uniq.size == 1 and is_stereoscopic.uniq.first == TRUE
-    report << 'Composition kind: 3D/Stereoscopic'
-    is_stereoscopic = TRUE
-  elsif is_stereoscopic.uniq.size == 1 and is_stereoscopic.uniq.first == FALSE
-    report << 'Composition kind: 2D/Monoscopic'
-    is_stereoscopic = FALSE
-  elsif is_stereoscopic.uniq.size == 2
-    report << 'Composition references monoscopic and stereoscopic elements'
-    is_stereoscopic = TRUE
-    errors << "CPL #{ cpl_id }: " + report.last
-    cpl_errors = TRUE
   end
 
   # Naming convention
@@ -4049,6 +4205,7 @@ def dcp_inspect( options, arg )
   info << "Hash checks skipped for assets bigger than #{ @check_hashes_limit_nice }" if @check_hashes_limit_nice
   info << "Hash checks skipped for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits } total" if @check_hashes_limit_nice
   info << 'Schema checks skipped' unless options.validate
+  info << 'Audio analysis skipped' unless options.audio_analysis
   info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls ) } (#{ pkls_signature_info }), #{ amount( 'Composition', cpls ) } (#{ cpls_signature_info }, #{ cpls_encryption_info }"
   info << "#{ amount( 'Error', errors ) }, #{ amount( 'Hint', hints ) }"
 
@@ -4070,7 +4227,9 @@ end
 
 # Check required tools
 required_command_not_found = FALSE
-[ 'asdcp-test', 'kmuuidgen' ].each do |command|
+required_commands = [ 'asdcp-test', 'asdcp-unwrap', 'kmuuidgen' ]
+required_commands << 'sox' if options.audio_analysis
+required_commands.flatten.each do |command|
   if ! command_exists? command
     @logger.info "Required command #{ command } not found. Please run digital-cinema-tools-setup or install the missing component manually"
     required_command_not_found = TRUE
@@ -4132,6 +4291,22 @@ ENV[ 'XML_CATALOG_FILES' ] = local_xml_catalog
 # main
 if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( args[ 0 ] ).realpath )
 
+  # Full audio/image examination?
+  if options.audio_analysis or options.image_analysis
+    @dcp_inspect_temp = Ramdisk.new( 'dcp_inspect_temp', 2048 )
+    @logger.info "Image/audio analysis: Setting up temp location at #{ @dcp_inspect_temp.path }"
+    @logger.info 'Image analysis not yet implemented' if options.image_analysis
+    @fifo = File.join( @dcp_inspect_temp.path, 'asdcp-temp' )
+    begin
+      out, err, status = Open3.popen3( "mkfifo #{ @fifo }" )
+    rescue Exception => e
+      @logger.info e.inspect
+      @logger.info "Removing #{ @dcp_inspect_temp.path } ..."
+      @dcp_inspect_temp.eject
+      exit MKFIFO_FAIL
+    end
+  end
+
   # autolog?
   if options.logfile_autolog
     if ENV[ 'DCP_INSPECT_DIR' ]
@@ -4167,6 +4342,13 @@ if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( a
   # Inspection
   inspection = dcp_inspect( options, args[ 0 ] )
   print_inspection_messages( inspection ) unless options.verbosity == 'quiet'
+
+  # Remove @dcp_inspect_temp
+  if options.audio_analysis or options.image_analysis
+    if @dcp_inspect_temp
+      @dcp_inspect_temp.eject
+    end
+  end
 
   # Write autolog
   if options.logfile_autolog
