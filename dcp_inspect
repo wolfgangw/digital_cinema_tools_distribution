@@ -353,6 +353,44 @@ class Nokogiri::XML::Document
 end
 
 
+# lib/mxf.rb
+module MxfTools
+  def asdcplib_version
+    out, err, status = Open3.capture3( 'asdcp-unwrap -V' )
+    major, minor, patchlevel = out.scan( /(\d)\.(\d+)\.(\d+)/ )[0].map { |e| e.to_i }
+  end
+
+  def mxf_inspect( filename )
+    list = Shell.asdcp_mxf_info( filename )
+    if list =~ /EditRate and SampleRate do not match/ and list =~ /File may contain JPEG Interop stereoscopic images/
+      list = Shell.asdcp_mxf_interop_stereoscopic_info( filename )
+    end
+    if list.empty? or list =~ /Program stopped on error/
+      return nil
+    end
+    list = list.split( /\n\s*/ ).collect { |line| line.split( ': ' ) }
+    et = [ 'EssenceType',
+           case list.first.to_s
+           when /#{ MStr::Stereoscopic_pictures }/
+             MStr::Stereoscopic_pictures
+           when /#{ MStr::Pictures }/
+             MStr::Pictures
+           when /#{ MStr::Mpeg2 }/
+             MStr::Mpeg2
+           when /#{ MStr::Audio }/
+             MStr::Audio
+           when /#{ MStr::Timed_text }/i
+             MStr::Timed_text
+           else
+             nil
+           end
+    ]
+    return Hash[ list << et ]
+  end
+end
+include MxfTools
+
+
 class Ramdisk
   attr_reader :device
   def initialize( diskname, size )
@@ -425,44 +463,6 @@ def audio_characteristics( asset_file, entry_point, duration, key = NIL )
   out, err, status = Open3.capture3( "sox #{ asdcplib_outfile } -n stats" )
   parse_sox_stats( err )
 end
-
-
-# lib/mxf.rb
-module MxfTools
-  def asdcplib_version
-    out, err, status = Open3.capture3( 'asdcp-unwrap -V' )
-    major, minor, patchlevel = out.scan( /(\d)\.(\d+)\.(\d+)/ )[0].map { |e| e.to_i }
-  end
-
-  def mxf_inspect( filename )
-    list = Shell.asdcp_mxf_info( filename )
-    if list =~ /EditRate and SampleRate do not match/ and list =~ /File may contain JPEG Interop stereoscopic images/
-      list = Shell.asdcp_mxf_interop_stereoscopic_info( filename )
-    end
-    if list.empty? or list =~ /Program stopped on error/
-      return nil
-    end
-    list = list.split( /\n\s*/ ).collect { |line| line.split( ': ' ) }
-    et = [ 'EssenceType', 
-           case list.first.to_s
-           when /#{ MStr::Stereoscopic_pictures }/
-             MStr::Stereoscopic_pictures
-           when /#{ MStr::Pictures }/
-             MStr::Pictures
-           when /#{ MStr::Mpeg2 }/
-             MStr::Mpeg2
-           when /#{ MStr::Audio }/
-             MStr::Audio
-           when /#{ MStr::Timed_text }/i
-             MStr::Timed_text
-           else
-             nil
-           end
-    ]
-    return Hash[ list << et ]
-  end
-end
-include MxfTools
 
 
 # lib/magic_strings.rb
