@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2013.10.10'
+setup_version='v1.2013.11.14'
 #
 # Usage:
 #
@@ -42,7 +42,7 @@ setup_version='v1.2013.10.10'
 # It tries hard not to break anything and to respect the existing environment.
 # You can run it multiple times, should anything go wrong during a setup run (network problems etc.)
 #
-# Wolfgang Woehl 2012
+# Wolfgang Woehl 2012-2013
 #
 #
 # Location of self
@@ -214,6 +214,34 @@ else
   exit 1
 fi
 
+
+# Bail out if we don't have sudo
+if command_exists sudo
+then
+  case $os_dist in
+    debian)
+      if echo `groups` | grep sudo &>/dev/null
+      then
+        echo "$os_dist: sudo OK"
+      else
+        echo "$os_dist: sudo: Need to be member of the sudo group."
+        echo
+        echo 'Run the following 3 commands:'
+        echo
+        echo "su -                  # will prompt for your root password"
+        echo "adduser `whoami` sudo # Adds you to the sudo group"
+        echo 'exit                  # exits from root account'
+        echo
+        echo 'Then log out or reboot'
+        echo 'Then re-run digital-cinema-tools-setup'
+        echo
+        exit 1
+      fi
+  esac
+else
+  echo 'Required command "sudo" not found. Please install sudo'
+  exit 1
+fi
 
 # Depending on which OS we're on set the required packager and switches
 # to install a basic set of packages from distribution sources
