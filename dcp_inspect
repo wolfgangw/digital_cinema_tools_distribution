@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.11.12'
+AppVersion = 'v1.2013.11.15'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -439,28 +439,49 @@ end
 
 
 def parse_sox_stats( stats_str )
-  [ 'DC offset', 'Min level', 'Max level', 'Pk lev dB', 'RMS lev dB', 'RMS Pk dB', 'RMS Tr dB', 'Crest factor', 'Flat factor', 'Pk count', 'Bit-depth', 'Num samples', 'Length s', 'Scale max', 'Window s' ].inject( {} ) do |hash, item|
-    values = stats_str.match( /^#{ item }.+$/ )[ 0 ].split( /\s+/ ).reject { |e| item =~ /#{ e }/ }
-    key = item.downcase.gsub( /\W/, '_' ).to_sym
-    hash[ key ] = { :overall => values[ 0 ], :channels => values[ 1 .. -1 ] }
-    hash
+  begin
+    [ 'DC offset', 'Min level', 'Max level', 'Pk lev dB', 'RMS lev dB', 'RMS Pk dB', 'RMS Tr dB', 'Crest factor', 'Flat factor', 'Pk count', 'Bit-depth', 'Num samples', 'Length s', 'Scale max', 'Window s' ].inject( {} ) do |hash, item|
+      values = stats_str.match( /^#{ item }.+$/ )[ 0 ].split( /\s+/ ).reject { |e| item =~ /#{ e }/ }
+      key = item.downcase.gsub( /\W/, '_' ).to_sym
+      hash[ key ] = { :overall => values[ 0 ], :channels => values[ 1 .. -1 ] }
+      hash
+    end
+  rescue Exception => e
+    @logger.info e.message
+    return {}
   end
 end
 
 
-def audio_characteristics( asset_file, entry_point, duration, key = NIL )
-  pid = Process.spawn( "asdcp-unwrap -f #{ entry_point } -d #{ duration } #{ key ? "-k #{ key }" : '' } #{ Shellwords.escape asset_file } #{ @fifo } 2>/dev/null" )
-  Process.detach pid
-  system( 'sleep 0.2' )
-  # asdcp-unwrap behaviour change after 1.9.45
-  if File.exists?( @fifo + '_1.wav' )
-    asdcplib_outfile = @fifo + '_1.wav'
-  elsif File.exists? @fifo
-    asdcplib_outfile = @fifo
-  else # bummer
+def audio_characteristics( ramdisk, asset_file, entry_point, duration, key = NIL )
+  asdcp_prefix_token = File.join( ramdisk.path, 'asdcp-temp' )
+  major, minor, patchlevel = MxfTools.asdcplib_version
+  case major
+  when 1
+    if minor <= 9
+      fifo_name = asdcp_prefix_token + '_1.wav'
+    else
+      fifo_name = asdcp_prefix_token
+    end
+  else
+    puts
+    @logger.info "asdcplib major version #{ major } not supported"
     return {}
   end
-  out, err, status = Open3.capture3( "sox #{ asdcplib_outfile } -n stats" )
+
+  begin
+    out, err, status = Open3.popen3( "mkfifo #{ fifo_name }" )
+  rescue Exception => e
+    puts
+    @logger.info e.inspect
+    @logger.info "Removing #{ ramdisk.path } ..."
+    ramdisk.eject
+    exit MKFIFO_FAIL
+  end
+  pid = Process.spawn( "asdcp-unwrap -f #{ entry_point } -d #{ duration } #{ key ? "-k #{ key }" : '' } #{ Shellwords.escape asset_file } #{ asdcp_prefix_token } 2>/dev/null" )
+  Process.detach pid
+  system( 'sleep 0.2' )
+  out, err, status = Open3.capture3( "sox -t wavpcm #{ fifo_name } -n stats" )
   parse_sox_stats( err )
 end
 
@@ -2954,10 +2975,10 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                     end
                     if @dcp_inspect_temp
                       if key
-                        audio_stats_for_reel[ reel_no ][ asset_id ] = audio_characteristics( asset_file, entry_point, duration, key )
+                        audio_stats_for_reel[ reel_no ][ asset_id ] = audio_characteristics( @dcp_inspect_temp, asset_file, entry_point, duration, key )
                       elsif meta[ 'EncryptedEssence' ] == 'No'
                         @logger.cr "#{ cpl_reel }: Audio analysis ..."
-                        audio_stats_for_reel[ reel_no ][ asset_id ] = audio_characteristics( asset_file, entry_point, duration, key )
+                        audio_stats_for_reel[ reel_no ][ asset_id ] = audio_characteristics( @dcp_inspect_temp, asset_file, entry_point, duration, key )
                         @logger.info "#{ cpl_reel }: Audio analysis: Done"
                       end
 
@@ -4296,15 +4317,6 @@ if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( a
     @dcp_inspect_temp = Ramdisk.new( 'dcp_inspect_temp', 2048 )
     @logger.info "Image/audio analysis: Setting up temp location at #{ @dcp_inspect_temp.path }"
     @logger.info 'Image analysis not yet implemented' if options.image_analysis
-    @fifo = File.join( @dcp_inspect_temp.path, 'asdcp-temp' )
-    begin
-      out, err, status = Open3.popen3( "mkfifo #{ @fifo }" )
-    rescue Exception => e
-      @logger.info e.inspect
-      @logger.info "Removing #{ @dcp_inspect_temp.path } ..."
-      @dcp_inspect_temp.eject
-      exit MKFIFO_FAIL
-    end
   end
 
   # autolog?
