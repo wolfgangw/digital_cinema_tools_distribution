@@ -478,7 +478,7 @@ def audio_characteristics( ramdisk, asset_file, entry_point, duration, key = NIL
     ramdisk.eject
     exit MKFIFO_FAIL
   end
-  pid = Process.spawn( "asdcp-unwrap -f #{ entry_point } -d #{ duration } #{ key ? "-k #{ key }" : '' } #{ Shellwords.escape asset_file } #{ asdcp_prefix_token } 2>/dev/null" )
+  pid = Process.spawn( "asdcp-unwrap -f #{ entry_point } -d #{ duration } #{ key ? '-k ' + key : '' } #{ Shellwords.escape asset_file } #{ asdcp_prefix_token } 2>/dev/null" )
   Process.detach pid
   system( 'sleep 0.2' )
   out, err, status = Open3.capture3( "sox -t wavpcm #{ fifo_name } -n stats" )
