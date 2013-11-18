@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+# encoding: utf-8
 #
 # dcp_inspect checks and validates DCPs (Digital Cinema Packages)
 #
@@ -18,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2013.11.15'
+AppVersion = 'v1.2013.11.18'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -145,6 +146,7 @@ ENV_DCP_INSPECT_DIR_NOT_SET = 13
 DCP_INSPECT_DIR_NOT_WRITABLE = 14
 AUTOLOGFILE_WRITE_ERROR = 15
 MKFIFO_FAIL = 16
+RMFIFO_FAIL = 17
 
 # Required gems
 if RUBY_VERSION <= '1.9'
@@ -206,10 +208,10 @@ BANNER
       opts.on( '--hl', '--hash-limit limit', String, 'Limit asset hash checks to assets smaller than limit. E.g. 700KB, 50MB or 1GB (Default: No limit)' ) do |p|
         options.check_hashes_limit = p.downcase
       end
-      opts.on( '--no-ia', '--no-image-analysis', 'No image analysis (Image analysis not yet implemented)' ) do
+      opts.on( '--ni', '--no-image-analysis', 'No image analysis (Image analysis not yet implemented)' ) do
         options.image_analysis = FALSE
       end
-      opts.on( '--no-aa', '--no-audio-analysis', 'No audio analysis' ) do
+      opts.on( '--na', '--no-audio-analysis', 'No audio analysis' ) do
         options.audio_analysis = FALSE
       end
       opts.on( '--no-schema', 'Skip schema checks' ) do
@@ -438,6 +440,26 @@ class Ramdisk
 end
 
 
+def bars( list )
+  level = '█▇▆▅▄▃▂▁'
+  '|' + list.inject( '' ) do |string, value|
+    case value
+    when '-inf'
+      string += ' '
+    else
+      case value.to_f.abs
+      when 0.0
+        level_index = level[ 0 ]
+      else
+        level_index = [ 0, ( Math.log2 value.to_f.abs ).to_i.abs, level.size - 1 ].sort[ 1 ] # clamp between 0 and level.size - 1
+      end
+      string += level[ level_index ]
+    end
+    string
+  end + '|'
+end
+
+
 def parse_sox_stats( stats_str )
   begin
     [ 'DC offset', 'Min level', 'Max level', 'Pk lev dB', 'RMS lev dB', 'RMS Pk dB', 'RMS Tr dB', 'Crest factor', 'Flat factor', 'Pk count', 'Bit-depth', 'Num samples', 'Length s', 'Scale max', 'Window s' ].inject( {} ) do |hash, item|
@@ -453,6 +475,28 @@ def parse_sox_stats( stats_str )
 end
 
 
+def mkfifo( ramdisk, fifo_name )
+  begin
+    system( "mkfifo #{ fifo_name }" )
+  rescue Exception => e
+    @logger.info ''
+    @logger.info e.inspect
+    @logger.info "Removing #{ ramdisk.path } ..."
+    ramdisk.eject
+    exit MKFIFO_FAIL
+  end
+end
+def rmfifo( fifo_name )
+  begin
+    system( "rm #{ fifo_name }" )
+  rescue Exception => e
+    @logger.info ''
+    @logger.info e.inspect
+    exit RMFIFO_FAIL
+  end
+end
+
+
 def audio_characteristics( ramdisk, asset_file, entry_point, duration, key = NIL )
   asdcp_prefix_token = File.join( ramdisk.path, 'asdcp-temp' )
   major, minor, patchlevel = MxfTools.asdcplib_version
@@ -464,24 +508,20 @@ def audio_characteristics( ramdisk, asset_file, entry_point, duration, key = NIL
       fifo_name = asdcp_prefix_token
     end
   else
-    puts
-    @logger.info "asdcplib major version #{ major } not supported"
+    @logger.info ''
+    @logger.info "Audio analysis: asdcplib version #{ [ major, minor, patchlevel ].join( '.' ) } not supported"
     return {}
   end
 
-  begin
-    out, err, status = Open3.popen3( "mkfifo #{ fifo_name }" )
-  rescue Exception => e
-    puts
-    @logger.info e.inspect
-    @logger.info "Removing #{ ramdisk.path } ..."
-    ramdisk.eject
-    exit MKFIFO_FAIL
-  end
+  mkfifo( ramdisk, fifo_name )
+
   pid = Process.spawn( "asdcp-unwrap -f #{ entry_point } -d #{ duration } #{ key ? '-k ' + key : '' } #{ Shellwords.escape asset_file } #{ asdcp_prefix_token } 2>/dev/null" )
   Process.detach pid
-  system( 'sleep 0.2' )
+  system( 'sleep 0.1' )
   out, err, status = Open3.capture3( "sox -t wavpcm #{ fifo_name } -n stats" )
+
+  rmfifo( fifo_name )
+
   parse_sox_stats( err )
 end
 
@@ -2997,11 +3037,13 @@ def cpl_inspect_xml( xml, dict, package_dir, errors, hints, info, options )
                 meta[ 'ContainerDuration' ] ? meta[ 'EditRate' ] || meta[ 'SampleRate' ] ? Timecode.new( meta[ 'ContainerDuration' ].to_i, asset_edit_rate ).to_s : '[NaN]' : 'ContainerDuration:' + MStr::AssetTypeUnknown,
                 meta[ 'EncryptedEssence' ] ? meta[ 'EncryptedEssence' ] == 'Yes' ? 'encrypted' : 'plaintext' : 'Encrypted:' + MStr::AssetTypeUnknown,
                 asset.node_name =~ /Picture/ ? ( meta[ 'StoredWidth' ] || 'StoredWidth:' + MStr::AssetTypeUnknown ) + 'x' + ( meta[ 'StoredHeight' ] || 'StoredHeight:' + MStr::AssetTypeUnknown ) : '',
-                asset.node_name =~ /Sound/ ? ( amount( 'channel', meta[ 'ChannelCount' ].to_i ) || 'ChannelCount:' + MStr::AssetTypeUnknown ) : '',
-                asset.node_name =~ /Sound/ ? audio_sampling_rate == '48000/1' ? '48 kHz' : audio_sampling_rate == '96000/1' ? '96 kHz' : audio_sampling_rate : '',
-                asset.node_name =~ /Sound/ ? ( meta[ 'QuantizationBits' ] || 'QuantizationBits:' + MStr::AssetTypeUnknown ) + ' bps' : '',
-                audio_stats_for_reel[ reel_no ] ? audio_stats_for_reel[ reel_no ][ asset_id ] ? asset.node_name =~ /Sound/ ? "RMS #{ audio_stats_for_reel[ reel_no ][ asset_id ][ :rms_lev_db ][ :overall ] } dB"  : '' : '' : '',
-                audio_stats_for_reel[ reel_no ] ? audio_stats_for_reel[ reel_no ][ asset_id ] ? asset.node_name =~ /Sound/ ? "Peak #{ audio_stats_for_reel[ reel_no ][ asset_id ][ :pk_lev_db ][ :overall ] } dB"  : '' : '' : '',
+                asset.node_name =~ /Sound/ ?
+                  ( meta[ 'ChannelCount' ].to_s + 'ch' || 'ChannelCount:' + MStr::AssetTypeUnknown ) + ' ' +
+                  ( audio_sampling_rate == '48000/1' ? '48kHz' : audio_sampling_rate == '96000/1' ? '96kHz' : audio_sampling_rate ) + ' ' +
+                  ( ( meta[ 'QuantizationBits' ] || 'QuantizationBits:' + MStr::AssetTypeUnknown ) + 'bps' )
+                  : '',
+                asset.node_name =~ /Sound/ ? audio_stats_for_reel[ reel_no ] ? audio_stats_for_reel[ reel_no ][ asset_id ] ? "RMS #{ audio_stats_for_reel[ reel_no ][ asset_id ][ :rms_lev_db ][ :overall ] } dBFS" + ' ' + bars( audio_stats_for_reel[ reel_no ][ asset_id ][ :rms_lev_db ][ :channels ] ) : '' : '' : '',
+                asset.node_name =~ /Sound/ ? audio_stats_for_reel[ reel_no ] ? audio_stats_for_reel[ reel_no ][ asset_id ] ? "Peak #{ audio_stats_for_reel[ reel_no ][ asset_id ][ :pk_lev_db ][ :overall ] } dBFS" + ' ' + bars( audio_stats_for_reel[ reel_no ][ asset_id ][ :pk_lev_db ][ :channels ] ) : '' : '' : '',
                 meta[ 'EssenceType' ] || 'EssenceType:' + MStr::AssetTypeUnknown
               ].reject { |e| e.nil? or e.empty? }.join( ', ' )
 
@@ -3958,6 +4000,7 @@ def dcp_inspect( options, arg )
   end
   @logger.debug ''
 
+  # Process all PackingLists
   cpls = Array.new
   cpls_missing = Array.new
   packages_size_listed = 0
