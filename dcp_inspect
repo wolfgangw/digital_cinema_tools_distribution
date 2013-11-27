@@ -503,17 +503,6 @@ def rmfifo( fifo_name )
 end
 
 
-def image_characteristics( ramdisk, asset_file, entry_point, duration, key = NIL )
-  # crops << err.scan( /(x1:.+ x2:.+ y1:.+ y2:.+) w:/ ).flatten
-  crops = Array.new
-  (1 .. 334).step(100).each do |sec|
-    out, err, status = Open3.capture3( "ffmpeg -ss #{ sec } -i #{ asset_file } -vf cropdetect -vframes 1 -f null -" )
-    crops << err.scan( /crop=(.*)/ ).flatten
-    puts crops.last
-  end
-end
-
-
 def audio_characteristics( ramdisk, asset_file, entry_point, duration, key = NIL )
   asdcp_prefix_token = File.join( ramdisk.path, 'asdcp-temp' )
   major, minor, patchlevel = MxfTools.asdcplib_version
@@ -2514,7 +2503,7 @@ end
 
 
 # lib/cpl.rb
-def cpl_inspect_xml( xml, dict, audio_stats, image_stats, package_dir, errors, hints, info, options )
+def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, options )
   cpl_errors = FALSE
   report = Array.new
   reels_report = Array.new
@@ -2961,50 +2950,8 @@ def cpl_inspect_xml( xml, dict, audio_stats, image_stats, package_dir, errors, h
                 end
                 composition_resolutions << picture_dimensions_moniker
 
-                # Image characteristics (crop detection)
-                image_stats[ asset_id ] ||= Hash.new
-                dkdms = Hash.new
-                if options.image_analysis
-                  if sane_IntrinsicDuration_EntryPoint_Duration
-                    image_stats[ asset_id ][ asset_snippet ] ||= NIL
-
-                    if meta[ 'EncryptedEssence' ] == 'Yes'
-                      if dkdms[ cpl_id ]
-                        if dkdms[ cpl_id ][ asset_key_id ]
-                          key = dkdms[ cpl_id ][ asset_key_id ]
-                        else
-                          hints << "#{ cpl_reel }: #{ asset.node_name }: Image analysis requested but got no key for asset #{ asset_id }: Not yet implemented"
-                          key = NIL
-                        end
-                      else
-                        hints << "#{ cpl_reel }: #{ asset.node_name }: Image analysis requested but got no DKDM for CPL #{ cpl_id }: Not yet implemented"
-                        key = NIL
-                      end
-                    else
-                      key = NIL
-                    end
-
-                    if @dcp_inspect_temp
-                      if image_stats[ asset_id ][ asset_snippet ]
-                        @logger.info "#{ cpl_reel }: Image analysis: Seen #{ asset_id }:#{ entry_point }:#{ duration } before. Using previous result"
-                      else
-                        if key
-                          image_stats[ asset_id ][ asset_snippet ] = image_characteristics( @dcp_inspect_temp, asset_file, entry_point, duration, key )
-                        elsif meta[ 'EncryptedEssence' ] == 'No'
-                          @logger.cr "#{ cpl_reel }: Image analysis ..."
-                          image_stats[ asset_id ][ asset_snippet ] = image_characteristics( @dcp_inspect_temp, asset_file, entry_point, duration, key )
-                          @logger.info "#{ cpl_reel }: Image analysis: Done"
-                        end
-                      end
-                    else
-                      hints << "#{ cpl_reel }: #{ asset.node_name }: Image analysis requested but got no temp location to write to"
-                    end
-
-                  end
-                end
-
-
               end # Check picture
+
 
               # Check audio
               case asset.node_name
@@ -4305,7 +4252,6 @@ def dcp_inspect( options, arg )
   # Inspect CPLs
   # FIXME and all over again ...
   audio_stats = Hash.new
-  image_stats = Hash.new
   dict.each_with_index do |dictionary, index|
     cpls[ index ].each do |cpl_id|
       if dictionary.include?( cpl_id )
@@ -4314,7 +4260,7 @@ def dcp_inspect( options, arg )
           xml = xml?( cpl_file )
           if xml
 
-            report, errors, hints, info = cpl_inspect_xml( xml, dictionary, audio_stats, image_stats, @package_dir, errors, hints, info, options )
+            report, errors, hints, info = cpl_inspect_xml( xml, dictionary, audio_stats, @package_dir, errors, hints, info, options )
           else
             errors << "PKL listed CPL is not XML: #{ cpl_file }: #{ cpl_id }"
           end
