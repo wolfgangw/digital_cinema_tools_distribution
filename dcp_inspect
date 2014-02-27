@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2014.01.27'
+AppVersion = 'v1.2014.02.27'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -3300,8 +3300,12 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                             begin
                               # Scrounge font subfamily name
                               font_fu = TTFunk::File.open font_asset
-                              font_unique_subfamily = font_fu.name.unique_subfamily[ 1 ].to_s # FIXME not always 2nd element. Why/how?
-                              info << "#{ cpl_reel }: DCSubtitle: Referenced font subfamily: #{ font_unique_subfamily }"
+                              begin
+                                font_unique_subfamily = font_fu.name.unique_subfamily[ 1 ].to_s # FIXME not always 2nd element. Why/how?
+                                info << "#{ cpl_reel }: DCSubtitle: Referenced font subfamily: #{ font_unique_subfamily }"
+                              rescue TypeError => e
+                                hints << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset }: Failed to extract internal name structure"
+                              end
 
                               # Check if all glyphs can be rendered with provided font
                               glyphs_missing = FALSE
