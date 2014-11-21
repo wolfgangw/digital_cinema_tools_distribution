@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2014.02.27'
+AppVersion = 'v1.2014.11.21'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -2230,32 +2230,34 @@ end
 # in addition to xml all kinds of stuff will be examined here
 # hence the hoopla to skip expected errors from non-xml.
 # still: what an appalling method
-def get_xml_of_type( asdcp_type, file )
+def get_xml_of_type( asdcp_type, file, errors, errors_status )
   begin
     xml = Nokogiri::XML( open file )
   rescue Exception => e
     @logger.info "#{ file }: #{ e.message }"
-    return FALSE
+    return FALSE, errors, errors_status
   end
 
   unless xml.errors.empty?
     xml.errors.each do |error|
       # expected errors from non-xml
       next if error.message =~ /Start tag expected/ or error.message =~ /Document is empty/
-      @logger.info "Syntax error: #{ file }: #{ error }"
+      errors << "Syntax error: #{ file }: #{ error }"
+      errors_status = TRUE
+      @logger.info errors.last
     end
-    return FALSE
+    return FALSE, errors, errors_status
   end
 
   if xml.root
     case xml.root.node_name
     when asdcp_type
-      return xml
+      return xml, errors, errors_status
     else
-      return FALSE
+      return FALSE, errors, errors_status
     end
   else
-    return FALSE
+    return FALSE, errors, errors_status
   end
 end
 
@@ -2635,7 +2637,9 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   content_kind_nodeset = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ContentKind" )
   content_kind = content_kind_nodeset.text
   content_kind_scope_is_default = FALSE
-  content_kind_scope = content_kind_nodeset.first.attributes[ 'scope' ]
+  if content_kind_nodeset.first
+    content_kind_scope = content_kind_nodeset.first.attributes[ 'scope' ]
+  end
   if content_kind.empty?
     hints << "CPL #{ cpl_id }: ContentKind is empty. May lead to display issues in player UIs"
     report << "ContentKind:      [Empty]"
@@ -3083,19 +3087,104 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
               ].reject { |e| e.nil? or e.empty? }.join( ', ' )
 
             else
+
               # DCSubtitle?
-              xml = get_xml_of_type( 'DCSubtitle', asset_file )
+              xml, errors, cpl_errors = get_xml_of_type( 'DCSubtitle', asset_file, errors, cpl_errors )
               if xml
 
                 cpl_referenced_assets << { asset_id => TRUE }
                 cpl_referenced_assets_types << MStr::AssetTypeInterop
 
+                #
+                # DCSubtitle Schema validation
+                #
                 if options.validate
                   begin
                     valid, errors, cpl_errors = validation( errors, cpl_errors, xml, asset_file, asset_id, 'DCSubtitle' )
                     report << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }"
                   rescue Exception => e
                     errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Exception in Schema check: #{ e.message }"
+                    cpl_errors = TRUE
+                    report << errors.last
+                  end
+                end
+
+                #
+                # Check for content of ReelNumber element
+                #
+                if ( reelnumber_el = xml.xpath( '/DCSubtitle/ReelNumber' ) and reelnumber_el.size == 1 )
+                  if reelnumber_el.children.size == 1
+                    if reelnumber_el.children.first.class == Nokogiri::XML::Text
+                      reelnumber_el_content = reelnumber_el.children.first.content
+                      if reelnumber_el_content =~ /\s*?\d+\s*?/
+                        if reelnumber_el_content.to_i != reel_no
+                          hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber '#{ reelnumber_el_content.to_i }' does not match its CPL reel number '#{ reel_no }'"
+                          report << hints.last
+                        end
+                      else
+                        hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber content is not numerical: #{ reelnumber_el_content.inspect }"
+                        report << hints.last
+                      end
+                    else
+                      errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber has unexpected content: #{ reelnumber_el.children.first.class }"
+                      cpl_errors = TRUE
+                      report << errors.last
+                    end
+                  else
+                    if reelnumber_el.children.size == 0
+                      hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber has no content"
+                      report << hints.last
+                    elsif reelnumber_el.children.size > 1 # Note that TI's DTD says CDATA (non-parsed character data)
+                      hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber has more than 1 subelement"
+                      report << hints.last
+                    end
+                  end
+                else
+                  if reelnumber_el.size == 0
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber element not found"
+                    cpl_errors = TRUE
+                    report << errors.last
+                  else
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: More than 1 ReelNumber element found"
+                    cpl_errors = TRUE
+                    report << errors.last
+                  end
+                end
+
+                #
+                # Check for content of Language element
+                #
+                if ( language_el = xml.xpath( '/DCSubtitle/Language' ) and language_el.size == 1 )
+                  if language_el.children.size == 1
+                    if language_el.children.first.class == Nokogiri::XML::Text
+                      language_el_content = language_el.children.first.content
+                      if language_el_content =~ /\s*?[:alpha:]\s*?/
+                        #
+                      else
+                        hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language content contains unexpected characters: #{ language_el_content.inspect }"
+                        report << hints.last
+                      end
+                    else
+                      errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language has unexpected content: #{ language_el.children.first.class }"
+                      cpl_errors = TRUE
+                      report << errors.last
+                    end
+                  else
+                    if language_el.children.size == 0
+                      hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language has no content"
+                      report << hints.last
+                    elsif language_el.children.size > 1 # Note that TI's DTD says CDATA (non-parsed character data)
+                      hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language has more than 1 subelement"
+                      report << hints.last
+                    end
+                  end
+                else
+                  if language_el.size == 0
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language element not found"
+                    cpl_errors = TRUE
+                    report << errors.last
+                  else
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: More than 1 Language element found"
                     cpl_errors = TRUE
                     report << errors.last
                   end
@@ -3845,7 +3934,8 @@ def dcp_inspect( options, arg )
     am_candidates_tmp = am_candidates.dup
     am_candidates.each do |am_candidate|
       am_file = package am_candidate
-      xml = get_xml_of_type( 'AssetMap', am_file )
+      error_status = FALSE
+      xml, errors, error_status = get_xml_of_type( 'AssetMap', am_file, errors, error_status )
       if xml
 
         # Scrounge am id for reporting
@@ -4070,7 +4160,7 @@ def dcp_inspect( options, arg )
     am_pkls.each do |pkl_id|
       pkl_errors = FALSE
       pkl_file = package dict[ index ][ pkl_id ]
-      xml = get_xml_of_type( 'PackingList', pkl_file )
+      xml, errors, pkl_errors = get_xml_of_type( 'PackingList', pkl_file, errors, pkl_errors )
       if xml
 
         @logger.debug "PKL #{ pkl_id }: #{ pkl_file }"
@@ -4211,7 +4301,7 @@ def dcp_inspect( options, arg )
 
               # Pick CPLs
               if type =~ /text\/xml/
-                xml = get_xml_of_type( 'CompositionPlaylist', asset_file )
+                xml, errors, errors_status = get_xml_of_type( 'CompositionPlaylist', asset_file, errors, errors_status = FALSE )
                 if xml
                   pkl_cpls << id
                   cpls[ index ] << id
@@ -4495,7 +4585,7 @@ begin
 
     # Full audio/image examination?
     if options.audio_analysis or options.image_analysis
-      @dcp_inspect_temp = Ramdisk.new( 'dcp_inspect_temp', 2048 )
+      @dcp_inspect_temp = Ramdisk.new( "dcp_inspect_temp_#{ rand( 2 ** 32 ).to_s( 16 ) }", 2048 )
       @logger.debug "Image/audio analysis: Setting up temp location at #{ @dcp_inspect_temp.path }"
       @logger.debug 'Image analysis not yet implemented' if options.image_analysis
     end
