@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2013.11.14'
+setup_version='v1.2014.11.22'
 #
 # Usage:
 #
@@ -27,14 +27,15 @@ setup_version='v1.2013.11.14'
 #
 # and a number of other digital cinema-related tools:
 #
-#   * dc_crypto_context.rb:         Check certificate chains for digital cinema compliance
-#   * kdm-decrypt.rb:               Decrypt Interop/SMPTE KDMs
-#   * make-dc-certificate-chain.rb: Generate an example digital cinema compliant certificate chain
-#   * public_key_thumbprint.rb:     Compute dnQualifier/public key thumbprint of a X.509 certificate
-#   * signature_check.rb:           Check XML signatures of digital cinema documents
-#   * x509_extract.rb:              Extract X.509 certificates from digital cinema documents
-#   * x509_inspect.rb:              Inspect X.509 certificates
-#   * xsd-check.rb:                 Validate XML documents against Schema definitions
+#   * db_adjust_for_dolby_fader_ref.rb: Calculate adjustments for Dolby CP650/750 7.0 setting
+#   * dc_crypto_context.rb:             Check certificate chains for digital cinema compliance
+#   * kdm-decrypt.rb:                   Decrypt Interop/SMPTE KDMs
+#   * make-dc-certificate-chain.rb:     Generate an example digital cinema compliant certificate chain
+#   * public_key_thumbprint.rb:         Compute dnQualifier/public key thumbprint of a X.509 certificate
+#   * signature_check.rb:               Check XML signatures of DCP infrastructure documents
+#   * x509_extract.rb:                  Extract X.509 certificates from digital cinema documents
+#   * x509_inspect.rb:                  Inspect X.509 certificates
+#   * xsd-check.rb:                     Validate XML documents against Schema definitions
 #
 # This installer supports Debian / Ubuntu / Fedora / openSUSE systems
 # Needs a working network connection
@@ -70,13 +71,8 @@ rbenv_plugins_dir=$rbenv_dir/plugins
 # Ruby build system: ruby-build
 rubybuild_url="git://github.com/sstephenson/ruby-build.git"
 rubybuild_dir=$rbenv_plugins_dir/ruby-build
-ruby_version='1.9.3-p194'
+ruby_version='2.1.5'
 gemrc=$HOME/.gemrc
-
-# XML engine: Nokogiri
-nokogiri_url="git://github.com/sparklemotion/nokogiri.git"
-nokogiri_dir=$libdir/nokogiri
-nokogiri_required_commit='bfe87e05'
 
 # JPEG2000 codec: OpenJPEG
 # http://openjpeg.googlecode.com/files/openjpeg-1.5.0.tar.gz (SHA1 dce705ae45f137e4698a8cf39d1fbf22bc434fa8)
@@ -91,8 +87,8 @@ openjpeg_install_dir=$bindir/openjpeg
 
 # Handle SMPTE and Interop trackfiles: ASDCPLib
 cinecert='download.cinecert.com/asdcplib'
-asdcplib_version='1.12.51'
-asdcplib_version_tarball_md5='2c2c2645f60269d0a01dbbd4d2f90934'
+asdcplib_version='1.12.58'
+asdcplib_version_tarball_md5='95f3aa8712a7590fccff60f026659dbe'
 asdcplib_tarball="asdcplib-$asdcplib_version.tar.gz"
 asdcplib_tarball_url="http://$cinecert/$asdcplib_tarball"
 asdcplib_dir=$libdir/asdcplib
@@ -427,7 +423,7 @@ then
   echo
   echo "Sorry. This installer insists on using rbenv for Ruby version management."
   echo "You have RVM installed and those 2 won't co-exist peacefully, so there."
-  echo "If you want to continue remove RVM from your system an re-run this installer."
+  echo "If you want to continue remove RVM from your system and re-run this installer."
   echo
   exit 1
 fi
@@ -663,12 +659,11 @@ fi
 
 # asdcplib
 cd $libdir
-if command_exists asdcp-info
+if command_exists asdcp-info && [[ `asdcp-info -V` =~ $asdcplib_version ]]
 then
-  # FIXME Quite optimistic right there
-  echo 'asdcplib: OK'
+  echo "asdcplib: OK ($asdcplib_version)"
 else
-  echo 'asdcplib: Installing ...'
+  echo "asdcplib: Installing $asdcplib_version ..."
   if location_exists $asdcplib_dir
   then
     cd $asdcplib_dir
