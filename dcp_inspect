@@ -3,7 +3,7 @@
 #
 # dcp_inspect checks and validates DCPs (Digital Cinema Packages)
 #
-# 2011-2013 Wolfgang Woehl
+# 2011-2014 Wolfgang Woehl
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -151,6 +151,7 @@ USER_INTERRUPT = 18
 RUBY_VERSION_NOT_SUPPORTED = 19
 RUBY_TYPE_ERROR = 20
 RUBY_EXCEPTION = 21
+GRACEFUL_SHUTDOWN = 22
 
 # Required gems
 if RUBY_VERSION <= '1.9'
@@ -383,12 +384,24 @@ module MxfTools
   end
 
   def mxf_inspect( filename )
+    errors_present = FALSE
     list = Shell.asdcp_mxf_info( filename )
     if list =~ /EditRate and SampleRate do not match/ and list =~ /File may contain JPEG Interop stereoscopic images/
       list = Shell.asdcp_mxf_interop_stereoscopic_info( filename )
     end
-    if list.empty? or list =~ /Program stopped on error/
+    if list.empty?
       return nil
+    elsif list =~ /Program stopped on error/ # first item, due to our STDERR redirect
+      if list =~ /SeekToRIP failed/
+        return nil
+      elsif list =~ /File open failure/
+        return nil
+      elsif list =~ /essence type is/
+        # See e.g. Fox Format Test 2D-2k-50 (scope v1.0) (CPL 3452c9ed, MXF 20f97e4e)
+        # Remove the error message and carry on. Ugh but hey
+        errors_present = TRUE
+        list = list.split( "\n" )[ 1 .. -1 ].join( "\n" )
+      end
     end
     list = list.split( /\n\s*/ ).collect { |line| line.split( ': ' ) }
     et = [ 'EssenceType',
@@ -2183,8 +2196,13 @@ def validate_xml( xml, file )
     xsd = Nokogiri::XML::Schema( open File.join( XSDDir, xsd_file ) )
     validation_errors = xsd.validate( xml )
   else
-    errors << "Could not determine Schema for #{ xml.namespaces.inspect }"
-    return FALSE, errors
+    if xml.namespaces.empty?
+      errors << "Could not determine Schema (no namespace provided)"
+      return FALSE, errors
+    else
+      errors << "Could not determine Schema for #{ xml.namespaces.inspect }"
+      return FALSE, errors
+    end
   end
   if validation_errors.empty?
     return TRUE, errors
@@ -3977,131 +3995,156 @@ def dcp_inspect( options, arg )
     pkls_missing << Array.new
     am_base = File.dirname am_file
     xml = xml?( package am_file )
-    am_ns = xml.root.namespace.href
+    if xml.root.namespace
+      am_ns = xml.root.namespace.href
+    end
+
     # FIXME
     xml.remove_namespaces!
     am_id = get_asset_uuid( package am_file )
+
     if am_id
       ams << am_id
+
+      case am_ns
+      when MStr::Smpte_am
+        unless am_file == 'ASSETMAP.xml'
+          errors << "AM #{ am_id }: SMPTE Assetmap file cannot be named #{ am_file.inspect }. Must be named 'ASSETMAP.xml'"
+          am_errors = TRUE
+        end
+      when MStr::Interop_am
+        unless am_file == 'ASSETMAP'
+          errors << "AM #{ am_id }: Interop Assetmap file cannot be named #{ am_file.inspect }. Must be named 'ASSETMAP'"
+          am_errors = TRUE
+        end
+      else
+        errors << "AM #{ am_id } '#{ am_file }' has invalid namespace #{ am_ns.inspect }"
+        am_errors = TRUE
+      end
+
+      #
+      # Good to go minus possible namespace issue
+      #
+      # collect all asset nodes
+      assets = xml.xpath( '//Asset' )
+
+      @logger.debug "AM #{ am_id }: #{ am_file }"
+      @logger.debug "AM #{ am_id } lists #{ amount( 'asset', assets.size ) }:"
+
+      # Store asset info in a dictionary (uuid => path, relative to package root)
+      # look for PackingList(s)
+      assets.each do |asset|
+
+        listed_id = asset.xpath( 'Id' ).text.split( ':' ).last
+        # FIXME ChunkList.size == 1 is an assumption and wrong at that. Could be > 1
+        # using AM listed path for listing message, not package path, because this is what we're looking at right now:
+        path = asset.xpath( 'ChunkList/Chunk/Path' ).text.split( /file:\/+/ ).last
+
+        # Check for UUID specs. Defer RFC-4122 compliance check to a later stage where we know asset kind
+        # DCSubtitle does not require RFC-4122 UUID
+        if listed_id.downcase !~ MStr::Uuid_re
+          errors << "AM #{ am_id }: Listed in Assetmap: Not a UUID: #{ path }: #{ listed_id }"
+          am_errors = TRUE
+        end
+
+        # Path element present? See e.g. mc t28 ASSETMAP.xml
+        if path.nil?
+          errors << "AM #{ am_id }: No path for asset: #{ listed_id }"
+          am_errors = TRUE
+        else
+
+          # Assetmap dictionary
+          dict[ index ][ listed_id ] = Pathname( File.join( am_base, path ) ).cleanpath.to_s
+          asset_file = package dict[ index ][ listed_id ]
+          @logger.debug "#{ listed_id }: #{ dict[ index ][ listed_id ] }#{ File.exists?( package dict[ index ][ listed_id ] ) ? '' : ' (file missing)' }"
+
+          # Check listed_id vs actual asset_id
+          if File.exists?( asset_file )
+            asset_id = get_asset_uuid( asset_file )
+            if asset_id
+              unless asset_id.downcase =~ MStr::Uuid_re
+                errors << "AM #{ am_id }: Asset UUID: Not a UUID: #{ asset_file }: #{ asset_id }"
+                am_errors = TRUE
+              end
+              if listed_id.downcase != asset_id.downcase
+                errors << "AM #{ am_id }: UUID mismatch: #{ asset_file }: Listed: #{ listed_id } Asset: #{ asset_id }" 
+                am_errors = TRUE
+              else
+                if listed_id != asset_id
+                  hints << "AM #{ am_id }: UUID case mismatch: #{ asset_file }: Listed: #{ listed_id } Asset: #{ asset_id }"
+                end
+              end
+            end
+          else
+            errors << "AM #{ am_id }: Listed asset file missing: #{ listed_id }: #{ path }: #{ asset_file }"
+            am_errors = TRUE
+          end
+
+          # Check for Chunklist:Chunk:Length element and compare to actual asset size.
+          # In the case of a mismatch this results in a hint as Length is optional
+          # and no crucial processing can depend on it. Field behaviour undefined ttbomk.
+          if File.exists?( asset_file )
+            length_el = asset.xpath( 'ChunkList/Chunk/Length' )
+            if ! length_el.empty?
+              begin
+                listed_asset_length = asset.xpath( 'ChunkList/Chunk/Length' ).text.to_i
+                asset_size = File.size asset_file
+                unless listed_asset_length == asset_size
+                  errors << "AM #{ am_id }: Mismatch in optional Length element: Asset: #{ listed_id }: Listed length: #{ listed_asset_length } (#{ listed_asset_length.to_k }) Asset on medium: #{ asset_size } (#{ asset_size.to_k })"
+                  am_errors = TRUE
+                end
+              rescue Exception => e
+                errors << "AM #{ am_id }: Length check fail: #{ e.message }"
+                am_errors = TRUE
+              end
+            end
+          end
+
+          # Check for whitespace in asset filename
+          if path.scan( /\s+/ ).size != 0
+            hints << "AM #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } contains whitespace. Avoid whitespace in filenames"
+          end
+
+        end
+
+        # PackingList?
+        unless asset.xpath( 'PackingList' ).empty?
+          if path
+            case am_ns
+            when MStr::Interop_am
+              pkls[ index ] << listed_id
+            when MStr::Smpte_am
+              if asset.xpath( 'PackingList' ).text == 'true'
+                pkls[ index ] << listed_id
+              else
+                errors << "AM #{ am_id }: SMPTE AM requires a PackingList element to contain the value 'true' (value is missing). Continuing anyway"
+                am_errors = TRUE
+                pkls[ index ] << listed_id
+              end
+            end
+          else
+            errors << "AM #{ am_id }: Found alleged PackingList asset #{ listed_id } but Path element is empty. Not adding to dictionary"
+            am_errors = TRUE
+          end
+        end
+
+        # Check if possible uuid component in the asset filename matches the actual asset uuid
+        if dict[ index ][ listed_id ]
+          file_basename = File.basename( dict[ index ][ listed_id ] )
+          if file_basename =~ MStr::Uuid_particle_re
+            unless file_basename.match( MStr::Uuid_particle_re )[ 0 ] == listed_id
+              hints << "Asset UUID and filename UUID component mismatch: #{ listed_id } -> #{ file_basename }"
+            end
+          end
+        end
+
+      end # assets.each
+
     else
       ams << NIL
       errors << "Assetmap '#{ am_file }' has no Id"
       am_errors = TRUE
     end
-    # collect all asset nodes
-    assets = xml.xpath( '//Asset' )
-
-    @logger.debug "AM #{ am_id }: #{ am_file }"
-    @logger.debug "AM #{ am_id } lists #{ amount( 'asset', assets.size ) }:"
-
-    # Store asset info in a dictionary (uuid => path, relative to package root)
-    # look for PackingList(s)
-    assets.each do |asset|
-
-      listed_id = asset.xpath( 'Id' ).text.split( ':' ).last
-      # FIXME ChunkList.size == 1 is an assumption and wrong at that. Could be > 1
-      # using AM listed path for listing message, not package path, because this is what we're looking at right now:
-      path = asset.xpath( 'ChunkList/Chunk/Path' ).text.split( /file:\/+/ ).last
-
-      # Check for UUID specs. Defer RFC-4122 compliance check to a later stage where we know asset kind
-      # DCSubtitle does not require RFC-4122 UUID
-      if listed_id.downcase !~ MStr::Uuid_re
-        errors << "AM #{ am_id }: Listed in Assetmap: Not a UUID: #{ path }: #{ listed_id }"
-        am_errors = TRUE
-      end
-
-      # Path element present? See e.g. mc t28 ASSETMAP.xml
-      if path.nil?
-        errors << "AM #{ am_id }: No path for asset: #{ listed_id }"
-        am_errors = TRUE
-      else
-
-        # Assetmap dictionary
-        dict[ index ][ listed_id ] = Pathname( File.join( am_base, path ) ).cleanpath.to_s
-        asset_file = package dict[ index ][ listed_id ]
-        @logger.debug "#{ listed_id }: #{ dict[ index ][ listed_id ] }#{ File.exists?( package dict[ index ][ listed_id ] ) ? '' : ' (file missing)' }"
-
-        # Check listed_id vs actual asset_id
-        if File.exists?( asset_file )
-          asset_id = get_asset_uuid( asset_file )
-          if asset_id
-            unless asset_id.downcase =~ MStr::Uuid_re
-              errors << "AM #{ am_id }: Asset UUID: Not a UUID: #{ asset_file }: #{ asset_id }"
-              am_errors = TRUE
-            end
-            if listed_id.downcase != asset_id.downcase
-              errors << "AM #{ am_id }: UUID mismatch: #{ asset_file }: Listed: #{ listed_id } Asset: #{ asset_id }" 
-              am_errors = TRUE
-            else
-              if listed_id != asset_id
-                hints << "AM #{ am_id }: UUID case mismatch: #{ asset_file }: Listed: #{ listed_id } Asset: #{ asset_id }"
-              end
-            end
-          end
-        else
-          errors << "AM #{ am_id }: Listed asset file missing: #{ listed_id }: #{ path }: #{ asset_file }"
-          am_errors = TRUE
-        end
-
-        # Check for Chunklist:Chunk:Length element and compare to actual asset size.
-        # In the case of a mismatch this results in a hint as Length is optional
-        # and no crucial processing can depend on it. Field behaviour undefined ttbomk.
-        if File.exists?( asset_file )
-          length_el = asset.xpath( 'ChunkList/Chunk/Length' )
-          if ! length_el.empty?
-            begin
-              listed_asset_length = asset.xpath( 'ChunkList/Chunk/Length' ).text.to_i
-              asset_size = File.size asset_file
-              unless listed_asset_length == asset_size
-                errors << "AM #{ am_id }: Mismatch in optional Length element: Asset: #{ listed_id }: Listed length: #{ listed_asset_length } (#{ listed_asset_length.to_k }) Asset on medium: #{ asset_size } (#{ asset_size.to_k })"
-                am_errors = TRUE
-              end
-            rescue Exception => e
-              errors << "AM #{ am_id }: Length check fail: #{ e.message }"
-              am_errors = TRUE
-            end
-          end
-        end
-
-        # Check for whitespace in asset filename
-        if path.scan( /\s+/ ).size != 0
-          hints << "AM #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } contains whitespace. Avoid whitespace in filenames"
-        end
-
-      end
-
-      # PackingList?
-      unless asset.xpath( 'PackingList' ).empty?
-        if path
-          case am_ns
-          when MStr::Interop_am
-            pkls[ index ] << listed_id
-          when MStr::Smpte_am
-            if asset.xpath( 'PackingList' ).text == 'true'
-              pkls[ index ] << listed_id
-            else
-              errors << "AM #{ am_id }: SMPTE AM requires a PackingList element to contain the value 'true' (value is missing). Continuing anyway"
-              am_errors = TRUE
-              pkls[ index ] << listed_id
-            end
-          end
-        else
-          errors << "AM #{ am_id }: Found alleged PackingList asset #{ listed_id } but Path element is empty. Not adding to dictionary"
-          am_errors = TRUE
-        end
-      end
-
-      # Check if possible uuid component in the asset filename matches the actual asset uuid
-      if dict[ index ][ listed_id ]
-        file_basename = File.basename( dict[ index ][ listed_id ] )
-        if file_basename =~ MStr::Uuid_particle_re
-          unless file_basename.match( MStr::Uuid_particle_re )[ 0 ] == listed_id
-            hints << "Asset UUID and filename UUID component mismatch: #{ listed_id } -> #{ file_basename }"
-          end
-        end
-      end
-
-    end # assets.each
 
     # List this Assetmap's PKLs
     @logger.debug "Assetmap #{ am_id } lists #{ amount( 'PKL', pkls[ index ] ) }:"
@@ -4460,6 +4503,7 @@ def graceful_shutdown( options, args, crash = FALSE )
   if crash
     dcp_inspect_crashed_get_in_touch
   end
+  exit GRACEFUL_SHUTDOWN
 end
 
 
