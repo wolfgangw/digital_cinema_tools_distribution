@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2014.12.04'
+AppVersion = 'v1.2014.12.10'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -4008,17 +4008,17 @@ def dcp_inspect( options, arg )
 
       case am_ns
       when MStr::Smpte_am
-        unless am_file == 'ASSETMAP.xml'
-          errors << "AM #{ am_id }: SMPTE Assetmap file cannot be named #{ am_file.inspect }. Must be named 'ASSETMAP.xml'"
+        unless File.basename( am_file ) == 'ASSETMAP.xml'
+          errors << "AM #{ am_id }: #{ am_file.inspect }: SMPTE Assetmap file cannot be named #{ File.basename( am_file ).inspect }. Must be named \"ASSETMAP.xml\""
           am_errors = TRUE
         end
       when MStr::Interop_am
-        unless am_file == 'ASSETMAP'
-          errors << "AM #{ am_id }: Interop Assetmap file cannot be named #{ am_file.inspect }. Must be named 'ASSETMAP'"
+        unless File.basename( am_file ) == 'ASSETMAP'
+          errors << "AM #{ am_id }: #{ am_file.inspect }: Interop Assetmap file cannot be named #{ File.basename( am_file ).inspect }. Must be named \"ASSETMAP\""
           am_errors = TRUE
         end
       else
-        errors << "AM #{ am_id } '#{ am_file }' has invalid namespace #{ am_ns.inspect }"
+        errors << "AM #{ am_id }: #{ am_file.inspect }: Alleged AM file has invalid namespace #{ am_ns.inspect }"
         am_errors = TRUE
       end
 
