@@ -4474,7 +4474,7 @@ def dcp_inspect( options, arg )
   pkls_signature_info = "#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }"
   cpls_signature_info = "#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' }"
   cpls_encryption_info = "#{ cpls.size - @encrypted_compositions > 0 ? ( cpls.size - @encrypted_compositions ).to_s + ' plaintext/' : '' }#{ amount( 'KDM', @encrypted_compositions ) } required)"
-  info << "#{ AppName } #{ AppVersion } (asdcplib #{ ASDCPVersion }) on #{ RunDatetime_friendly } (#{ execution_time })"
+  info << "#{ AppName } #{ AppVersion } (asdcplib #{ ASDCPVersion }, #{ RubyVersionPlatform }) on #{ RunDatetime_friendly } (#{ execution_time })"
   info << "Inspected: #{ Pathname( arg ).realpath }"
   info << "Found #{ amount( 'Package', pkls ) } with total size #{ total_size }"
   info << 'Hash checks skipped' if options.check_hashes == FALSE
@@ -4591,7 +4591,11 @@ begin
   ASDCPVersion = MxfTools.asdcplib_version.join '.'
 
 
-  @logger.debug "#{ AppName } #{ AppVersion } (asdcplib #{ ASDCPVersion }): #{ args }"
+  # ruby version and platform
+  RubyVersionPlatform = [ RUBY_ENGINE, RUBY_VERSION, RUBY_PLATFORM ].join( ' ' )
+
+
+  @logger.debug "#{ AppName } #{ AppVersion } (asdcplib #{ ASDCPVersion }, #{ RubyVersionPlatform }): #{ args }"
 
 
   # Check Nokogiri C14N support
