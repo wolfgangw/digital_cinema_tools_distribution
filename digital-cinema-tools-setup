@@ -729,7 +729,9 @@ then
   do
     if [ -e $bindir/$(basename ${tool}) ]
     then
-      echo "asdcplib: $(basename ${tool}) OK"
+      rm $bindir/$(basename ${tool})
+      echo "asdcplib: Updating $(basename ${tool})"
+      ln -s $tool .
     else
       echo "asdcplib: Add to $bindir: $(basename ${tool})"
       ln -s $tool .
