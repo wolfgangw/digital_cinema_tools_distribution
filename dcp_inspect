@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2014.12.10'
+AppVersion = 'v1.2014.12.16'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -194,12 +194,12 @@ class Options
     options.audio_analysis = TRUE
     options.validate = TRUE
     options.as_asset_store = FALSE
-    options.verbosity = [ 'debug' ]
+    options.verbosity = [ 'debug', 'dev' ]
     options.logfile = NIL
     options.logfile_append = NIL
     options.logfile_autolog = FALSE
     options.overwrite_logfile = FALSE
-    options.verbosity_choices = [ 'quiet', 'errors', 'hints', 'info', 'cpl', 'debug', 'trace_func' ]
+    options.verbosity_choices = [ 'quiet', 'dev', 'errors', 'hints', 'info', 'cpl', 'debug', 'trace_func' ]
 
     opts = OptionParser.new do |opts|
       opts.banner = <<BANNER
@@ -268,22 +268,23 @@ end # Options
 
 # * lib/logger.rb
 class DLogger
-  attr_reader :is_quiet, :prints_errors, :prints_hints, :prints_info, :prints_debug, :prints_cr, :prints_cpl, :writes_logfile, :logfile, :writes_autolog
+  attr_reader :is_quiet, :prints_dev, :prints_errors, :prints_hints, :prints_info, :prints_debug, :prints_cr, :prints_cpl, :writes_logfile, :logfile, :writes_autolog
   def initialize( prefix, options )
     @prefix = prefix
     @full_log = ( options.logfile || options.logfile_autolog || options.logfile_append ? Array.new : NIL )
 
-    @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, FALSE, FALSE, FALSE, FALSE, FALSE ]
+    @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE ]
     options.verbosity.each do |cutout|
       case cutout
       when 'quiet'  then @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, FALSE, FALSE, FALSE, FALSE, FALSE ]; @is_quiet = TRUE; break
-      when 'debug'  then @errors, @hints, @info, @debug, @cr, @cpl = [ TRUE, TRUE, TRUE, TRUE, TRUE, TRUE ]; @is_quiet = FALSE; break
+      when 'debug'  then @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE ]; @is_quiet = FALSE; break
+      when 'dev'    then @dev = TRUE
       when 'errors' then @errors = TRUE
       when 'hints'  then @hints = TRUE
       when 'info'   then @info = TRUE
       when 'cpl'    then @cpl = TRUE
       when 'trace_func'
-        @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, FALSE, FALSE, FALSE, FALSE, FALSE ]
+        @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE ]
         set_trace_func proc { |event, file, line, id, binding, classname|
           printf "%8s %s:%-2d %10s %8s\n", event, file, line, id, classname
         }
@@ -293,7 +294,12 @@ class DLogger
     @writes_logfile = TRUE if options.logfile
     @writes_autolog = TRUE if options.logfile_autolog
     @logfile = options.logfile
-    @prints_errors, @prints_hints, @prints_info, @prints_debug, @prints_cr, @prints_cpl = @errors, @hints, @info, @debug, @cr, @cpl
+    @prints_dev, @prints_errors, @prints_hints, @prints_info, @prints_debug, @prints_cr, @prints_cpl = @dev, @errors, @hints, @info, @debug, @cr, @cpl
+    @color = Hash.new
+    @color[ :dev ] = '32' # green
+  end
+  def dev( text )
+    if @dev then outbound_colored( text, @color[ :dev ] ) end
   end
   def errors( text )
     if @errors then outbound( text ) end
@@ -317,6 +323,12 @@ class DLogger
   def outbound( text )
     printf "%s %s\n", @prefix, text
     @full_log << text if @full_log
+  end
+  def outbound_colored( text, color )
+    printf "%s %s\n", @prefix, colored( text, color )
+  end
+  def colored( text, color )
+    "\033[#{ color }m#{ text }\033[0m"
   end
   def to_console( text ) printf "%s %s\n", @prefix, text end
   def carriage_return( text ) printf "%s %s\r", @prefix, text end
@@ -3716,7 +3728,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     end
   else
     expected_aspect_ratios = reels.size - supplemental_refs[ :main_picture ]
-    if expected_aspect_ratios > 0
+    if expected_aspect_ratios != composition_aspect_ratios.size
       errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'aspect ratio', expected_aspect_ratios ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_aspect_ratios.size }"
       cpl_errors = TRUE
     end
@@ -3748,7 +3760,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     end
   else
     expected_picture_resolutions = reels.size - supplemental_refs[ :main_picture ]
-    if expected_picture_resolutions > 0
+    if expected_picture_resolutions != composition_resolutions.size
       errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'picture resolution', expected_picture_resolutions ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_resolutions.size }"
       cpl_errors = TRUE
     end
@@ -3764,7 +3776,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     end
   else
     expected_audio_types = reels.size - supplemental_refs[ :main_sound ]
-    if expected_audio_types > 0
+    if expected_audio_types != composition_channel_counts.size
       errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'audio type', expected_audio_types ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_channel_counts.size }"
       cpl_errors = TRUE
     end
