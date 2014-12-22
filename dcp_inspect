@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2014.12.16'
+AppVersion = 'v1.2014.12.22'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -152,6 +152,12 @@ RUBY_VERSION_NOT_SUPPORTED = 19
 RUBY_TYPE_ERROR = 20
 RUBY_EXCEPTION = 21
 GRACEFUL_SHUTDOWN = 22
+
+# Constants
+PictureBitrateMaxLegacy = 250.0 # Mb/s
+PictureBitrateMaxLegacySafetyMargin = 2.0 # percent
+PictureBitrateMaxLegacySafe = ( PictureBitrateMaxLegacy / 100 * ( 100 - PictureBitrateMaxLegacySafetyMargin ) ).round( 2 )
+PictureBitrateMax2ndGen = 500.0 # Mb/s
 
 # Required gems
 if RUBY_VERSION <= '1.9'
@@ -397,27 +403,28 @@ module MxfTools
 
   def mxf_inspect( filename )
     errors_present = FALSE
-    list = Shell.asdcp_mxf_info( filename )
-    if list =~ /EditRate and SampleRate do not match/ and list =~ /File may contain JPEG Interop stereoscopic images/
-      list = Shell.asdcp_mxf_interop_stereoscopic_info( filename )
+    out, err, status = Shell.asdcp_mxf_info( filename )
+    if out =~ /EditRate and SampleRate do not match/ and out =~ /File may contain JPEG Interop stereoscopic images/
+      # With 1.12.58 this is not required anymore. Keep it for backwards compat
+      out, err, status = Shell.asdcp_mxf_interop_stereoscopic_info( filename )
     end
-    if list.empty?
+
+    if out.empty?
       return nil
-    elsif list =~ /Program stopped on error/ # first item, due to our STDERR redirect
-      if list =~ /SeekToRIP failed/
+    elsif err =~ /Program stopped on error/
+      if err =~ /SeekToRIP failed/
         return nil
-      elsif list =~ /File open failure/
+      elsif err =~ /File open failure/
         return nil
-      elsif list =~ /essence type is/
+      elsif out =~ /essence type is/
         # See e.g. Fox Format Test 2D-2k-50 (scope v1.0) (CPL 3452c9ed, MXF 20f97e4e)
-        # Remove the error message and carry on. Ugh but hey
         errors_present = TRUE
-        list = list.split( "\n" )[ 1 .. -1 ].join( "\n" )
       end
     end
-    list = list.split( /\n\s*/ ).collect { |line| line.split( ': ' ) }
+
+    out = out.split( /\n\s*/ ).collect { |line| line.split( ': ' ) }
     et = [ 'EssenceType',
-           case list.first.to_s
+           case out.first.to_s
            when /#{ MStr::Stereoscopic_pictures }/
              MStr::Stereoscopic_pictures
            when /#{ MStr::Pictures }/
@@ -434,7 +441,7 @@ module MxfTools
              nil
            end
     ]
-    return Hash[ list << et ]
+    return Hash[ out << et ]
   end
 end
 include MxfTools
@@ -657,10 +664,14 @@ module Shell
       `kmuuidgen -n`
     end
     def asdcp_mxf_info( filename )
-      `asdcp-info -v -i -d #{ Shellwords.shellescape filename } 2>&1`.chomp
+      out, err, status = Open3.capture3( "asdcp-info -v -i -d -r #{ Shellwords.shellescape filename }" )
+      out = out.chomp
+      return out, err, status
     end
     def asdcp_mxf_interop_stereoscopic_info( filename )
-      `asdcp-info -3 -v -i -d #{ Shellwords.shellescape filename } 2>&1`.chomp
+      out, err, status = Open3.capture3( "asdcp-info -3 -v -i -d -r #{ Shellwords.shellescape filename }" )
+      out = out.chomp
+      return out, err, status
     end
   end
 end
@@ -2714,9 +2725,9 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
       end
       if issue_date_dt
         if issue_date_dt >= now_dt
-          info << "CPL #{ cpl_id }: Composition #{ content_title_text.empty? ? '[ContentTitleText empty]' : content_title_text } was issued in the future: IssueDate #{ issue_date.text.inspect } ahead of now (#{ now_dt.to_s }) by #{ distance_of_time_in_words( issue_date_dt, now_dt ) }"
+          info << "CPL #{ cpl_id }: Composition #{ content_title_text.empty? ? '[ContentTitleText empty]' : content_title_text.inspect } was issued in the future: IssueDate #{ issue_date.text.inspect } ahead of now (#{ now_dt.to_s }) by #{ distance_of_time_in_words( issue_date_dt, now_dt ) }"
         elsif issue_date_dt < now_dt
-          info << "CPL #{ cpl_id }: Composition #{ content_title_text.empty? ? '[ContentTitleText empty]' : content_title_text } was issued #{ distance_of_time_in_words( issue_date_dt, now_dt ) } ago"
+          info << "CPL #{ cpl_id }: Composition #{ content_title_text.empty? ? '[ContentTitleText empty]' : content_title_text.inspect } was issued #{ distance_of_time_in_words( issue_date_dt, now_dt ) } ago"
         end
         issue_date_friendly = datetime_friendly( issue_date_dt )
         report << "IssueDate:        #{ issue_date.text } (#{ issue_date_friendly })"
@@ -2792,6 +2803,8 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   is_stereoscopic = Array.new # build a flag for naming convention checks
   composition_aspect_ratios = Array.new
   composition_resolutions = Array.new
+  composition_picture_bitrates_max = Array.new
+  composition_picture_bitrates_avg = Array.new
   composition_channel_counts = Array.new
   supplemental_refs = { :main_picture => 0, :main_sound => 0, :main_subtitle => 0, :main_caption => 0 }
 
@@ -2849,9 +2862,9 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
       entry_point = asset.xpath( "#{ cpl_ns_prefix }:EntryPoint", asset_ns ).text.to_i
       duration = asset.xpath( "#{ cpl_ns_prefix }:Duration", asset_ns ).text.to_i
       if asset.xpath( "#{ cpl_ns_prefix }:KeyId", asset_ns )
-        key_id = asset.xpath( "#{ cpl_ns_prefix }:KeyId", asset_ns ).text.split( ':' ).last
+        cpl_key_id = asset.xpath( "#{ cpl_ns_prefix }:KeyId", asset_ns ).text.split( ':' ).last
       else
-        key_id = NIL
+        cpl_key_id = NIL
       end
 
       # FIXME Timecode will die on edit_rate == 0
@@ -2878,6 +2891,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
           if File.exists?( asset_file )
 
             meta = MxfTools.mxf_inspect( asset_file )
+
             # MXF?
             if meta
 
@@ -2915,10 +2929,10 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 if meta[ 'EncryptedEssence' ] == 'Yes'
                   if meta[ 'CryptographicKeyID' ]
                     asset_key_id = meta[ 'CryptographicKeyID' ]
-                    if asset_key_id == key_id
+                    if asset_key_id == cpl_key_id
                       cpl_referenced_assets_encrypted << asset_id
                     else
-                      case key_id
+                      case cpl_key_id
                       when NIL
                         errors << "#{ cpl_reel }: #{ asset.node_name }: References encrypted asset but KeyId is [NIL]: #{ asset_id }"
                         cpl_errors = TRUE
@@ -2968,6 +2982,8 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 picture_stored_width, picture_stored_height = meta[ 'StoredWidth' ], meta[ 'StoredHeight' ]
                 picture_dimensions = "#{ picture_stored_width }x#{ picture_stored_height }"
                 picture_aspect_ratio = ( picture_stored_width.to_f / picture_stored_height.to_f ).round( 3 )
+                picture_bitrate_max_mbs = meta[ 'Max BitRate' ].split( ' ' )[0].to_f
+                picture_bitrate_avg_mbs = meta[ 'Average BitRate' ].split( ' ' )[0].to_f
 
                 # aspect ratio
                 case picture_aspect_ratio
@@ -3001,6 +3017,28 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                   cpl_errors = TRUE
                 end
                 composition_resolutions << picture_dimensions_moniker
+
+                # bitrate
+                if picture_bitrate_max_mbs > PictureBitrateMaxLegacy
+                  if picture_bitrate_max_mbs > PictureBitrateMax2ndGen
+                    errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds legacy and 2nd gen maxima (#{ PictureBitrateMaxLegacy } and #{ PictureBitrateMax2ndGen } Mb/s)"
+                    cpl_errors = TRUE
+                  elsif picture_bitrate_max_mbs <= PictureBitrateMax2ndGen
+                    errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds legacy maximum (#{ PictureBitrateMaxLegacy } Mb/s)"
+                    cpl_errors = TRUE
+                    hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds legacy maximum (#{ PictureBitrateMaxLegacy } Mb/s). Playback might fail on legacy systems. Playback might work on 2nd gen systems (IMB)"
+                  end
+                end
+                if picture_bitrate_max_mbs > PictureBitrateMaxLegacySafe and picture_bitrate_max_mbs <= PictureBitrateMaxLegacy
+                  hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds suggested safe maximum #{ PictureBitrateMaxLegacySafe } Mb/s. Playback might fail on legacy systems"
+                end
+                if picture_bitrate_avg_mbs > PictureBitrateMaxLegacySafe and picture_bitrate_avg_mbs <= PictureBitrateMaxLegacy
+                  hints << "#{ cpl_reel }: #{ asset.node_name } bitrate average #{ meta[ 'Average BitRate' ] } exceeds suggested safe average #{ PictureBitrateMaxLegacySafe } Mb/s. Playback might fail on legacy systems"
+                end
+                composition_picture_bitrates_max << picture_bitrate_max_mbs
+                composition_picture_bitrates_avg << picture_bitrate_avg_mbs
+
+
 
               end # Check picture
 
@@ -3109,6 +3147,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 meta[ 'ContainerDuration' ] ? meta[ 'EditRate' ] || meta[ 'SampleRate' ] ? Timecode.new( meta[ 'ContainerDuration' ].to_i, asset_edit_rate ).to_s : '[NaN]' : 'ContainerDuration:' + MStr::AssetTypeUnknown,
                 meta[ 'EncryptedEssence' ] ? meta[ 'EncryptedEssence' ] == 'Yes' ? 'encrypted' : 'plaintext' : 'Encrypted:' + MStr::AssetTypeUnknown,
                 asset.node_name =~ /Picture/ ? ( meta[ 'StoredWidth' ] || 'StoredWidth:' + MStr::AssetTypeUnknown ) + 'x' + ( meta[ 'StoredHeight' ] || 'StoredHeight:' + MStr::AssetTypeUnknown ) : '',
+                asset.node_name =~ /Picture/ ? meta[ 'Average BitRate' ] ? meta[ 'Average BitRate' ] : '[NaN] Mb/s' : '',
                 asset.node_name =~ /Sound/ ?
                   ( meta[ 'ChannelCount' ].to_s + 'ch' || 'ChannelCount:' + MStr::AssetTypeUnknown ) + ' ' +
                   ( audio_sampling_rate == '48000/1' ? '48kHz' : audio_sampling_rate == '96000/1' ? '96kHz' : audio_sampling_rate ) + ' ' +
@@ -3509,7 +3548,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 meta_report = 'File found but not AS-DCP MXF'
 
                 # We don't have meta. Infer encryption from presence of KeyId
-                if key_id
+                if cpl_key_id
                   cpl_referenced_assets_encrypted_inferred_from_key_id << asset_id
                 end
 
@@ -3524,7 +3563,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
             meta_report = "Referenced asset file missing: #{ dict[ asset_id ] }"
 
             # Infer encryption from presence of KeyId
-            if key_id
+            if cpl_key_id
               cpl_referenced_assets_encrypted_inferred_from_key_id << asset_id
             end
 
@@ -3557,7 +3596,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
             end
 
             # Infer encryption from presence of KeyId
-            if key_id
+            if cpl_key_id
               cpl_referenced_assets_encrypted_inferred_from_key_id << asset_id
             end
 
@@ -3766,6 +3805,10 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     end
   end
 
+  # Composition picture bitrate (average)
+  composition_picture_bitrate_avg = ( composition_picture_bitrates_avg.inject { |sum, el| sum += el }.to_f / composition_picture_bitrates_avg.size ).round( 2 )
+  composition_summary[ :picture_bitrate_avg ] = "#{ composition_picture_bitrate_avg } Mb/s"
+
   # Set up composition_channel_count
   composition_channel_count = NIL
   if composition_channel_counts.size == reels.size
@@ -3805,7 +3848,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   end
 
   # composition summary one-liner
-  report << "CPL #{ cpl_id }: Composition summary: " + [ [ :content_title_text, :type, :crypto, :spatiality, :aspect, :resolution, :duration, :edit_rate ].reject { |k| composition_summary[k].nil? }.map { |k| composition_summary[k] } ].join( ', ' )
+  report << "CPL #{ cpl_id }: Composition summary: " + [ [ :content_title_text, :type, :crypto, :spatiality, :aspect, :resolution, :picture_bitrate_avg, :duration, :edit_rate ].reject { |k| composition_summary[k].nil? }.map { |k| composition_summary[k] } ].join( ', ' )
 
   # Naming convention
   case composition_type
