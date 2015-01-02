@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2014.12.22'
+AppVersion = 'v1.2015.01.02'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -152,23 +152,16 @@ RUBY_VERSION_NOT_SUPPORTED = 19
 RUBY_TYPE_ERROR = 20
 RUBY_EXCEPTION = 21
 GRACEFUL_SHUTDOWN = 22
+LIB_LOAD_ERROR = 23
 
 # Constants
-PictureBitrateMaxLegacy = 250.0 # Mb/s
-PictureBitrateMaxLegacySafetyMargin = 2.0 # percent
-PictureBitrateMaxLegacySafe = ( PictureBitrateMaxLegacy / 100 * ( 100 - PictureBitrateMaxLegacySafetyMargin ) ).round( 2 )
-PictureBitrateMax2ndGen = 500.0 # Mb/s
+PictureBitrateMaxDCI = 250.0 # Mb/s
+PictureBitrateMaxDCISafetyMargin = 2.0 # percent
+PictureBitrateMaxDCISafe = ( PictureBitrateMaxDCI / 100 * ( 100 - PictureBitrateMaxDCISafetyMargin ) ).round( 2 )
+PictureBitrateMaxHFR = 400.0 # Mb/s
 
-# Required gems
-if RUBY_VERSION <= '1.9'
-  begin
-    require 'rubygems'
-  rescue LoadError
-  end
-end
+# Internal
 [
-  'nokogiri',
-  'ttfunk',
   'optparse',
   'ostruct',
   'pathname',
@@ -177,12 +170,24 @@ end
   'base64',
   'stringio',
   'fileutils',
-  'open3'
+  'open3',
+].each do |lib|
+  begin
+    require lib
+  rescue LoadError => e
+    puts e.inspect
+    exit LIB_LOAD_ERROR
+  end
+end
+# External
+[
+  'nokogiri',
+  'ttfunk'
 ].each do |gem|
   begin
     require gem
   rescue LoadError => e
-    puts e.message
+    puts e.inspect
     puts "Please run 'gem install #{ gem }' (without the quotes) and try again"
     exit GEM_LOAD_ERROR
   end
@@ -449,8 +454,8 @@ include MxfTools
 
 class Ramdisk
   attr_reader :device
-  def initialize( diskname, size )
-    @diskname = diskname
+  def initialize( size )
+    @diskname = "#{ AppName }_#{ rand( 2 ** 32 ).to_s( 16 ) }"
     @size = size
     @device = NIL
     result = make_ramdisk
@@ -479,7 +484,7 @@ class Ramdisk
   def make_ramdisk
     case RUBY_PLATFORM
     when /darwin/
-      out, err, status = Open3.capture3( "hdiutil attach -nomount ram://#{ @size }" )
+      out, err, status = Open3.capture3( "hdiutil attach -nobrowse -nomount ram://#{ @size }" )
       @device = out.chomp
       out, err, status = Open3.capture3( "diskutil erasevolume HFS+ '#{ @diskname }' #{ @device }" )
       TRUE
@@ -2336,6 +2341,7 @@ def get_asset_uuid( file )
           id = xml.xpath( '//MetadataID' ).text # PCF, DCMetadata
         end
       end
+      id = id.strip
 
     else # not xml
       meta = MxfTools.mxf_inspect( file )
@@ -3019,25 +3025,26 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 composition_resolutions << picture_dimensions_moniker
 
                 # bitrate
-                if picture_bitrate_max_mbs > PictureBitrateMaxLegacy
-                  if picture_bitrate_max_mbs > PictureBitrateMax2ndGen
-                    errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds legacy and 2nd gen maxima (#{ PictureBitrateMaxLegacy } and #{ PictureBitrateMax2ndGen } Mb/s)"
+                if picture_bitrate_max_mbs > PictureBitrateMaxDCI
+                  if picture_bitrate_max_mbs > PictureBitrateMaxHFR
+                    errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI and HFR maxima (#{ PictureBitrateMaxDCI } and #{ PictureBitrateMaxHFR } Mb/s)"
                     cpl_errors = TRUE
-                  elsif picture_bitrate_max_mbs <= PictureBitrateMax2ndGen
-                    errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds legacy maximum (#{ PictureBitrateMaxLegacy } Mb/s)"
+                  elsif picture_bitrate_max_mbs <= PictureBitrateMaxHFR
+                    errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI maximum (#{ PictureBitrateMaxDCI } Mb/s)"
                     cpl_errors = TRUE
-                    hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds legacy maximum (#{ PictureBitrateMaxLegacy } Mb/s). Playback might fail on legacy systems. Playback might work on 2nd gen systems (IMB)"
+                    hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI maximum (#{ PictureBitrateMaxDCI } Mb/s). Playback might fail on DCI systems. Playback might work on HFR systems"
                   end
                 end
-                if picture_bitrate_max_mbs > PictureBitrateMaxLegacySafe and picture_bitrate_max_mbs <= PictureBitrateMaxLegacy
-                  hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds suggested safe maximum #{ PictureBitrateMaxLegacySafe } Mb/s. Playback might fail on legacy systems"
+                if picture_bitrate_max_mbs > PictureBitrateMaxDCISafe and picture_bitrate_max_mbs <= PictureBitrateMaxDCI
+                  hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds suggested safe maximum #{ PictureBitrateMaxDCISafe } Mb/s. Playback might fail on DCI systems"
                 end
-                if picture_bitrate_avg_mbs > PictureBitrateMaxLegacySafe and picture_bitrate_avg_mbs <= PictureBitrateMaxLegacy
-                  hints << "#{ cpl_reel }: #{ asset.node_name } bitrate average #{ meta[ 'Average BitRate' ] } exceeds suggested safe average #{ PictureBitrateMaxLegacySafe } Mb/s. Playback might fail on legacy systems"
+                if picture_bitrate_avg_mbs > PictureBitrateMaxDCISafe and picture_bitrate_avg_mbs <= PictureBitrateMaxDCI
+                  hints << "#{ cpl_reel }: #{ asset.node_name } bitrate average #{ meta[ 'Average BitRate' ] } exceeds suggested safe average #{ PictureBitrateMaxDCISafe } Mb/s. Playback might fail on DCI systems"
                 end
-                composition_picture_bitrates_max << picture_bitrate_max_mbs
-                composition_picture_bitrates_avg << picture_bitrate_avg_mbs
-
+                if sane_IntrinsicDuration_EntryPoint_Duration == TRUE
+                  composition_picture_bitrates_max << picture_bitrate_max_mbs
+                  composition_picture_bitrates_avg << { :duration => duration, :picture_bitrate_avg_mbs => picture_bitrate_avg_mbs }
+                end
 
 
               end # Check picture
@@ -3139,7 +3146,8 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 end
 
 
-              end # Check audio (asset examination)
+              end # Check audio
+
 
               # This meta_report (and edit_rate) abomination below needs to go. Ugh
               meta_report = [
@@ -3805,9 +3813,13 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     end
   end
 
-  # Composition picture bitrate (average)
-  composition_picture_bitrate_avg = ( composition_picture_bitrates_avg.inject { |sum, el| sum += el }.to_f / composition_picture_bitrates_avg.size ).round( 2 )
-  composition_summary[ :picture_bitrate_avg ] = "#{ composition_picture_bitrate_avg } Mb/s"
+  # Composition picture bitrate (weighted mean)
+  if composition_picture_bitrates_avg.size > 0
+    composition_picture_bitrate_avg = ( composition_picture_bitrates_avg.map { |w| w[ :duration ] * w[ :picture_bitrate_avg_mbs ] }.inject( 0, :+ ) / composition_picture_bitrates_avg.map { |w| w[ :duration ] }.inject( 0, :+ ) ).round( 2 )
+    composition_summary[ :picture_bitrate_avg ] = "#{ composition_picture_bitrate_avg } Mb/s"
+  else
+    composition_summary[ :picture_bitrate_avg ] = "[NaN Mb/s]"
+  end
 
   # Set up composition_channel_count
   composition_channel_count = NIL
@@ -4696,7 +4708,7 @@ begin
 
     # Full audio/image examination?
     if options.audio_analysis or options.image_analysis
-      @dcp_inspect_temp = Ramdisk.new( "dcp_inspect_temp_#{ rand( 2 ** 32 ).to_s( 16 ) }", 2048 )
+      @dcp_inspect_temp = Ramdisk.new( 2048 )
       @logger.debug "Image/audio analysis: Setting up temp location at #{ @dcp_inspect_temp.path }"
       @logger.debug 'Image analysis not yet implemented' if options.image_analysis
     end
