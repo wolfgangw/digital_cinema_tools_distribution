@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2015.01.02'
+AppVersion = 'v1.2015.01.22'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -2988,8 +2988,16 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 picture_stored_width, picture_stored_height = meta[ 'StoredWidth' ], meta[ 'StoredHeight' ]
                 picture_dimensions = "#{ picture_stored_width }x#{ picture_stored_height }"
                 picture_aspect_ratio = ( picture_stored_width.to_f / picture_stored_height.to_f ).round( 3 )
-                picture_bitrate_max_mbs = meta[ 'Max BitRate' ].split( ' ' )[0].to_f
-                picture_bitrate_avg_mbs = meta[ 'Average BitRate' ].split( ' ' )[0].to_f
+                if meta[ 'Max BitRate' ]
+                  picture_bitrate_max_mbs = meta[ 'Max BitRate' ].split( ' ' )[0].to_f
+                else
+                  picture_bitrate_max_mbs = NIL
+                end
+                if meta[ 'Average BitRate' ]
+                  picture_bitrate_avg_mbs = meta[ 'Average BitRate' ].split( ' ' )[0].to_f
+                else
+                  picture_bitrate_avg_mbs = NIL
+                end
 
                 # aspect ratio
                 case picture_aspect_ratio
@@ -3025,21 +3033,25 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 composition_resolutions << picture_dimensions_moniker
 
                 # bitrate
-                if picture_bitrate_max_mbs > PictureBitrateMaxDCI
-                  if picture_bitrate_max_mbs > PictureBitrateMaxHFR
-                    errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI and HFR maxima (#{ PictureBitrateMaxDCI } and #{ PictureBitrateMaxHFR } Mb/s)"
-                    cpl_errors = TRUE
-                  elsif picture_bitrate_max_mbs <= PictureBitrateMaxHFR
-                    errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI maximum (#{ PictureBitrateMaxDCI } Mb/s)"
-                    cpl_errors = TRUE
-                    hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI maximum (#{ PictureBitrateMaxDCI } Mb/s). Playback might fail on DCI systems. Playback might work on HFR systems"
+                if picture_bitrate_max_mbs
+                  if picture_bitrate_max_mbs > PictureBitrateMaxDCI
+                    if picture_bitrate_max_mbs > PictureBitrateMaxHFR
+                      errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI and HFR maxima (#{ PictureBitrateMaxDCI } and #{ PictureBitrateMaxHFR } Mb/s)"
+                      cpl_errors = TRUE
+                    elsif picture_bitrate_max_mbs <= PictureBitrateMaxHFR
+                      errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI maximum (#{ PictureBitrateMaxDCI } Mb/s)"
+                      cpl_errors = TRUE
+                      hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI maximum (#{ PictureBitrateMaxDCI } Mb/s). Playback might fail on DCI systems. Playback might work on HFR systems"
+                    end
+                  end
+                  if picture_bitrate_max_mbs > PictureBitrateMaxDCISafe and picture_bitrate_max_mbs <= PictureBitrateMaxDCI
+                    hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds suggested safe maximum #{ PictureBitrateMaxDCISafe } Mb/s. Playback might fail on DCI systems"
                   end
                 end
-                if picture_bitrate_max_mbs > PictureBitrateMaxDCISafe and picture_bitrate_max_mbs <= PictureBitrateMaxDCI
-                  hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds suggested safe maximum #{ PictureBitrateMaxDCISafe } Mb/s. Playback might fail on DCI systems"
-                end
-                if picture_bitrate_avg_mbs > PictureBitrateMaxDCISafe and picture_bitrate_avg_mbs <= PictureBitrateMaxDCI
-                  hints << "#{ cpl_reel }: #{ asset.node_name } bitrate average #{ meta[ 'Average BitRate' ] } exceeds suggested safe average #{ PictureBitrateMaxDCISafe } Mb/s. Playback might fail on DCI systems"
+                if picture_bitrate_avg_mbs
+                  if picture_bitrate_avg_mbs > PictureBitrateMaxDCISafe and picture_bitrate_avg_mbs <= PictureBitrateMaxDCI
+                    hints << "#{ cpl_reel }: #{ asset.node_name } bitrate average #{ meta[ 'Average BitRate' ] } exceeds suggested safe average #{ PictureBitrateMaxDCISafe } Mb/s. Playback might fail on DCI systems"
+                  end
                 end
                 if sane_IntrinsicDuration_EntryPoint_Duration == TRUE
                   composition_picture_bitrates_max << picture_bitrate_max_mbs
@@ -3155,7 +3167,8 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 meta[ 'ContainerDuration' ] ? meta[ 'EditRate' ] || meta[ 'SampleRate' ] ? Timecode.new( meta[ 'ContainerDuration' ].to_i, asset_edit_rate ).to_s : '[NaN]' : 'ContainerDuration:' + MStr::AssetTypeUnknown,
                 meta[ 'EncryptedEssence' ] ? meta[ 'EncryptedEssence' ] == 'Yes' ? 'encrypted' : 'plaintext' : 'Encrypted:' + MStr::AssetTypeUnknown,
                 asset.node_name =~ /Picture/ ? ( meta[ 'StoredWidth' ] || 'StoredWidth:' + MStr::AssetTypeUnknown ) + 'x' + ( meta[ 'StoredHeight' ] || 'StoredHeight:' + MStr::AssetTypeUnknown ) : '',
-                asset.node_name =~ /Picture/ ? meta[ 'Average BitRate' ] ? meta[ 'Average BitRate' ] : '[NaN] Mb/s' : '',
+                asset.node_name =~ /Picture/ ? meta[ 'Average BitRate' ] ? 'avg ' + meta[ 'Average BitRate' ] : 'avg [NaN Mb/s]' : '',
+                asset.node_name =~ /Picture/ ? meta[ 'Max BitRate' ] ? 'max ' + meta[ 'Max BitRate' ] : 'max [NaN Mb/s]' : '',
                 asset.node_name =~ /Sound/ ?
                   ( meta[ 'ChannelCount' ].to_s + 'ch' || 'ChannelCount:' + MStr::AssetTypeUnknown ) + ' ' +
                   ( audio_sampling_rate == '48000/1' ? '48kHz' : audio_sampling_rate == '96000/1' ? '96kHz' : audio_sampling_rate ) + ' ' +
@@ -3815,10 +3828,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
 
   # Composition picture bitrate (weighted mean)
   if composition_picture_bitrates_avg.size > 0
-    composition_picture_bitrate_avg = ( composition_picture_bitrates_avg.map { |w| w[ :duration ] * w[ :picture_bitrate_avg_mbs ] }.inject( 0, :+ ) / composition_picture_bitrates_avg.map { |w| w[ :duration ] }.inject( 0, :+ ) ).round( 2 )
-    composition_summary[ :picture_bitrate_avg ] = "#{ composition_picture_bitrate_avg } Mb/s"
+    if ! ( composition_picture_bitrates_avg.map { |e| e.values }.flatten.include? NIL )
+      composition_picture_bitrate_avg = ( composition_picture_bitrates_avg.map { |w| w[ :duration ] * w[ :picture_bitrate_avg_mbs ] }.inject( 0, :+ ) / composition_picture_bitrates_avg.map { |w| w[ :duration ] }.inject( 0, :+ ) ).round( 2 )
+      composition_summary[ :picture_bitrate_avg ] = "Avg #{ composition_picture_bitrate_avg } Mb/s"
+    else
+      composition_summary[ :picture_bitrate_avg ] = "Avg [NaN Mb/s]"
+    end
   else
-    composition_summary[ :picture_bitrate_avg ] = "[NaN Mb/s]"
+    composition_summary[ :picture_bitrate_avg ] = "Avg [NaN Mb/s]"
   end
 
   # Set up composition_channel_count
