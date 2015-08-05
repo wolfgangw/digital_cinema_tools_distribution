@@ -17,7 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-AppVersion = "v0.2014.03.09"
+AppVersion = "v0.2015.08.05"
 #
 # Cinemaslides offers preview modes, a basic set of transition types 
 # and a basic set of DCP authoring options.
@@ -2926,6 +2926,10 @@ unless @source_audio[ :orig_name ].empty?
         SMPTE_AUDIO_LABEL = '5.1'
       when 8
         SMPTE_AUDIO_LABEL = '7.1'
+      when 12, 16
+        SMPTE_AUDIO_LABEL = 'WTF'
+      else
+        SMPTE_AUDIO_LABEL = 'WTF' # well ...
       end
     else
       @logger.critical( 'Differing channel counts in audio source. This will not work' )
