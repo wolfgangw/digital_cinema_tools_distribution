@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2015.01.27'
+setup_version='v1.2015.02.20'
 #
 # Usage:
 #
@@ -557,7 +557,7 @@ then
     # Install Nokogiri gem
     if ! gem install nokogiri
     then
-      errors+=("Nokogiri: Failed to install rtequired gem nokogiri") && echo_last errors[@]
+      errors+=("Nokogiri: Failed to install required gem nokogiri") && echo_last errors[@]
     else
       rbenv rehash
       echo 'Nokogiri: Installed gem nokogiri'
