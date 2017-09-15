@@ -3,7 +3,7 @@
 #
 # dcp_inspect checks and validates DCPs (Digital Cinema Packages)
 #
-# 2011-2014 Wolfgang Woehl
+# 2011-2017 Wolfgang Woehl
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2015.04.09'
+AppVersion = 'v1.2017.07.11'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -51,7 +51,7 @@ AppStartSeconds = Time.now
 #
 # - Checks and verifies signatures
 #
-# - Reports detailed composition overviews
+# - Reports detailed composition information
 #
 # - Deep-inspects compositions. This includes composition type consistency
 #   and completeness checks. dcp_inspect goes through some lengths to determine
@@ -153,6 +153,8 @@ RUBY_TYPE_ERROR = 20
 RUBY_EXCEPTION = 21
 GRACEFUL_SHUTDOWN = 22
 LIB_LOAD_ERROR = 23
+RUBY_NAME_ERROR = 24
+RUBY_ARGUMENT_ERROR = 25
 
 # Constants
 PictureBitrateMaxDCI = 250.0 # Mb/s
@@ -199,17 +201,17 @@ class Options
   def self.parse( args )
     # defaults
     options = OpenStruct.new
-    options.check_hashes = TRUE
+    options.check_hashes = true
     options.check_hashes_limit = :no_limit
-    options.image_analysis = FALSE # not yet implemented
-    options.audio_analysis = TRUE
-    options.validate = TRUE
-    options.as_asset_store = FALSE
+    options.image_analysis = false # not yet implemented
+    options.audio_analysis = true
+    options.validate = true
+    options.as_asset_store = false
     options.verbosity = [ 'debug', 'dev' ]
-    options.logfile = NIL
-    options.logfile_append = NIL
-    options.logfile_autolog = FALSE
-    options.overwrite_logfile = FALSE
+    options.logfile = nil
+    options.logfile_append = nil
+    options.logfile_autolog = nil
+    options.overwrite_logfile = false
     options.verbosity_choices = [ 'quiet', 'dev', 'errors', 'hints', 'info', 'cpl', 'debug', 'trace_func' ]
 
     opts = OptionParser.new do |opts|
@@ -219,22 +221,22 @@ Usage: #{ AppName } [options] <location>
 
 BANNER
       opts.on( '--nh', '--no-hash', 'No asset hash checks' ) do
-        options.check_hashes = FALSE
+        options.check_hashes = false
       end
       opts.on( '--hl', '--hash-limit limit', String, 'Limit asset hash checks to assets smaller than limit. E.g. 700KB, 50MB or 1GB (Default: No limit)' ) do |p|
         options.check_hashes_limit = p.downcase
       end
       opts.on( '--ni', '--no-image-analysis', 'No image analysis (Image analysis not yet implemented)' ) do
-        options.image_analysis = FALSE
+        options.image_analysis = false
       end
       opts.on( '--na', '--no-audio-analysis', 'No audio analysis' ) do
-        options.audio_analysis = FALSE
+        options.audio_analysis = false
       end
       opts.on( '--no-schema', 'Skip schema checks' ) do
-        options.validate = FALSE
+        options.validate = false
       end
       opts.on( '-s', '--as-asset-store', 'Simulate asset store by merging all collected AM dictionaries' ) do
-        options.as_asset_store = TRUE
+        options.as_asset_store = true
       end
       opts.on( '-l', '--logfile path', String, 'Write full report to logfile at path' ) do |p|
         options.logfile = p
@@ -243,10 +245,10 @@ BANNER
         options.logfile_append = p
       end
       opts.on( '--autolog', "Write full report to $DCP_INSPECT_DIR. (Default: Don't)" ) do
-        options.logfile_autolog = TRUE
+        options.logfile_autolog = true
       end
       opts.on( '-L', '--overwrite-logfile', 'Overwrite logfile (Default: Do not overwrite if logfile exists)' ) do
-        options.overwrite_logfile = TRUE
+        options.overwrite_logfile = true
       end
       opts.on( '-v', '--verbosity cutout', Array, "Use quiet, errors, hints, info, debug or cpl. Specify multiple cutouts like '-v errors,info' (Default: debug)" ) do |p|
         options.verbosity = [] # option was given so reset
@@ -282,28 +284,28 @@ class DLogger
   attr_reader :is_quiet, :prints_dev, :prints_errors, :prints_hints, :prints_info, :prints_debug, :prints_cr, :prints_cpl, :writes_logfile, :logfile, :writes_autolog
   def initialize( prefix, options )
     @prefix = prefix
-    @full_log = ( options.logfile || options.logfile_autolog || options.logfile_append ? Array.new : NIL )
+    @full_log = ( options.logfile || options.logfile_autolog || options.logfile_append ? Array.new : nil )
 
-    @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE ]
+    @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ false, false, false, false, false, false, false ]
     options.verbosity.each do |cutout|
       case cutout
-      when 'quiet'  then @errors, @hints, @info, @debug, @cr, @cpl = [ FALSE, FALSE, FALSE, FALSE, FALSE, FALSE ]; @is_quiet = TRUE; break
-      when 'debug'  then @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE ]; @is_quiet = FALSE; break
-      when 'dev'    then @dev = TRUE
-      when 'errors' then @errors = TRUE
-      when 'hints'  then @hints = TRUE
-      when 'info'   then @info = TRUE
-      when 'cpl'    then @cpl = TRUE
+      when 'quiet'  then @is_quiet = true; break
+      when 'debug'  then @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ false, true, true, true, true, true, true ]; @is_quiet = false; break
+      when 'dev'    then @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ true, true, true, true, true, true, true ]; @is_quiet = false; break
+      when 'errors' then @errors = true
+      when 'hints'  then @hints = true
+      when 'info'   then @info = true
+      when 'cpl'    then @cpl = true
       when 'trace_func'
-        @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE ]
+        @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ true, false, false, false, false, false, false ]; @is_quiet = false
         set_trace_func proc { |event, file, line, id, binding, classname|
           printf "%8s %s:%-2d %10s %8s\n", event, file, line, id, classname
         }
       end
     end
 
-    @writes_logfile = TRUE if options.logfile
-    @writes_autolog = TRUE if options.logfile_autolog
+    @writes_logfile = true if options.logfile
+    @writes_autolog = true if options.logfile_autolog
     @logfile = options.logfile
     @prints_dev, @prints_errors, @prints_hints, @prints_info, @prints_debug, @prints_cr, @prints_cpl = @dev, @errors, @hints, @info, @debug, @cr, @cpl
     @color = Hash.new
@@ -400,14 +402,14 @@ module MxfTools
     major, minor, patchlevel = asdcplib_version
     case major
     when 1
-      TRUE
+      true
     else
-      FALSE
+      false
     end
   end
 
   def mxf_inspect( filename )
-    errors_present = FALSE
+    errors_present = false
     out, err, status = Shell.asdcp_mxf_info( filename )
     if err =~ /EditRate and SampleRate do not match/ and err =~ /File may contain JPEG Interop stereoscopic images/
       # With 1.12.58 this is not required anymore. Keep it for backwards compat
@@ -423,7 +425,7 @@ module MxfTools
         return nil
       elsif out =~ /essence type is/
         # See e.g. Fox Format Test 2D-2k-50 (scope v1.0) (CPL 3452c9ed, MXF 20f97e4e)
-        errors_present = TRUE
+        errors_present = true
       end
     end
 
@@ -457,7 +459,7 @@ class Ramdisk
   def initialize( size )
     @diskname = "#{ AppName }_#{ rand( 2 ** 32 ).to_s( 16 ) }"
     @size = size
-    @device = NIL
+    @device = nil
     result = make_ramdisk
   end
 
@@ -487,13 +489,13 @@ class Ramdisk
       out, err, status = Open3.capture3( "hdiutil attach -nobrowse -nomount ram://#{ @size }" )
       @device = out.chomp
       out, err, status = Open3.capture3( "diskutil erasevolume HFS+ '#{ @diskname }' #{ @device }" )
-      TRUE
+      true
     when /linux/
       out, err, status = Open3.capture3( "mkdir #{ self.path }" )
       @device = self.path
-      TRUE
+      true
     else
-      FALSE
+      false
     end
   end
 end
@@ -556,7 +558,7 @@ def rmfifo( fifo_name )
 end
 
 
-def audio_characteristics( ramdisk, asset_file, channel_count, entry_point, duration, key = NIL )
+def audio_characteristics( ramdisk, asset_file, channel_count, entry_point, duration, key = nil )
   fifo_tokens = Array.new
   asdcp_prefix_token = File.join( ramdisk.path, 'asdcp-temp-audio' )
   ( 1 .. channel_count ).each do |ch|
@@ -594,7 +596,7 @@ module MStr
   Interop_am  = 'http://www.digicine.com/PROTO-ASDCP-AM-20040311#'
   Interop_pkl = 'http://www.digicine.com/PROTO-ASDCP-PKL-20040311#'
   Interop_cpl = 'http://www.digicine.com/PROTO-ASDCP-CPL-20040511#'
-  Composition_metadata_href = 'http://isdcf.com/schemas/draft/2011/cpl-metadata'
+  Composition_metadata_href = [ 'http://isdcf.com/schemas/draft/2011/cpl-metadata', 'http://www.smpte-ra.org/schemas/429-16/2014/CPL-Metadata' ]
 
   Ns_Xmldsig  = 'http://www.w3.org/2000/09/xmldsig#'
 
@@ -647,7 +649,7 @@ module MStr
 
   Cpl_content_kind_default_scope = 'http://www.smpte-ra.org/schemas/429-7/2006/CPL#standard-content'
   Cpl_standard_content = [ 'feature', 'trailer', 'test', 'teaser', 'rating', 'advertisement', 'short', 'transitional', 'psa', 'policy' ]
-  Cpl_standard_content_moniker_map = { :ftr => :feature, :tlr => :trailer, :tst => :test, :tsr => :teaser, :rtg => :rating, :pol => :policy, :adv => :advertisement, :shr => :short, :xsn => :transitional, :psa => :psa, :pol => :policy  }
+  Cpl_standard_content_moniker_map = { :ftr => :feature, :tlr => :trailer, :tst => :test, :tsr => :teaser, :rtg => :rating, :pol => :policy, :adv => :advertisement, :shr => :short, :xsn => :transitional, :psa => :psa }
 
   #
   # RFC-4122:
@@ -1268,7 +1270,7 @@ def parse_dcsubtitle_tc_string( tc_string, fps )
   when /\d\d:\d\d:\d\d\.\d\d\d/ # hh:mm:ss.sss
     Timecode.parse( tc_string, fps )
   else
-    NIL
+    nil
   end
 end
 
@@ -1284,19 +1286,19 @@ class DC_Signer_Crypto_Compliance
     @context, @errors[ :pre_context ] = find_crypto_context( certs )
     if @errors[ :pre_context ].empty?
       @errors[ :context ], @types_seen = check_compliance
-      if @errors[ :pre_context ].empty? and @errors[ :context ].values.flatten.empty? and @chain_verified == TRUE
+      if @errors[ :pre_context ].empty? and @errors[ :context ].values.flatten.empty? and @chain_verified == true
         if @types_seen.uniq.size == 1
           @type = @types_seen.first
-          @crypto_context_valid = TRUE
+          @crypto_context_valid = true
         else
           @type = 'Mixed'
-          @crypto_context_valid = FALSE
+          @crypto_context_valid = false
         end
       else
-        @crypto_context_valid = FALSE
+        @crypto_context_valid = false
       end
     else
-      @crypto_context_valid = FALSE
+      @crypto_context_valid = false
     end
   end # crypto_context
 
@@ -1320,7 +1322,7 @@ class DC_Signer_Crypto_Compliance
         end
       end
     end
-    msgs << "Chain signatures #{ @chain_verified == TRUE ? 'verified' : 'verification failed' }"
+    msgs << "Chain signatures #{ @chain_verified == true ? 'verified' : 'verification failed' }"
     if total_errors == 0
       msgs << "Compliant certificate chain found: #{ @type } (#{ context.to_a.sizmsgs } certificates, 0 errors)"
     else
@@ -1344,7 +1346,7 @@ class DC_Signer_Crypto_Compliance
 
     # Find root ca and collect issuers
     # ruby version of CTP's dsig_cert.py
-    root = NIL
+    root = nil
     issuer_map = Hash.new
 
     context.each do |cert|
@@ -1359,7 +1361,7 @@ class DC_Signer_Crypto_Compliance
         issuer_map[ cert.issuer.to_s ] = cert
       end
     end
-    if root == NIL
+    if root == nil
       pre_context_errors << 'Self-signed root certificate not found'
       return [], pre_context_errors
     end
@@ -1398,7 +1400,7 @@ class DC_Signer_Crypto_Compliance
     types_seen = Array.new
     @context.each_with_index do |member, index|
       cert = member
-      type = NIL
+      type = nil
       errors = Array.new
       errors << 'Not a X509 certificate' unless cert.is_a?( OpenSSL::X509::Certificate )
       # ctp sections:
@@ -1603,7 +1605,7 @@ class DC_Signer_Crypto_Compliance
         cn_subject = field_cn_subject.first[ 1 ]
         cn_subject_roles = cn_subject.split( /\..+/ )
         if cn_subject_roles.empty?
-          roles = NIL
+          roles = nil
         else
           roles = cn_subject_roles.first.split( ' ' )
         end
@@ -1660,16 +1662,16 @@ class DC_Signer_Crypto_Compliance
       if index == 0 then issuer = cert else issuer = certs[ index - 1 ] end
       begin
         check = cert.verify issuer.public_key
-        context_errors[ cert.subject.to_s ] << 'Verification with issuer public key failed' if check == FALSE
+        context_errors[ cert.subject.to_s ] << 'Verification with issuer public key failed' if check == false
         verification << check
       rescue Exception => e
         verification << e
       end
     end
-    if verification.uniq.size == 1 and verification.first == TRUE
-      return TRUE, context_errors
+    if verification.uniq.size == 1 and verification.first == true
+      return true, context_errors
     else
-      return FALSE, context_errors
+      return false, context_errors
     end
   end
 
@@ -1731,21 +1733,21 @@ class DC_Signature_Verification
   def report
     if @signature_node.size == 1
       case @reference_digests_check
-      when TRUE
+      when true
         @messages << 'Document and SignedInfo match'
         case @signature_value_check
-        when TRUE
+        when true
           @messages << 'Signature value and SignedInfo match'
-        when FALSE
+        when false
           @messages << 'Signature value and SignedInfo do not match'
         end
 
-      when FALSE
+      when false
         @messages << 'Document and SignedInfo do not match'
         case @signature_value_check
-        when TRUE
+        when true
           @messages << 'Signature value and SignedInfo match'
-        when FALSE
+        when false
           @messages << 'Signature value and SignedInfo do not match'
         end
       end
@@ -1820,7 +1822,7 @@ class DC_Signature_Verification
     end
 
     # 2.c Abort if none or more than 1 Signer or Signature node
-    return FALSE if ( @signer_node.size != 1 or @signature_node.size != 1 )
+    return false if ( @signer_node.size != 1 or @signature_node.size != 1 )
 
     # 3. Extract and check signer certs
     certs = extract_certs( doc, sig_ns, prefix )
@@ -1831,7 +1833,7 @@ class DC_Signature_Verification
         @crypto.errors[ :pre_context ].each do |e|
           @messages << e
         end
-        return FALSE
+        return false
       else
         # Compliance issues in the extracted certs.
         # List those errors but then try to continue anyway,
@@ -1856,7 +1858,7 @@ class DC_Signature_Verification
     @reference_digests_check = check_references( doc, sig_ns, prefix )
     @signature_value_check = check_signature_value( doc, sig_ns, prefix, pub_k )
 
-    return TRUE
+    return true
   end # signature_verify
 
   def check_signature_value( doc, sig_ns, prefix, pub_k )
@@ -1865,7 +1867,7 @@ class DC_Signature_Verification
     signature_value_doc = extract_signature_value( doc, sig_ns, prefix )
     if signature_value_doc.size != pub_k.n.to_i.size
       @messages << "Invalid signature: sig_doc: #{ signature_value_doc.size } octets (RSA modulus: #{ pub_k.n.to_i.size } octets)"
-      return FALSE
+      return false
     end
     signed_info_c14n_xml = signed_info_c14n( doc, sig_ns, prefix )
 
@@ -1878,9 +1880,9 @@ class DC_Signature_Verification
   end
 
   def check_references( doc, sig_ns, prefix )
-    check = TRUE
+    check = true
     references = doc_references( doc, sig_ns, prefix )
-    check = FALSE if references.size == 0
+    check = false if references.size == 0
     @messages << "Found #{ references.size } reference#{ references.size != 1 ? 's' : '' }"
     references.each do |ref|
       digest_algo = doc_reference_digest_method_algorithm( ref, sig_ns, prefix )
@@ -1895,7 +1897,7 @@ class DC_Signature_Verification
             ref_xml = extract_uri( doc, uri ).canonicalize
           else
             @messages << 'Reference URI not valid'
-            check = FALSE
+            check = false
             next
           end
         end
@@ -1906,7 +1908,7 @@ class DC_Signature_Verification
           @messages << 'Reference digest value correct'
         else
           @messages << 'Reference digest value not correct'
-          check = FALSE
+          check = false
         end
       else
         # not reached if doc was validated against schema
@@ -2226,28 +2228,28 @@ def validate_xml( xml, file )
   else
     if xml.namespaces.empty?
       errors << "Could not determine Schema (no namespace provided)"
-      return FALSE, errors
+      return false, errors
     else
       errors << "Could not determine Schema for #{ xml.namespaces.inspect }"
-      return FALSE, errors
+      return false, errors
     end
   end
   if validation_errors.empty?
-    return TRUE, errors
+    return true, errors
   else
     validation_errors.each do |e|
       errors << "Schema check: #{ File.basename xsd_file } #{ file } line #{ e.line }: #{ e }"
     end
-    return FALSE, errors
+    return false, errors
   end
 end
 
 def validation( errors, error_status, xml, source_file, id, type_indicator )
   valid, validation_errors = validate_xml( xml, source_file )
-  if valid == FALSE
+  if valid == false
     validation_errors.each do |e|
       errors << "#{ type_indicator } #{ id }: #{ e }"
-      error_status = TRUE
+      error_status = true
     end
   end
   return valid, errors, error_status
@@ -2266,11 +2268,11 @@ def errors_signature_verification( errors, error_status, signature_result, id, f
     # with dc specific certificate properties. Report those.
     if ! signature_result.crypto.errors[ :context ].values.flatten.empty?
       errors << "#{ type_indicator } #{ id }: Signature: #{ signature_result.crypto.errors[ :context ].inspect }"
-      error_status = TRUE
+      error_status = true
     end
   else
     errors << "#{ type_indicator } #{ id }: Signature verification failure:\n\t#{ signature_result.messages.join( "\n\t" ) }"
-    error_status = TRUE
+    error_status = true
   end
   return errors, error_status
 end
@@ -2284,7 +2286,7 @@ def get_xml_of_type( asdcp_type, file, errors, errors_status )
     xml = Nokogiri::XML( open file )
   rescue Exception => e
     @logger.info "#{ file }: #{ e.message }"
-    return FALSE, errors, errors_status
+    return false, errors, errors_status
   end
 
   unless xml.errors.empty?
@@ -2292,10 +2294,10 @@ def get_xml_of_type( asdcp_type, file, errors, errors_status )
       # expected errors from non-xml
       next if error.message =~ /Start tag expected/ or error.message =~ /Document is empty/
       errors << "Syntax error: #{ file }: #{ error }"
-      errors_status = TRUE
+      errors_status = true
       @logger.info errors.last
     end
-    return FALSE, errors, errors_status
+    return false, errors, errors_status
   end
 
   if xml.root
@@ -2303,10 +2305,10 @@ def get_xml_of_type( asdcp_type, file, errors, errors_status )
     when asdcp_type
       return xml, errors, errors_status
     else
-      return FALSE, errors, errors_status
+      return false, errors, errors_status
     end
   else
-    return FALSE, errors, errors_status
+    return false, errors, errors_status
   end
 end
 
@@ -2314,10 +2316,10 @@ def xml?( file )
   begin
     xml = Nokogiri::XML( open file )
   rescue Exception => e
-    return FALSE
+    return false
   end
   if xml.root.nil?
-    return FALSE
+    return false
   else
     xml
   end
@@ -2325,7 +2327,7 @@ end
 
 # FIXME Rather brittle mechanism here. I'd like to have infrastructure types show up (CompositionPlaylist, PackingList, DCSubtitle, DCMetadata)
 def get_asset_uuid( file )
-  id = NIL
+  id = nil
   if File.exists?( file )
     xml = xml?( file )
     if xml
@@ -2398,7 +2400,7 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
   required_parts = MStr::Naming_convention.keys
   required_parts.delete( :i3d_specs ) unless ( is_stereoscopic && i3d_specs_required )
   if ( is_stereoscopic && i3d_specs_required ) then expected_number_of_parts = 12 else expected_number_of_parts = 11 end
-  required_parts.each do |rp| misses[ rp ] = FALSE end
+  required_parts.each do |rp| misses[ rp ] = false end
   hints << "CPL #{ cpl_id }: Naming convention: ContentTitleText #{ title.inspect } contains whitespace" if title =~ /\s+/
 
   #
@@ -2409,10 +2411,10 @@ def naming_convention_compliant?( cpl_id, title, is_stereoscopic, i3d_specs_requ
   regexp[ :date ] = MStr::Naming_convention[ :date ][ :re ]
   regexp[ :facility ] = MStr::Naming_convention[ :facility ][ :re ]
   parts_clone = parts.dup
-  studio_match = FALSE
+  studio_match = false
   parts_clone.each_with_index do |part, part_index|
     if part =~ regexp[ :studio ] and parts_clone[ part_index + 1 ] =~ regexp[ :date ]
-      studio_match = TRUE
+      studio_match = true
       matches[ :studio ] = part
       misses.delete( :studio )
       required_parts.delete( :studio )
@@ -2541,16 +2543,16 @@ def confirm_or_create( location )
     begin
       result = FileUtils.touch( testfile )
       File.delete( testfile )
-      return TRUE
+      return true
     rescue Exception => result
-      return FALSE
+      return false
     end
   else
     begin
       result = FileUtils.mkdir_p( location )
-      return TRUE
+      return true
     rescue Exception => result
-      return FALSE
+      return false
     end
   end
 end
@@ -2571,7 +2573,7 @@ end
 
 # lib/cpl.rb
 def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, options )
-  cpl_errors = FALSE
+  cpl_errors = false
   report = Array.new
   reels_report = Array.new
   cpl_referenced_assets = Array.new
@@ -2581,6 +2583,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   cpl_reels_references_complete = Array.new
 
   ns = xml.collect_all_namespaces_href_keys
+  @logger.dev "CPL all namespaces href keys: #{ ns }"
   cpl_ns = xml.root.namespace.href
   cpl_ns_prefix = namespace_prefix( xml, cpl_ns )
   cpl_id = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Id" ).text.split( ':' ).last
@@ -2596,7 +2599,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     errors << "CPL #{ cpl_id }: Default namespace unknown: #{ cpl_ns }: #{ cpl_file }"
     errors << "CPL #{ cpl_id }: Default namespace unknown: This might be a dcp_inspect bug. If you think it is ..."
     errors << "CPL #{ cpl_id }: Default namespace unknown: ... please file an issue at https://github.com/wolfgangw/backports/issues/new"
-    cpl_errors = TRUE
+    cpl_errors = true
   end
   cpl_referenced_assets_types << cpl_type
 
@@ -2607,7 +2610,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
       report << "CPL #{ cpl_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }"
     rescue Exception => e
       errors << "CPL #{ cpl_id }: Exception in Schema check: #{ e.message }"
-      cpl_errors = TRUE
+      cpl_errors = true
       report << errors.last
     end
   end
@@ -2639,12 +2642,12 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
       if sig_info[ :x509serialnumber ] != sig_info[ :cert_serial ]
         report << "Signer serial mismatch: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
         errors << "CPL #{ cpl_id }: Signer serial mismatch: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
-        cpl_errors = TRUE
+        cpl_errors = true
       end
     else
       report << 'Signer info :x509serialnumber or :cert_serial could not be retrieved'
       errors << "CPL #{ cpl_id }: Signer info :x509serialnumber or :cert_serial could not be retrieved"
-      cpl_errors = TRUE
+      cpl_errors = true
     end
   end
 
@@ -2652,7 +2655,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   if cpl_id !~ MStr::Uuid_rfc4122_re
     report << "CPL Id:           #{ cpl_id } [Not RFC-4122 compliant]"
     errors << "CPL #{ cpl_id }: Value of CompositionPlaylist:Id is not RFC-4122 compliant"
-    cpl_errors = TRUE
+    cpl_errors = true
   else
     report << "CPL Id:           #{ cpl_id }"
   end
@@ -2686,7 +2689,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   # Check ContentKind
   content_kind_nodeset = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ContentKind" )
   content_kind = content_kind_nodeset.text
-  content_kind_scope_is_default = FALSE
+  content_kind_scope_is_default = false
   if content_kind_nodeset.first
     content_kind_scope = content_kind_nodeset.first.attributes[ 'scope' ]
   end
@@ -2696,13 +2699,13 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   else
     if content_kind_scope
       if content_kind_scope.value == MStr::Cpl_content_kind_default_scope
-        content_kind_scope_is_default = TRUE
+        content_kind_scope_is_default = true
       else
         hints << "CPL #{ cpl_id }: ContentKind has non-standard scoped value #{ content_kind.inspect }. May lead to display issues in player UIs"
         report << "ContentKind:      #{ content_kind } [Non-standard scope #{ content_kind_scope.value.inspect }]"
       end
     else
-      content_kind_scope_is_default = TRUE
+      content_kind_scope_is_default = true
     end
     if content_kind_scope_is_default
       if MStr::Cpl_standard_content.include? content_kind
@@ -2719,7 +2722,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   if issue_date
     if issue_date.text.empty?
       errors << "CPL #{ cpl_id }: IssueDate is empty"
-      cpl_errors = TRUE
+      cpl_errors = true
       report << "IssueDate:        [Empty -- See schema errors #{ error_output }]"
     else
       begin
@@ -2727,7 +2730,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
         now_dt = DateTime.now
       rescue Exception => e
         errors << "CPL #{ cpl_id }: Can not parse IssueDate #{ issue_date.text.inspect }"
-        cpl_errors = TRUE
+        cpl_errors = true
       end
       if issue_date_dt
         if issue_date_dt >= now_dt
@@ -2782,11 +2785,15 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   # Metadata // CMA
   # FIXME: For now this is merely a printout. We don't check against actual asset metadata
   #
-  if ns.keys.include? MStr::Composition_metadata_href
-    cma = xml.xpath( '//meta:CompositionMetadataAsset/meta:*', 'meta' => MStr::Composition_metadata_href )
+  @logger.dev "CPL ns keys: #{ ns.keys }"
+  if ( ns.keys & MStr::Composition_metadata_href ).any?
+    cma_href_match = ( ns.keys & MStr::Composition_metadata_href ).first
+    @logger.dev "CPL We have CompositionMetadataAsset: #{ cma_href_match }"
+    cma = xml.xpath( '//meta:CompositionMetadataAsset/meta:*', 'meta' => cma_href_match )
     if cma
       report << 'CompositionMetadataAsset:'
       cma.each do |e|
+        @logger.dev "                  #{ e.node_name }: #{ e.text }"
         report << "                  #{ e.node_name }: #{ e.text }"
       end
     end
@@ -2807,11 +2814,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   broken_assets = Array.new
   reels_references = Array.new
   is_stereoscopic = Array.new # build a flag for naming convention checks
-  composition_aspect_ratios = Array.new
-  composition_resolutions = Array.new
+  composition_picture_aspect_ratios = Array.new
+  composition_picture_resolutions = Array.new
+  composition_picture_decomposition_levels = Array.new
   composition_picture_bitrates_max = Array.new
   composition_picture_bitrates_avg = Array.new
-  composition_channel_counts = Array.new
+  composition_sound_channel_formats = Array.new
+  composition_sound_channel_counts = Array.new
+  composition_sound_samplerates = Array.new
   supplemental_refs = { :main_picture => 0, :main_sound => 0, :main_subtitle => 0, :main_caption => 0 }
 
   reels.each_with_index do |reel, index|
@@ -2830,7 +2840,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     assets_required_unique = asset_node_names - [ 'ClosedCaption', 'MainCaption', 'ClosedSubtitle' ]
     if assets_required_unique.uniq.size != assets_required_unique.size
       errors << "#{ cpl_reel }: Found duplicate asset kinds"
-      cpl_errors = TRUE
+      cpl_errors = true
     end
 
     # Check a whole bunch of other things
@@ -2845,21 +2855,21 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
       # Collect reel referenced EssenceTypes (mainly to check for SMPTE reel completeness)
       case asset.node_name
       when 'MainPicture', 'MainStereoscopicPicture'
-        reels_references[ index ][ :picture ] = TRUE
+        reels_references[ index ][ :picture ] = true
       when 'MainSound'
-        reels_references[ index ][ :sound ] = TRUE
+        reels_references[ index ][ :sound ] = true
       when 'MainSubtitle'
-        reels_references[ index ][ :subtitle ] = TRUE
+        reels_references[ index ][ :subtitle ] = true
       when 'ClosedCaption'
-        reels_references[ index ][ :caption ] = TRUE
+        reels_references[ index ][ :caption ] = true
       end
 
       # Build a flag collection for naming convention checks: is_stereoscopic?
       case asset.node_name
       when 'MainPicture'
-        is_stereoscopic[ index ] = FALSE
+        is_stereoscopic[ index ] = false
       when 'MainStereoscopicPicture'
-        is_stereoscopic[ index ] = TRUE
+        is_stereoscopic[ index ] = true
       end
 
       asset_ns = asset.namespaces
@@ -2870,7 +2880,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
       if asset.xpath( "#{ cpl_ns_prefix }:KeyId", asset_ns )
         cpl_key_id = asset.xpath( "#{ cpl_ns_prefix }:KeyId", asset_ns ).text.split( ':' ).last
       else
-        cpl_key_id = NIL
+        cpl_key_id = nil
       end
 
       # FIXME Timecode will die on edit_rate == 0
@@ -2904,7 +2914,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
               # Check asset Id for RFC-4122 compliance. All assets except DCSubtitle require this
               if asset_id !~ MStr::Uuid_rfc4122_re
                 errors << "#{ cpl_reel }: Listed asset Id #{ asset_id } is not RFC-4122 compliant"
-                cpl_errors = TRUE
+                cpl_errors = true
               end
 
               # Get asset edit rate early
@@ -2913,20 +2923,20 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 asset_edit_rate = Rational( n, d ).to_f
               rescue Exception => e
                 errors << "#{ cpl_reel }: Could not scrounge edit rate from #{ asset.node_name } asset #{ asset_id }"
-                cpl_errors = TRUE
+                cpl_errors = true
               end
 
               # Label types Interop/SMPTE
               case meta[ 'Label Set Type' ]
               when 'MXF Interop'
-                cpl_referenced_assets << { asset_id => TRUE }
+                cpl_referenced_assets << { asset_id => true }
                 cpl_referenced_assets_types << MStr::AssetTypeInterop
               when 'SMPTE'
-                cpl_referenced_assets << { asset_id => TRUE }
+                cpl_referenced_assets << { asset_id => true }
                 cpl_referenced_assets_types << MStr::AssetTypeSmpte
               else
                 broken_assets << asset_id
-                cpl_referenced_assets << { asset_id => FALSE }
+                cpl_referenced_assets << { asset_id => false }
                 cpl_referenced_assets_types << MStr::AssetTypeUnknown
               end
 
@@ -2939,43 +2949,43 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                       cpl_referenced_assets_encrypted << asset_id
                     else
                       case cpl_key_id
-                      when NIL
-                        errors << "#{ cpl_reel }: #{ asset.node_name }: References encrypted asset but KeyId is [NIL]: #{ asset_id }"
-                        cpl_errors = TRUE
+                      when nil
+                        errors << "#{ cpl_reel }: #{ asset.node_name }: References encrypted asset but KeyId is [nil]: #{ asset_id }"
+                        cpl_errors = true
                       else
                         errors << "#{ cpl_reel }: #{ asset.node_name }: KeyId and CryptographicKeyID mismatch: #{ asset_id }: #{ asset_file }"
-                        cpl_errors = TRUE
+                        cpl_errors = true
                       end
                     end
                   else
                     errors << "#{ cpl_reel }: #{ asset.node_name }: Could not read CryptographicKeyID in #{ asset_file }"
-                    cpl_errors = TRUE
+                    cpl_errors = true
                   end
                 end
               else
                 errors << "#{ cpl_reel }: #{ asset.node_name }: Could not read EncryptedEssence Yes/No in #{ asset_file }"
-                cpl_errors = TRUE
+                cpl_errors = true
               end
 
               # IntrinsicDuration / EntryPoint / Duration sane?
-              sane_IntrinsicDuration_EntryPoint_Duration = TRUE
+              sane_IntrinsicDuration_EntryPoint_Duration = true
               if intrinsic_duration - entry_point < duration
                 errors << "#{ cpl_reel }: Duration #{ duration } in #{ asset.node_name } does not compute: IntrinsicDuration #{ intrinsic_duration } - EntryPoint #{ entry_point } < Duration #{ duration }"
-                sane_IntrinsicDuration_EntryPoint_Duration = FALSE
-                cpl_errors = TRUE
+                sane_IntrinsicDuration_EntryPoint_Duration = false
+                cpl_errors = true
               end
               if entry_point >= intrinsic_duration
                 exceed_frames = entry_point + 1 - intrinsic_duration
                 errors << "#{ cpl_reel }: EntryPoint #{ entry_point } in #{ asset.node_name } exceeds IntrinsicDuration #{ intrinsic_duration } by #{ amount( 'frame', exceed_frames ) }"
-                sane_IntrinsicDuration_EntryPoint_Duration = FALSE
-                cpl_errors = TRUE
+                sane_IntrinsicDuration_EntryPoint_Duration = false
+                cpl_errors = true
               end
               if intrinsic_duration != meta[ 'ContainerDuration' ].to_i
                 errors << "#{ cpl_reel }: IntrinsicDuration #{ intrinsic_duration } in #{ asset.node_name } does not match ContainerDuration #{ meta[ 'ContainerDuration' ].nil? ? '[NaN]' : meta[ 'ContainerDuration' ] } of asset #{ asset_id }"
                 if meta[ 'ContainerDuration' ].to_i - entry_point < duration
                   errors << "#{ cpl_reel }: Duration #{ duration } in #{ asset.node_name } does not compute: ContainerDuration #{ meta[ 'ContainerDuration' ] } of asset #{ asset_id } - EntryPoint #{ entry_point } < Duration #{ duration }"
-                  sane_IntrinsicDuration_EntryPoint_Duration = FALSE
-                  cpl_errors = TRUE
+                  sane_IntrinsicDuration_EntryPoint_Duration = false
+                  cpl_errors = true
                 end
               end
               if sane_IntrinsicDuration_EntryPoint_Duration
@@ -2985,18 +2995,33 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
               # Check picture
               case asset.node_name
               when 'MainPicture', 'MainStereoscopicPicture'
+
+                # decomposition levels
+                if meta[ 'DecompositionLevels' ]
+                  picture_decomposition_levels = meta[ 'DecompositionLevels' ].to_i
+                  composition_picture_decomposition_levels << picture_decomposition_levels
+                else
+                  picture_decomposition_levels = nil
+                  composition_picture_decomposition_levels << nil
+                  errors << "#{ cpl_reel }: Expected to read image DecompositionLevels value but got nil"
+                  cpl_errors = true
+                end
+
+                # width and height
                 picture_stored_width, picture_stored_height = meta[ 'StoredWidth' ], meta[ 'StoredHeight' ]
                 picture_dimensions = "#{ picture_stored_width }x#{ picture_stored_height }"
                 picture_aspect_ratio = ( picture_stored_width.to_f / picture_stored_height.to_f ).round( 3 )
+
+                # avg and max bitrate
                 if meta[ 'Max BitRate' ]
                   picture_bitrate_max_mbs = meta[ 'Max BitRate' ].split( ' ' )[0].to_f
                 else
-                  picture_bitrate_max_mbs = NIL
+                  picture_bitrate_max_mbs = nil
                 end
                 if meta[ 'Average BitRate' ]
                   picture_bitrate_avg_mbs = meta[ 'Average BitRate' ].split( ' ' )[0].to_f
                 else
-                  picture_bitrate_avg_mbs = NIL
+                  picture_bitrate_avg_mbs = nil
                 end
 
                 # aspect ratio
@@ -3014,7 +3039,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                   picture_aspect_ratio_moniker = picture_aspect_ratio.to_s
                   hints << "#{ cpl_reel }: #{ asset.node_name } has non-DCI aspect ratio #{ picture_aspect_ratio } (#{ picture_dimensions }, #{ picture_aspect_ratio_moniker }): Playback with proper non-standard masking recommended"
                 end
-                composition_aspect_ratios << picture_aspect_ratio
+                composition_picture_aspect_ratios << picture_aspect_ratio
 
                 # dimensions
                 case picture_dimensions
@@ -3029,19 +3054,19 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 else
                   picture_dimensions_moniker = picture_dimensions
                   errors << "#{ cpl_reel }: #{ asset.node_name } has non-DCI pixel dimensions (#{ picture_dimensions })"
-                  cpl_errors = TRUE
+                  cpl_errors = true
                 end
-                composition_resolutions << picture_dimensions_moniker
+                composition_picture_resolutions << picture_dimensions_moniker
 
                 # bitrate
                 if picture_bitrate_max_mbs
                   if picture_bitrate_max_mbs > PictureBitrateMaxDCI
                     if picture_bitrate_max_mbs > PictureBitrateMaxHFR
                       errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI and HFR maxima (#{ PictureBitrateMaxDCI } and #{ PictureBitrateMaxHFR } Mb/s)"
-                      cpl_errors = TRUE
+                      cpl_errors = true
                     elsif picture_bitrate_max_mbs <= PictureBitrateMaxHFR
                       errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI maximum (#{ PictureBitrateMaxDCI } Mb/s)"
-                      cpl_errors = TRUE
+                      cpl_errors = true
                       hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI maximum (#{ PictureBitrateMaxDCI } Mb/s). Playback might fail on DCI systems. Playback might work on HFR systems"
                     end
                   end
@@ -3054,7 +3079,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                     hints << "#{ cpl_reel }: #{ asset.node_name } bitrate average #{ meta[ 'Average BitRate' ] } exceeds suggested safe average #{ PictureBitrateMaxDCISafe } Mb/s. Playback might fail on DCI systems"
                   end
                 end
-                if sane_IntrinsicDuration_EntryPoint_Duration == TRUE
+                if sane_IntrinsicDuration_EntryPoint_Duration == true
                   composition_picture_bitrates_max << picture_bitrate_max_mbs
                   composition_picture_bitrates_avg << { :duration => duration, :picture_bitrate_avg_mbs => picture_bitrate_avg_mbs }
                 end
@@ -3067,19 +3092,30 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
               case asset.node_name
               when 'MainSound'
 
+                # channel format
+                if meta[ 'ChannelFormat' ]
+                  audio_channel_format = meta[ 'ChannelFormat' ].to_i
+                  composition_sound_channel_formats << audio_channel_format
+                else
+                  audio_channel_format = nil
+                  composition_sound_channel_formats << nil
+                  errors << "#{ cpl_reel }: Expected to read sound ChannelFormat but got nil"
+                  cpl_errors = true
+                end
+
                 # Sampling rate
                 audio_sampling_rate = meta[ 'AudioSamplingRate' ]
                 audio_sampling_rate_f = audio_sampling_rate.to_r.to_f
                 if audio_sampling_rate != '48000/1' and audio_sampling_rate != '96000/1'
                   errors << "#{ cpl_reel }: MainSound sampling rate #{ audio_sampling_rate } Hz. Expected 48 kHz or 96 kHz"
-                  cpl_errors = TRUE
+                  cpl_errors = true
                 end
 
                 # Bits per sample
                 audio_quantization_bits = meta[ 'QuantizationBits' ].to_i
                 if audio_quantization_bits != 24
                   errors << "#{ cpl_reel }: MainSound quantization #{ audio_quantization_bits } bps. Expected 24 bps"
-                  cpl_errors = TRUE
+                  cpl_errors = true
                 end
 
                 # Channel configuration
@@ -3087,7 +3123,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 case audio_channel_count
                 when 1, 3, 4, 5, 7
                   errors << "#{ cpl_reel }: MainSound has #{ amount( 'channel', audio_channel_count ) }: Use 5.1, 7.1, 7.1DS or wild track (2.0 is expected to mostly work)"
-                  cpl_errors = TRUE
+                  cpl_errors = true
                   audio_channel_count_moniker = audio_channel_count.to_s
                 when 2
                   hints << "#{ cpl_reel }: MainSound has 2 channels: Expected to mostly work. Use 5.1, 7.1, 7.1DS or wild track to make sure"
@@ -3101,19 +3137,19 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 else
                   audio_channel_count_moniker = audio_channel_count.to_s
                 end
-                composition_channel_counts << audio_channel_count_moniker
+                composition_sound_channel_counts << audio_channel_count_moniker
 
                 # Block align
                 audio_block_align = meta[ 'BlockAlign' ].to_i
                 if audio_block_align != audio_channel_count * 3 # don't use audio_quantization_bits here -- anything other than 24 bps is an error
                   errors << "#{ cpl_reel }: MainSound has unexpected BlockAlign value #{ audio_block_align }: Expected #{ audio_channel_count * 3 }: Check audio source"
-                  cpl_errors = TRUE
+                  cpl_errors = true
                 end
 
                 # Edit rate
                 if asset_edit_rate != edit_rate
                   errors << "#{ cpl_reel }: MainSound EditRate #{ edit_rate } does not match asset EditRate #{ asset_edit_rate }"
-                  cpl_errors = TRUE
+                  cpl_errors = true
                 end
 
                 # Audio characteristics (Levels, RMS, silent channels)
@@ -3121,7 +3157,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 dkdms = Hash.new
                 if options.audio_analysis
                   if sane_IntrinsicDuration_EntryPoint_Duration
-                    audio_stats[ asset_id ][ asset_snippet ] ||= NIL
+                    audio_stats[ asset_id ][ asset_snippet ] ||= nil
 
                     if meta[ 'EncryptedEssence' ] == 'Yes'
                       if dkdms[ cpl_id ]
@@ -3129,14 +3165,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                           key = dkdms[ cpl_id ][ asset_key_id ]
                         else
                           hints << "#{ cpl_reel }: MainSound: Audio analysis requested but got no key for asset #{ asset_id }: Not yet implemented"
-                          key = NIL
+                          key = nil
                         end
                       else
                         hints << "#{ cpl_reel }: MainSound: Audio analysis requested but got no DKDM for CPL #{ cpl_id }: Not yet implemented"
-                        key = NIL
+                        key = nil
                       end
                     else
-                      key = NIL
+                      key = nil
                     end
 
                     if @dcp_inspect_temp
@@ -3186,7 +3222,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
               xml, errors, cpl_errors = get_xml_of_type( 'DCSubtitle', asset_file, errors, cpl_errors )
               if xml
 
-                cpl_referenced_assets << { asset_id => TRUE }
+                cpl_referenced_assets << { asset_id => true }
                 cpl_referenced_assets_types << MStr::AssetTypeInterop
 
                 #
@@ -3198,7 +3234,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                     report << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }"
                   rescue Exception => e
                     errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Exception in Schema check: #{ e.message }"
-                    cpl_errors = TRUE
+                    cpl_errors = true
                     report << errors.last
                   end
                 end
@@ -3221,7 +3257,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                       end
                     else
                       errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber has unexpected content: #{ reelnumber_el.children.first.class }"
-                      cpl_errors = TRUE
+                      cpl_errors = true
                       report << errors.last
                     end
                   else
@@ -3236,11 +3272,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 else
                   if reelnumber_el.size == 0
                     errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber element not found"
-                    cpl_errors = TRUE
+                    cpl_errors = true
                     report << errors.last
                   else
                     errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: More than 1 ReelNumber element found"
-                    cpl_errors = TRUE
+                    cpl_errors = true
                     report << errors.last
                   end
                 end
@@ -3260,7 +3296,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                       end
                     else
                       errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language has unexpected content: #{ language_el.children.first.class }"
-                      cpl_errors = TRUE
+                      cpl_errors = true
                       report << errors.last
                     end
                   else
@@ -3275,11 +3311,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 else
                   if language_el.size == 0
                     errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language element not found"
-                    cpl_errors = TRUE
+                    cpl_errors = true
                     report << errors.last
                   else
                     errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: More than 1 Language element found"
-                    cpl_errors = TRUE
+                    cpl_errors = true
                     report << errors.last
                   end
                 end
@@ -3296,7 +3332,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                       begin
                         tc = parse_dcsubtitle_tc_string( tc_string, edit_rate )
                       rescue Exception => e
-                        spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : NIL )
+                        spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : nil )
                         errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Spot #{ spot_number }: #{ e.inspect }"
                       end
                     end
@@ -3371,19 +3407,20 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                     last_time_out = parse_dcsubtitle_tc_string( last_time_out, edit_rate )
                   rescue Exception => e
                     errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Timecode: #{ e.message }"
-                    cpl_errors = TRUE
+                    cpl_errors = true
                   end
 
                   #
                   # Cross-check duration/reel duration and last TimeOut
                   # We don't have reel_duration yet so here's an indirect way to tell if something's wrong
+                  # FIXME
                   # Boy-oh-boy, this an ugly hack which exposes nicely the essential design flaw
                   #
                   # duration (self) and last TimeOut
                   #
                   if last_time_out.to_i > duration
                     errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut #{ last_time_out.to_s } exceeds MainSubtitle duration #{ Timecode.new( duration, edit_rate ).to_s }"
-                    cpl_errors = TRUE
+                    cpl_errors = true
                   end
                   #
                   # reel duration (preliminary) and last TimeOut
@@ -3393,11 +3430,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                       reel_duration_prelim = Timecode.new( durations[ 0 .. -2 ].min, edit_rates[ 0 .. -2 ].min )
                       if last_time_out > reel_duration_prelim
                         errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut #{ last_time_out.to_s } exceeds reel duration #{ reel_duration_prelim }"
-                        cpl_errors = TRUE
+                        cpl_errors = true
                       end
                     rescue Exception => e
                       errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Timecode: #{ e.message }"
-                      cpl_errors = TRUE
+                      cpl_errors = true
                     end
                   end
 
@@ -3407,11 +3444,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                   #
                   empty_subtitles = 0
                   subtitles.each do |sub|
-                    spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : NIL )
+                    spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : nil )
                     if sub.children.empty? or ( sub.children.size == 1 and sub.children.first.is_a? Nokogiri::XML::Text )
                       empty_subtitles += 1
                       errors << "#{ cpl_reel }: DCSubtitle: Empty Subtitle element#{ spot_number ? ': SpotNumber ' + spot_number : '' }"
-                      cpl_errors = TRUE
+                      cpl_errors = true
                     elsif ( nodeset = sub.xpath( '*/Text|Text|*/Image|Image' ) )
                       nodeset.each do |node|
                         if node.text == ''
@@ -3426,33 +3463,33 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                   # Check whether all referenced resources (font, subtitle images)
                   # are in the dictionary and exist on the medium
                   #
-                  text_elements = FALSE
+                  text_elements = false
                   text_elements_values = Array.new
-                  image_elements = FALSE
+                  image_elements = false
                   load_font_el = xml.xpath( '//LoadFont' )
                   font_el = xml.xpath( '//Font' )
 
                   subtitles.each do |sub|
-                    spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : NIL )
+                    spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : nil )
                     nodeset = sub.xpath( '*/Text|Text|*/Image|Image' )
                     nodeset.each do |node|
                       case node.name
                       when 'Text'
-                        text_elements = TRUE
+                        text_elements = true
                         text_elements_values << { :number => spot_number, :text => node.text.gsub( /^\s+|\s+$/, '' ) }
                       when 'Image'
-                        image_elements = TRUE
+                        image_elements = true
                         unless node.text.empty? # Checked above
                           asset_name = File.join( asset_id, node.text )
                           asset_pick = dict.select { |k, v| v =~ Regexp.new( asset_name ) }
 
                           if asset_pick.empty?
                             errors << "#{ cpl_reel }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not in AssetMap"
-                            cpl_errors = TRUE
+                            cpl_errors = true
                           else
                             unless File.exists?( package asset_pick.values.first ) # FIXME
                               errors << "#{ cpl_reel }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not found on the medium"
-                              cpl_errors = TRUE
+                              cpl_errors = true
                             end
                           end
 
@@ -3468,7 +3505,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                     else
                       load_font_uri = load_font_el.first.attributes[ 'URI' ].value
                       font_asset = File.join( asset_id, File.basename( load_font_uri ) )
-                      font_path = NIL
+                      font_path = nil
                       if dict.values.any? { |val| val =~ /#{ font_asset }$/ && font_path = val }
                         font_asset = package font_path
                         if File.exists?( font_asset )
@@ -3477,7 +3514,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                             font_asset_size = File.size font_asset
                             if font_asset_size > 655360 # 640 KB
                               errors << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } size #{ font_asset_size.to_k } exceeds 640 KB"
-                              cpl_errors = TRUE
+                              cpl_errors = true
                             end
                             # Get font name
                             begin
@@ -3491,10 +3528,10 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                               end
 
                               # Check if all glyphs can be rendered with provided font
-                              glyphs_missing = FALSE
+                              glyphs_missing = false
                               text_elements_values.each do |spot|
                                 unless font_fu.provides_glyphs_for?( spot[ :text ] )
-                                  glyphs_missing = TRUE
+                                  glyphs_missing = true
                                   # pick the exact ones
                                   glyphs_missing_list = Array.new
                                   spot[ :text ].split( '' ).each do |char|
@@ -3508,16 +3545,16 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                               end
                             rescue NoMethodError => e
                               errors << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset } not valid: #{ e.message }"
-                              cpl_errors = TRUE
+                              cpl_errors = true
                             end
                           else
                             errors << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } referenced in LoadFont is neither #{ MStr::TTF } nor #{ MStr::OTF }"
-                            cpl_errors = TRUE
+                            cpl_errors = true
                           end
                         end
                       else
                         errors << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset } not in AssetMap"
-                        cpl_errors = TRUE
+                        cpl_errors = true
                       end
                       if load_font_el.size > 1
                         hints << "#{ cpl_reel }: DCSubtitle: Found multiple LoadFont elements. Playback will use 1st: #{ load_font_uri }"
@@ -3535,12 +3572,12 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                   font_ids.uniq!
                   if font_ids.size > 1
                     errors << "#{ cpl_reel }: DCSubtitle: Multiple Font Ids referenced: #{ font_ids.inspect }"
-                    cpl_errors = TRUE
+                    cpl_errors = true
                   end
                   if load_font_el.empty?
                     if font_ids.size > 0
                       errors << "#{ cpl_reel }: DCSubtitle: No Font Id declared via LoadFont but referenced Font Ids found: #{ font_ids.inspect }"
-                      cpl_errors = TRUE
+                      cpl_errors = true
                     end
                   else
                     if load_font_el.first.attributes[ 'Id' ]
@@ -3548,14 +3585,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                       font_ids.each do |font_id|
                         if font_id != load_font_id
                           errors << "#{ cpl_reel }: DCSubtitle: Referenced font Id '#{ font_id }' does not match the Id '#{ load_font_id }' declared in LoadFont. Font cannot be loaded"
-                          cpl_errors = TRUE
+                          cpl_errors = true
                         end
                       end
                     end
                   end
 
                   # DCSubtitle meta report
-                  meta_report = "DCSubtitle, #{ amount( 'subtitle', subtitles.to_a ) }, #{ first_time_in } '#{ first_time_in_text.nil? ? '[NIL]' : first_time_in_text }' - #{ last_time_out } '#{ last_time_out_text.nil? ? '[NIL]' : last_time_out_text }'#{ empty_subtitles > 0 ? ' Error: ' + empty_subtitles.to_s + ' empty Subtitle element' + ( empty_subtitles > 1 ? 's' : '' ) : '' }"
+                  meta_report = "DCSubtitle, #{ amount( 'subtitle', subtitles.to_a ) }, #{ first_time_in } '#{ first_time_in_text.nil? ? '[nil]' : first_time_in_text }' - #{ last_time_out } '#{ last_time_out_text.nil? ? '[nil]' : last_time_out_text }'#{ empty_subtitles > 0 ? ' Error: ' + empty_subtitles.to_s + ' empty Subtitle element' + ( empty_subtitles > 1 ? 's' : '' ) : '' }"
 
                 else
                   meta_report = 'DCSubtitle, no Subtitle found'
@@ -3565,7 +3602,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
               else # No meta and not DCSubtitle either
 
                 broken_assets << asset_id
-                cpl_referenced_assets << { asset_id => FALSE }
+                cpl_referenced_assets << { asset_id => false }
                 cpl_referenced_assets_types << MStr::AssetTypeUnknown
                 meta_report = 'File found but not AS-DCP MXF'
 
@@ -3580,7 +3617,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
           else # Asset file does not exist
 
             broken_assets << asset_id
-            cpl_referenced_assets << { asset_id => FALSE }
+            cpl_referenced_assets << { asset_id => false }
             cpl_referenced_assets_types << MStr::AssetTypeUnknown
             meta_report = "Referenced asset file missing: #{ dict[ asset_id ] }"
 
@@ -3599,10 +3636,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
             markers.each do |marker|
               label = marker.xpath( "#{ cpl_ns_prefix }:Label" ).text
             end
+            @logger.dev "CPL We have MainMarkers"
             meta_report = "We have MainMarkers"
           else
 
-            cpl_referenced_assets << { asset_id => FALSE }
+            cpl_referenced_assets << { asset_id => false }
             cpl_referenced_assets_types << MStr::AssetTypeUnknown
             meta_report = 'Referenced asset file not listed in Assetmap dictionary: Supplemental/VF/External'
             hints << "#{ cpl_reel }: #{ asset.node_name }: #{ meta_report }"
@@ -3631,34 +3669,35 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
         reels_report << "#{ "%6s" % duration }  #{ edit_rate.nil? ? 'EditRate funk' : Timecode.new( duration, edit_rate ) } @ #{ edit_rate }  #{ asset_id.split( '-' ).first }  #{ asset.node_name }\t(#{ meta_report })"
       rescue Exception => e
         errors << "#{ cpl_reel }: Duration #{ duration }: EditRate #{ edit_rate }: #{ e.message }"
-        cpl_errors = TRUE
+        cpl_errors = true
       end
 
       if meta
+        @logger.dev "#{ asset.node_name }: #{ asset_file } #{ asset.namespaces }"
         case asset.node_name
         when 'MainStereoscopicPicture'
           unless meta[ 'EssenceType' ] == MStr::Stereoscopic_pictures
-            reels_report << "Essence type mismatch: Expected MainStereoscopicPicture, got #{ meta[ 'EssenceType' ] || '[NIL]' }"
+            reels_report << "Essence type mismatch: Expected MainStereoscopicPicture, got #{ meta[ 'EssenceType' ] || '[nil]' }"
             errors << "#{ cpl_reel }: " + reels_report.last
-            cpl_errors = TRUE
+            cpl_errors = true
           end
         when 'MainPicture'
           unless ( meta[ 'EssenceType' ] == MStr::Pictures or meta[ 'EssenceType' ] == MStr::Mpeg2 )
-            reels_report << "Essence type mismatch: Expected MainPicture, got #{ meta[ 'EssenceType' ] || '[NIL]' }"
+            reels_report << "Essence type mismatch: Expected MainPicture, got #{ meta[ 'EssenceType' ] || '[nil]' }"
             errors << "#{ cpl_reel }: " + reels_report.last
-            cpl_errors = TRUE
+            cpl_errors = true
           end
         when 'MainSound'
           unless meta[ 'EssenceType' ] == MStr::Audio
-            reels_report << "Essence type mismatch: Expected MainSound, got #{ meta[ 'EssenceType' ] || '[NIL]' }"
+            reels_report << "Essence type mismatch: Expected MainSound, got #{ meta[ 'EssenceType' ] || '[nil]' }"
             errors << "#{ cpl_reel }: " + reels_report.last
-            cpl_errors = TRUE
+            cpl_errors = true
           end
         when 'MainSubtitle'
           unless meta[ 'EssenceType' ] == MStr::Timed_text
-            reels_report << "Essence type mismatch: Expected MainSubtitle, got #{ meta[ 'EssenceType' ] || '[NIL]' }"
+            reels_report << "Essence type mismatch: Expected MainSubtitle, got #{ meta[ 'EssenceType' ] || '[nil]' }"
             errors << "#{ cpl_reel }: " + reels_report.last
-            cpl_errors = TRUE
+            cpl_errors = true
           end
         end
       end
@@ -3669,13 +3708,13 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     if durations.uniq.size != 1
       reels_report << "\tDuration mismatch"
       errors << "#{ cpl_reel }: Duration mismatch: #{ durations.inspect }"
-      cpl_errors = TRUE
+      cpl_errors = true
     else
       reel_duration = durations.first / edit_rates.min # gets it done but ugh
       if edit_rates.min > 0 and reel_duration < 1
         reels_report << "\tReel duration less than 1 second"
         errors << "#{ cpl_reel }: Reel duration less than 1 second (#{ "%0.3f" % reel_duration } seconds, #{ amount( 'frame', durations.first.to_i ) }@#{ edit_rates.min } fps)"
-        cpl_errors = TRUE
+        cpl_errors = true
       elsif edit_rates.min > 0 and reel_duration < 5 # Doremi TB 65 (2010-03-09)
         hints << "#{ cpl_reel }: Reel duration less than 5 seconds. Doremi TB 65 suggests a 5 second minimum for safe playback on Doremi systems"
       end
@@ -3685,7 +3724,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     if edit_rates.uniq.size != 1
       reels_report << "\tEditRate mismatch"
       errors << "#{ cpl_reel }: EditRate mismatch"
-      cpl_errors = TRUE
+      cpl_errors = true
     end
 
     total_duration += durations.min # FIXME ugh
@@ -3706,7 +3745,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     errors << "CPL #{ cpl_id }: Exception in reel report: #{ e.message }"
   end
   if composition_edit_rate == 0
-    cpl_errors = TRUE
+    cpl_errors = true
   end
   reels_report << "#{ "%6s" % total_duration }  #{ composition_edit_rate == 0 ? 'EditRate funk' : total_duration_tc } @ #{ composition_edit_rate }" # FIXME edit_rate
   if total_duration_tc
@@ -3723,16 +3762,16 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
 
   # Composition type SMPTE/Interop/Undetermined?
   assets_status_list = cpl_referenced_assets.map { |e| e.values }.flatten
-  if cpl_referenced_assets_types.uniq.size == 1 and assets_status_list.uniq.size == 1 and assets_status_list.uniq.first == TRUE
+  if cpl_referenced_assets_types.uniq.size == 1 and assets_status_list.uniq.size == 1 and assets_status_list.uniq.first == true
     composition_type = cpl_referenced_assets_types.uniq.first
     composition_summary[ :type ] = composition_type
   else
     # FIXME Composition type Mixed error or hint?
-    composition_type = ( cpl_referenced_assets_types.include?( MStr::AssetTypeUnknown ) ? MStr::AssetTypeUndetermined : assets_status_list.include?( FALSE ) ? MStr::AssetTypeUndetermined : MStr::AssetTypeMixed )
+    composition_type = ( cpl_referenced_assets_types.include?( MStr::AssetTypeUnknown ) ? MStr::AssetTypeUndetermined : assets_status_list.include?( false ) ? MStr::AssetTypeUndetermined : MStr::AssetTypeMixed )
     composition_summary[ :type ] = composition_type
     if broken_assets.size != 0
       errors << "CPL #{ cpl_id }: Composition type: #{ composition_type }"
-      cpl_errors = TRUE
+      cpl_errors = true
     else
       hints << "CPL #{ cpl_id }: Composition type: #{ composition_type }: Supplemental/VF/External"
     end
@@ -3741,95 +3780,106 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   # Composition requires KDM?
   if cpl_referenced_assets_encrypted.size > 0
     composition_summary[ :crypto ] = 'KDM required'
-    composition_requires_kdm = TRUE
+    composition_requires_kdm = true
     @encrypted_compositions += 1
   elsif cpl_referenced_assets_encrypted_inferred_from_key_id.size > 0
     composition_summary[ :crypto ] = 'KDM required'
-    composition_requires_kdm = TRUE
+    composition_requires_kdm = true
     @encrypted_compositions += 1
   else
     composition_summary[ :crypto ] = 'Plaintext'
-    composition_requires_kdm = FALSE
+    composition_requires_kdm = false
   end
 
   # Monoscopic/Stereoscopic composition?
-  if is_stereoscopic.uniq.size == 1 and is_stereoscopic.uniq.first == TRUE
+  if is_stereoscopic.uniq.size == 1 and is_stereoscopic.uniq.first == true
     composition_summary[ :spatiality ] = '3D'
-    is_stereoscopic = TRUE
-  elsif is_stereoscopic.uniq.size == 1 and is_stereoscopic.uniq.first == FALSE
+    is_stereoscopic = true
+  elsif is_stereoscopic.uniq.size == 1 and is_stereoscopic.uniq.first == false
     composition_summary[ :spatiality ] = '2D'
-    is_stereoscopic = FALSE
+    is_stereoscopic = false
   elsif is_stereoscopic.uniq.size == 2
     composition_summary[ :spatiality ] = '2D/3D'
-    is_stereoscopic = TRUE
+    is_stereoscopic = true
     errors << "CPL #{ cpl_id }: " + report.last
-    cpl_errors = TRUE
+    cpl_errors = true
   end
 
-  # Set up composition_aspect_ratio
-  composition_aspect_ratio = NIL
-  if composition_aspect_ratios.size == reels.size
-    if composition_aspect_ratios.uniq.size == 1
-      case composition_aspect_ratios.first
+  # Check consistency of decomposition levels in picture essence
+  if composition_picture_decomposition_levels.uniq.size == 1 and composition_picture_decomposition_levels.first != nil
+    # we're good
+  elsif composition_picture_decomposition_levels.uniq.size == 1 and composition_picture_decomposition_levels.first == nil
+    errors << "CPL #{ cpl_id }: Failed to read DecompositionLevels from picture essence. Should not happen"
+    cpl_errors = true
+  else
+    errors << "CPL #{ cpl_id }: Found inconsistent image DecompositionLevels values across the composition (#{ composition_picture_decomposition_levels.each_with_index.map { |v, index| 'Reel ' + ( index + 1 ).to_s + ': ' + v.to_s }.join( ', ' ) }). This will produce visual artefacts in reel transitions"
+    cpl_errors = true
+  end
+
+  # Set up composition_picture_aspect_ratio
+  composition_picture_aspect_ratio = nil
+  if composition_picture_aspect_ratios.size == reels.size
+    if composition_picture_aspect_ratios.uniq.size == 1
+      case composition_picture_aspect_ratios.first
       when 1.896
-        composition_aspect_ratio = { :abbrev => 'C', :name => 'Full Container' }
+        composition_picture_aspect_ratio = { :abbrev => 'C', :name => 'Full Container' }
       when 1.85
-        composition_aspect_ratio = { :abbrev => 'F', :name => 'Flat' }
+        composition_picture_aspect_ratio = { :abbrev => 'F', :name => 'Flat' }
       when 2.387
-        composition_aspect_ratio = { :abbrev => 'S', :name => 'Scope' }
+        composition_picture_aspect_ratio = { :abbrev => 'S', :name => 'Scope' }
       when 1.778
-        composition_aspect_ratio = { :abbrev => 'HD', :name => 'HD' }
+        composition_picture_aspect_ratio = { :abbrev => 'HD', :name => 'HD' }
       else
-        composition_aspect_ratio = { :abbrev => composition_aspect_ratios.first.to_s, :name => composition_aspect_ratios.first.to_s }
+        composition_picture_aspect_ratio = { :abbrev => composition_picture_aspect_ratios.first.to_s, :name => composition_picture_aspect_ratios.first.to_s }
       end
-      composition_summary[ :aspect ] = composition_aspect_ratio[ :name ]
+      composition_summary[ :aspect ] = composition_picture_aspect_ratio[ :name ]
     else
-      errors << "CPL #{ cpl_id }: Found different asset aspect ratios: #{ composition_aspect_ratios.inspect }"
-      cpl_errors = TRUE
+      errors << "CPL #{ cpl_id }: Found different asset aspect ratios: #{ composition_picture_aspect_ratios.inspect }"
+      cpl_errors = true
     end
   else
     expected_aspect_ratios = reels.size - supplemental_refs[ :main_picture ]
-    if expected_aspect_ratios != composition_aspect_ratios.size
-      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'aspect ratio', expected_aspect_ratios ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_aspect_ratios.size }"
-      cpl_errors = TRUE
+    if expected_aspect_ratios != composition_picture_aspect_ratios.size
+      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'aspect ratio', expected_aspect_ratios ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_picture_aspect_ratios.size }"
+      cpl_errors = true
     end
   end
 
-  # Set up composition_resolution
-  composition_resolution = NIL
-  if composition_resolutions.size == reels.size
-    if composition_resolutions.uniq.size == 1
-      case composition_resolutions.first
+  # Set up composition_picture_resolution
+  composition_picture_resolution = nil
+  if composition_picture_resolutions.size == reels.size
+    if composition_picture_resolutions.uniq.size == 1
+      case composition_picture_resolutions.first
       when '2K'
         case composition_edit_rate
         when 48.0
-          composition_resolution = { :abbrev => '48' } # yeah, well. Look it up in 3.9, it's true :) (Changed in 8.2)
+          composition_picture_resolution = { :abbrev => '48' } # yeah, well. Look it up in 3.9, it's true :) (Changed in 8.2)
         else
-          composition_resolution = { :abbrev => '2K' }
+          composition_picture_resolution = { :abbrev => '2K' }
         end
       when '4K'
-        composition_resolution = { :abbrev => '4K' }
+        composition_picture_resolution = { :abbrev => '4K' }
       when 'HD'
-        composition_resolution = { :abbrev => 'HD' }
+        composition_picture_resolution = { :abbrev => 'HD' }
       else
-        composition_resolution = { :abbrev => composition_resolutions.first }
+        composition_picture_resolution = { :abbrev => composition_picture_resolutions.first }
       end
-      composition_summary[ :resolution ] = composition_resolution[ :abbrev ]
+      composition_summary[ :resolution ] = composition_picture_resolution[ :abbrev ]
     else
-      errors << "CPL #{ cpl_id }: Found different picture resolutions: #{ composition_resolutions.inspect }"
-      cpl_errors = TRUE
+      errors << "CPL #{ cpl_id }: Found different picture resolutions: #{ composition_picture_resolutions.inspect }"
+      cpl_errors = true
     end
   else
     expected_picture_resolutions = reels.size - supplemental_refs[ :main_picture ]
-    if expected_picture_resolutions != composition_resolutions.size
-      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'picture resolution', expected_picture_resolutions ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_resolutions.size }"
-      cpl_errors = TRUE
+    if expected_picture_resolutions != composition_picture_resolutions.size
+      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'picture resolution', expected_picture_resolutions ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_picture_resolutions.size }"
+      cpl_errors = true
     end
   end
 
   # Composition picture bitrate (weighted mean)
   if composition_picture_bitrates_avg.size > 0
-    if ! ( composition_picture_bitrates_avg.map { |e| e.values }.flatten.include? NIL )
+    if ! ( composition_picture_bitrates_avg.map { |e| e.values }.flatten.include? nil )
       composition_picture_bitrate_avg = ( composition_picture_bitrates_avg.map { |w| w[ :duration ] * w[ :picture_bitrate_avg_mbs ] }.inject( 0, :+ ) / composition_picture_bitrates_avg.map { |w| w[ :duration ] }.inject( 0, :+ ) ).round( 2 )
       composition_summary[ :picture_bitrate_avg ] = "Avg #{ composition_picture_bitrate_avg } Mb/s"
     else
@@ -3839,19 +3889,30 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     composition_summary[ :picture_bitrate_avg ] = "Avg [NaN Mb/s]"
   end
 
-  # Set up composition_channel_count
-  composition_channel_count = NIL
-  if composition_channel_counts.size == reels.size
-    if composition_channel_counts.uniq.size == 1
-      composition_channel_count = { :abbrev => composition_channel_counts.uniq.first }
+  # Check consistency of ChannelFormat
+  if composition_sound_channel_formats.uniq.size == 1 and composition_sound_channel_formats.first != nil
+    # we're good
+  elsif composition_sound_channel_formats.uniq.size == 1 and composition_sound_channel_formats.first == nil
+    errors << "CPL #{ cpl_id }: Failed to read sound ChannelFormat values from sound essence. Should not happen"
+    cpl_errors = true
+  else
+    errors << "CPL #{ cpl_id }: Found inconsistent sound ChannelFormat values across the composition (#{ composition_sound_channel_formats.each_with_index.map { |v, index| 'Reel ' + ( index + 1 ).to_s + ': ' + v.to_s }.join( ', ' ) }). Playback will fail completely"
+    cpl_errors = true
+  end
+
+  # Set up composition_sound_channel_count
+  composition_sound_channel_count = nil
+  if composition_sound_channel_counts.size == reels.size
+    if composition_sound_channel_counts.uniq.size == 1
+      composition_sound_channel_count = { :abbrev => composition_sound_channel_counts.uniq.first }
     else
-      errors << "CPL #{ cpl_id }: Found different audio types: #{ composition_channel_counts.inspect }"
+      errors << "CPL #{ cpl_id }: Found different sound channel configurations: #{ composition_sound_channel_counts.inspect }"
     end
   else
     expected_audio_types = reels.size - supplemental_refs[ :main_sound ]
-    if expected_audio_types != composition_channel_counts.size
-      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'audio type', expected_audio_types ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_channel_counts.size }"
-      cpl_errors = TRUE
+    if expected_audio_types != composition_sound_channel_counts.size
+      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'audio type', expected_audio_types ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_sound_channel_counts.size }"
+      cpl_errors = true
     end
   end
 
@@ -3859,7 +3920,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   # See SMPTE ST 429-2:2009 section 9.1 for the requirement
   reels_references.each_with_index do |reel_refs, index|
     if reel_refs[ :picture ] and reel_refs[ :sound ] # :picture covers both MainPicture and MainStereoscopicPicture
-      cpl_reels_references_complete << TRUE
+      cpl_reels_references_complete << true
     else
       reel_no = index + 1
       assets_missing_refs = Array.new
@@ -3869,11 +3930,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
       case composition_type
       when MStr::AssetTypeSmpte
         errors << "CPL #{ cpl_id }: #{ reels_report.last }"
-        cpl_errors = TRUE
+        cpl_errors = true
       else
         hints << "CPL #{ cpl_id }: #{ reels_report.last }"
       end
-      cpl_reels_references_complete << FALSE
+      cpl_reels_references_complete << false
     end
   end
 
@@ -3883,37 +3944,37 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   # Naming convention
   case composition_type
   when MStr::AssetTypeInterop
-    naming_i3d_specs_required = TRUE
+    naming_i3d_specs_required = true
   when MStr::AssetTypeUndetermined
     if cpl_referenced_assets_types.include?( MStr::AssetTypeInterop )
-      naming_i3d_specs_required = TRUE
+      naming_i3d_specs_required = true
     else
-      naming_i3d_specs_required = FALSE
+      naming_i3d_specs_required = false
     end
   else
-    naming_i3d_specs_required = FALSE
+    naming_i3d_specs_required = false
   end
   hints, naming_matches, naming_misses = naming_convention_compliant?( cpl_id, content_title_text, is_stereoscopic, naming_i3d_specs_required, hints )
 
   # Composition completeness
-  if assets_status_list.include?( FALSE )
+  if assets_status_list.include?( false )
     if broken_assets.size != 0
       report << "Composition incomplete: Broken assets: #{ broken_assets.inspect }"
       errors << "CPL #{ cpl_id }: Composition incomplete"
-      cpl_errors = TRUE
+      cpl_errors = true
     else
       report << "Composition incomplete: Supplemental/VF/External"
       hints << "CPL #{ cpl_id }: #{ cpl_file }: Composition incomplete: Supplemental/VF/External"
     end
     # FIXME cpl_reels_references_complete.size == reels.size (and thus > 0) only in all-SMPTE CPLs
-  elsif cpl_reels_references_complete.include?( FALSE )
+  elsif cpl_reels_references_complete.include?( false )
     incomplete_reels = Array.new
-    cpl_reels_references_complete.each_with_index do |e, i| incomplete_reels << ( i + 1 ).to_s if e == FALSE end
+    cpl_reels_references_complete.each_with_index do |e, i| incomplete_reels << ( i + 1 ).to_s if e == false end
     case composition_type
     when MStr::AssetTypeSmpte
       report << "Composition incomplete: SMPTE reels require both MainPicture or MainStereoscopicPicture and MainSound: #{ plural( 'Reel', incomplete_reels ) } #{ incomplete_reels.join( ', ' ) } incomplete"
       errors << "CPL #{ cpl_id }: #{ report.last }"
-      cpl_errors = TRUE
+      cpl_errors = true
     else
       report << "Composition warning: Reference both MainPicture or MainStereoscopicPicture and MainSound in reels in order to avoid playback issues in the field: See #{ plural( 'reel', incomplete_reels ) } #{ incomplete_reels.join( ', ' ) }"
       hints << "CPL #{ cpl_id }: #{ report.last }"
@@ -3921,7 +3982,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   else
     report << 'Composition complete'
   end
-  if cpl_errors == TRUE
+  if cpl_errors == true
     report << "There were errors. See CPL #{ cpl_id } errors #{ error_output }"
   end
 
@@ -3939,8 +4000,8 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   #
   # Aspect ratio
   if naming_matches[ :aspect_ratio ]
-    if composition_aspect_ratio
-      if naming_matches[ :aspect_ratio ] != composition_aspect_ratio[ :abbrev ]
+    if composition_picture_aspect_ratio
+      if naming_matches[ :aspect_ratio ] != composition_picture_aspect_ratio[ :abbrev ]
         case naming_matches[ :aspect_ratio ]
         when 'C'
           aspect_ratio_claim = 'Full Container'
@@ -3951,15 +4012,15 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
         else
           aspect_ratio_claim = naming_matches[ :aspect_ratio ]
         end
-        hints << "CPL #{ cpl_id }: Naming convention: Part aspect_ratio claims #{ aspect_ratio_claim } but composition aspect ratio is #{ composition_aspect_ratio[ :name ] }"
+        hints << "CPL #{ cpl_id }: Naming convention: Part aspect_ratio claims #{ aspect_ratio_claim } but composition aspect ratio is #{ composition_picture_aspect_ratio[ :name ] }"
       end
     end
   end
   #
   # Resolution (with a little composition_edit_rate tango because of the 2K@48fps hoopla in 3.9)
   if naming_matches[ :resolution ]
-    if composition_resolution
-      if naming_matches[ :resolution ] != composition_resolution[ :abbrev ]
+    if composition_picture_resolution
+      if naming_matches[ :resolution ] != composition_picture_resolution[ :abbrev ]
         case naming_matches[ :resolution ]
         when '48'
           if composition_edit_rate != 48.0
@@ -3967,7 +4028,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
           end
         else
           resolution_claim = naming_matches[ :resolution ]
-          hints << "CPL #{ cpl_id }: Naming convention: Part resolution claims #{ resolution_claim } but composition resolution is #{ composition_resolution[ :abbrev ] }"
+          hints << "CPL #{ cpl_id }: Naming convention: Part resolution claims #{ resolution_claim } but composition resolution is #{ composition_picture_resolution[ :abbrev ] }"
         end
       end
     end
@@ -3975,10 +4036,10 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   #
   # Audio channels
   if naming_matches[ :audio_type ]
-    if composition_channel_count
-      if naming_matches[ :audio_type ].split( '-' ).first != composition_channel_count[ :abbrev ]
+    if composition_sound_channel_count
+      if naming_matches[ :audio_type ].split( '-' ).first != composition_sound_channel_count[ :abbrev ]
         channel_count_claim = naming_matches[ :audio_type ].split( '-' ).first
-        hints << "CPL #{ cpl_id }: Naming convention: Part audio type claims #{ channel_count_claim } but composition audio type is #{ composition_channel_count[ :abbrev ] }"
+        hints << "CPL #{ cpl_id }: Naming convention: Part audio type claims #{ channel_count_claim } but composition audio type is #{ composition_sound_channel_count[ :abbrev ] }"
       end
     end
   end
@@ -3986,18 +4047,10 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   return report, errors, hints, info
 end # cpl_inspect_xml
 
-
-def dcp_inspect( options, arg )
-  errors = Array.new
-  hints = Array.new
-  hints << 'Schema checks were skipped' unless options.validate
-  info = Array.new
-
-  # collect all files
-  @package_dir = arg
+def dir_tree( arg )
   package_dir_tree = Array.new
   begin
-    Dir.chdir( @package_dir ) { |d| package_dir_tree = Dir[ "**/*" ] }
+    Dir.chdir( arg ) { |d| package_dir_tree = Dir[ "**/*" ] }
     #
     # Alternatively consider
     #
@@ -4011,10 +4064,11 @@ def dcp_inspect( options, arg )
     @logger.info e.message
     exit FILE_ACCESS_ERROR
   end
+  return package_dir_tree
+end
 
-  #
-  # Find files called what Assetmap(s) would be called.
-  # Don't assume they're actually Assetmaps before checking.
+
+def find_assetmap_candidates( package_dir_tree, options )
   am_candidates = with_etabar( package_dir_tree, options, 'Looking for Assetmap candidates:', 20, '[= ]', @logger ) { |e|
     (
       File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or
@@ -4027,7 +4081,26 @@ def dcp_inspect( options, arg )
   #     File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/
   # }.sort
   #
+end
 
+
+def dcp_inspect( options, arg )
+  errors = Array.new
+  hints = Array.new
+  hints << 'Schema checks were skipped' unless options.validate
+  info = Array.new
+
+  #
+  # collect all files dangling below arg
+  #
+  @package_dir = arg
+  package_dir_tree = dir_tree( @package_dir )
+
+  #
+  # Find files called what Assetmap(s) would be called.
+  # Don't assume they're actually Assetmaps before checking.
+  #
+  am_candidates = find_assetmap_candidates( package_dir_tree, options )
   if am_candidates.empty?
     errors << 'No Assetmap candidates found'
   else
@@ -4040,7 +4113,7 @@ def dcp_inspect( options, arg )
     am_candidates_tmp = am_candidates.dup
     am_candidates.each do |am_candidate|
       am_file = package am_candidate
-      error_status = FALSE
+      error_status = false
       xml, errors, error_status = get_xml_of_type( 'AssetMap', am_file, errors, error_status )
       if xml
 
@@ -4048,11 +4121,11 @@ def dcp_inspect( options, arg )
         am_id = get_asset_uuid( am_file )
         if options.validate
           begin
-            valid, errors, error_status = validation( errors, TRUE, xml, am_file, am_id, 'AM' )
+            valid, errors, error_status = validation( errors, true, xml, am_file, am_id, 'AM' )
             @logger.debug "AM #{ am_id.nil? ? am_id.inspect : am_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }: #{ am_file }"
           rescue Exception => e
             errors << "AM #{ am_id.nil? ? am_id.inspect : am_id }: Exception in Schema check: #{ e.message }"
-            error_status = TRUE
+            error_status = true
             @logger.debug errors.last
           end
         end
@@ -4074,7 +4147,7 @@ def dcp_inspect( options, arg )
   pkls_missing = Array.new
   ams = Array.new
   am_files.each_with_index do |am_file, index|
-    am_errors = FALSE
+    am_errors = false
     dict << Hash.new
     pkls << Array.new
     pkls_missing << Array.new
@@ -4095,16 +4168,16 @@ def dcp_inspect( options, arg )
       when MStr::Smpte_am
         unless File.basename( am_file ) == 'ASSETMAP.xml'
           errors << "AM #{ am_id }: #{ am_file.inspect }: SMPTE Assetmap file cannot be named #{ File.basename( am_file ).inspect }. Must be named \"ASSETMAP.xml\""
-          am_errors = TRUE
+          am_errors = true
         end
       when MStr::Interop_am
         unless File.basename( am_file ) == 'ASSETMAP'
           errors << "AM #{ am_id }: #{ am_file.inspect }: Interop Assetmap file cannot be named #{ File.basename( am_file ).inspect }. Must be named \"ASSETMAP\""
-          am_errors = TRUE
+          am_errors = true
         end
       else
         errors << "AM #{ am_id }: #{ am_file.inspect }: Alleged AM file has invalid namespace #{ am_ns.inspect }"
-        am_errors = TRUE
+        am_errors = true
       end
 
       #
@@ -4129,13 +4202,13 @@ def dcp_inspect( options, arg )
         # DCSubtitle does not require RFC-4122 UUID
         if listed_id.downcase !~ MStr::Uuid_re
           errors << "AM #{ am_id }: Listed in Assetmap: Not a UUID: #{ path }: #{ listed_id }"
-          am_errors = TRUE
+          am_errors = true
         end
 
         # Path element present? See e.g. mc t28 ASSETMAP.xml
         if path.nil?
           errors << "AM #{ am_id }: No path for asset: #{ listed_id }"
-          am_errors = TRUE
+          am_errors = true
         else
 
           # Assetmap dictionary
@@ -4149,11 +4222,11 @@ def dcp_inspect( options, arg )
             if asset_id
               unless asset_id.downcase =~ MStr::Uuid_re
                 errors << "AM #{ am_id }: Asset UUID: Not a UUID: #{ asset_file }: #{ asset_id }"
-                am_errors = TRUE
+                am_errors = true
               end
               if listed_id.downcase != asset_id.downcase
                 errors << "AM #{ am_id }: UUID mismatch: #{ asset_file }: Listed: #{ listed_id } Asset: #{ asset_id }" 
-                am_errors = TRUE
+                am_errors = true
               else
                 if listed_id != asset_id
                   hints << "AM #{ am_id }: UUID case mismatch: #{ asset_file }: Listed: #{ listed_id } Asset: #{ asset_id }"
@@ -4162,7 +4235,7 @@ def dcp_inspect( options, arg )
             end
           else
             errors << "AM #{ am_id }: Listed asset file missing: #{ listed_id }: #{ path }: #{ asset_file }"
-            am_errors = TRUE
+            am_errors = true
           end
 
           # Check for Chunklist:Chunk:Length element and compare to actual asset size.
@@ -4176,11 +4249,11 @@ def dcp_inspect( options, arg )
                 asset_size = File.size asset_file
                 unless listed_asset_length == asset_size
                   errors << "AM #{ am_id }: Mismatch in optional Length element: Asset: #{ listed_id }: Listed length: #{ listed_asset_length } (#{ listed_asset_length.to_k }) Asset on medium: #{ asset_size } (#{ asset_size.to_k })"
-                  am_errors = TRUE
+                  am_errors = true
                 end
               rescue Exception => e
                 errors << "AM #{ am_id }: Length check fail: #{ e.message }"
-                am_errors = TRUE
+                am_errors = true
               end
             end
           end
@@ -4203,13 +4276,13 @@ def dcp_inspect( options, arg )
                 pkls[ index ] << listed_id
               else
                 errors << "AM #{ am_id }: SMPTE AM requires a PackingList element to contain the value 'true' (value is missing). Continuing anyway"
-                am_errors = TRUE
+                am_errors = true
                 pkls[ index ] << listed_id
               end
             end
           else
             errors << "AM #{ am_id }: Found alleged PackingList asset #{ listed_id } but Path element is empty. Not adding to dictionary"
-            am_errors = TRUE
+            am_errors = true
           end
         end
 
@@ -4226,9 +4299,9 @@ def dcp_inspect( options, arg )
       end # assets.each
 
     else
-      ams << NIL
+      ams << nil
       errors << "Assetmap '#{ am_file }' has no Id"
-      am_errors = TRUE
+      am_errors = true
     end
 
     # List this Assetmap's PKLs
@@ -4240,13 +4313,13 @@ def dcp_inspect( options, arg )
       else
         pkls_missing[ index ] << pkl_id
         errors << "AM #{ am_id }: PKL file missing: #{ pkl_id }: #{ pkl_file }"
-        am_errors = TRUE
+        am_errors = true
         @logger.debug errors.last
       end
     }
     pkls_missing[ index ].map { |pkl_id| pkls[ index ].delete pkl_id }
 
-    if am_errors == TRUE
+    if am_errors == true
       @logger.debug "There were errors. See AM #{ am_id } errors #{ error_output }"
     end
 
@@ -4294,7 +4367,7 @@ def dcp_inspect( options, arg )
     cpls << Array.new
     cpls_missing << Array.new
     am_pkls.each do |pkl_id|
-      pkl_errors = FALSE
+      pkl_errors = false
       pkl_file = package dict[ index ][ pkl_id ]
       xml, errors, pkl_errors = get_xml_of_type( 'PackingList', pkl_file, errors, pkl_errors )
       if xml
@@ -4307,7 +4380,7 @@ def dcp_inspect( options, arg )
             @logger.debug "PKL #{ pkl_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }"
           rescue Exception => e
             errors << "PKL #{ pkl_id }: Exception in Schema check: #{ e.message }"
-            pkl_errors = TRUE
+            pkl_errors = true
             @logger.debug errors.last
           end
         end
@@ -4333,12 +4406,12 @@ def dcp_inspect( options, arg )
             if ! signature_result.signer_node.empty? and sig_info[ :x509serialnumber ] and sig_info[ :cert_serial ]
               if sig_info[ :x509serialnumber ] != sig_info[ :cert_serial ]
                 errors << "PKL #{ pkl_id }: Signer serial mismatch: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
-                pkl_errors = TRUE
+                pkl_errors = true
                 @logger.debug errors.last
               end
             else
               errors << "PKL #{ pkl_id }: Signer info :x509serialnumber or :cert_serial could not be retrieved"
-              pkl_errors = TRUE
+              pkl_errors = true
               @logger.debug errors.last
             end
           end
@@ -4367,12 +4440,12 @@ def dcp_inspect( options, arg )
           id = asset.xpath( 'Id' ).text.split( ':' ).last
           if id.empty?
             errors << "PKL #{ pkl_id }: Asset Id missing"
-            pkl_errors = TRUE
+            pkl_errors = true
           end
           type = asset.xpath( 'Type' ).text
           if type.empty?
             errors << "PKL #{ pkl_id }: Asset type not specified: #{ id }"
-            pkl_errors = TRUE
+            pkl_errors = true
           end
           # List all assets listed in PKL and report AM mapping status
           @logger.debug "#{ id }: #{ type.empty? ? '[Type not specified in PKL]' : type }: #{ dict[ index ][ id ] ? File.exists?( package dict[ index ][ id ] ) ? dict[ index ][ id ] : dict[ index ][ id ] + ' (missing)' : 'Asset UUID not in assetmap dictionary' }"
@@ -4390,13 +4463,13 @@ def dcp_inspect( options, arg )
               if size_listed
                 if size_listed != size_asset
                   errors << "PKL #{ pkl_id }: Size mismatch: #{ id }: PKL: #{ size_listed } (#{ size_listed.to_k }) Asset: #{ size_asset } (#{ size_asset.to_k })"
-                  pkl_errors = TRUE
+                  pkl_errors = true
                 end
                 package_size_listed += size_listed
                 package_size_actual += size_asset
               else
                 errors << "PKL #{ pkl_id }: Size tag missing or bad content: #{ id }: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }"
-                pkl_errors = TRUE
+                pkl_errors = true
               end
 
               # Check listed and actual digests
@@ -4406,7 +4479,7 @@ def dcp_inspect( options, arg )
                     errors << "PKL #{ pkl_id }: Hash element is empty: See PKL file #{ pkl_file } line #{ asset.xpath( 'Hash' ).first.line }"
                     errors << "PKL #{ pkl_id }: Asset has no associated hash value in metadata: #{ id }: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }"
                     @logger.debug "#{ id }: Checking hash value: Asset has no associated hash value in metadata: See errors #{ error_output }"
-                    pkl_errors = TRUE
+                    pkl_errors = true
                   else
                     if options.check_hashes
                       if options.check_hashes_limit == :no_limit or bytes_from_nice_bytes( options.check_hashes_limit ) > size_asset
@@ -4417,7 +4490,7 @@ def dcp_inspect( options, arg )
                         if hash_listed != hash_check
                           eta.preserve_terminal_title_with_message( "Mismatch (#{ time_string( eta.elapsed ) })" )
                           errors << "PKL #{ pkl_id }: Hash mismatch: #{ id }: PKL: #{ hash_listed } Asset: #{ hash_check }"
-                          pkl_errors = TRUE
+                          pkl_errors = true
                         else
                           eta.preserve_terminal_title_with_message( "OK (#{ time_string( eta.elapsed ) })" )
                           # info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
@@ -4432,12 +4505,12 @@ def dcp_inspect( options, arg )
                 end
               else
                 errors << "PKL #{ pkl_id }: Hash element missing or bad content: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }: #{ id }"
-                pkl_errors = TRUE
+                pkl_errors = true
               end
 
               # Pick CPLs
               if type =~ /text\/xml/
-                xml, errors, errors_status = get_xml_of_type( 'CompositionPlaylist', asset_file, errors, errors_status = FALSE )
+                xml, errors, errors_status = get_xml_of_type( 'CompositionPlaylist', asset_file, errors, errors_status = false )
                 if xml
                   pkl_cpls << id
                   cpls[ index ] << id
@@ -4448,7 +4521,7 @@ def dcp_inspect( options, arg )
             else
               # asset_file does not exist
               errors << "PKL #{ pkl_id }: Asset file missing: #{ id }: #{ asset_file }"
-              pkl_errors = TRUE
+              pkl_errors = true
               package_size_listed += size_listed
               package_size_actual += 0
             end
@@ -4457,7 +4530,7 @@ def dcp_inspect( options, arg )
             # For some reason the listed id in PackingList is not in assetmap dictionary
             # Possibly been tampered with
             errors << "Asset UUID not in assetmap dictionary: PKL #{ pkl_id }: #{ id } (#{ type })"
-            pkl_errors = TRUE
+            pkl_errors = true
           end
 
         end
@@ -4472,22 +4545,22 @@ def dcp_inspect( options, arg )
             cpls_missing[ index ] << cpl_id
             errors << "CPL #{ cpl_id }: CPL file missing: #{ cpl_file }"
             @logger.debug errors.last
-            pkl_errors = TRUE
+            pkl_errors = true
           end
         }
         cpls_missing[ index ].map { |cpl_id| cpls[ index ].delete cpl_id }
       else
         errors << "Not a PackingList: #{ pkl_file }"
         @logger.debug errors.last
-        pkl_errors = TRUE
+        pkl_errors = true
       end
       if package_size_listed
         packages_size_listed += package_size_listed
         packages_size_actual += package_size_actual
-        package_size_listed, package_size_actual = NIL, NIL
+        package_size_listed, package_size_actual = nil, nil
       end
 
-      if pkl_errors == TRUE
+      if pkl_errors == true
         @logger.debug "There were errors. See PKL #{ pkl_id } errors #{ error_output }"
       end
 
@@ -4538,6 +4611,7 @@ def dcp_inspect( options, arg )
     end
   end
 
+
   # Info summary block
   pkls = pkls.flatten
   cpls = cpls.flatten
@@ -4550,7 +4624,7 @@ def dcp_inspect( options, arg )
   info << "#{ AppName } #{ AppVersion } (asdcplib #{ ASDCPVersion }, #{ RubyVersionPlatform }) on #{ RunDatetime_friendly } (#{ execution_time })"
   info << "Inspected: #{ Pathname( arg ).realpath }"
   info << "Found #{ amount( 'Package', pkls ) } with total size #{ total_size }"
-  info << 'Hash checks skipped' if options.check_hashes == FALSE
+  info << 'Hash checks skipped' if options.check_hashes == false
   info << "Hash checks skipped for assets bigger than #{ @check_hashes_limit_nice }" if @check_hashes_limit_nice
   info << "Hash checks skipped for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits } total" if @check_hashes_limit_nice
   info << 'Schema checks skipped' unless options.validate
@@ -4580,7 +4654,7 @@ def dcp_inspect_crashed_get_in_touch
 end
 
 
-def graceful_shutdown( options, args, crash = FALSE )
+def graceful_shutdown( options, args, crash = false )
   if @dcp_inspect_temp
     @dcp_inspect_temp.eject
   end
@@ -4634,7 +4708,7 @@ begin
   options = Options.parse( ARGV )
   args = ARGV
   if ENV[ 'DCP_INSPECT_AUTOLOG' ]
-    options.logfile_autolog = TRUE
+    options.logfile_autolog = true
   end
   @logger = DLogger.new( prefix = '', options )
 
@@ -4648,13 +4722,13 @@ begin
 
 
   # Check required tools
-  required_command_not_found = FALSE
+  required_command_not_found = false
   required_commands = [ 'asdcp-info', 'asdcp-unwrap', 'kmuuidgen' ]
   required_commands << 'sox' if options.audio_analysis
   required_commands.flatten.each do |command|
     if ! command_exists? command
       @logger.info "Required command #{ command } not found. Please run digital-cinema-tools-setup or install the missing component manually"
-      required_command_not_found = TRUE
+      required_command_not_found = true
     end
   end
   exit REQUIRED_COMMAND_NOT_FOUND if required_command_not_found
@@ -4674,9 +4748,9 @@ begin
   # Check Nokogiri C14N support
   # Nokogiri git master (2012.01.11) implements interface to libxml2's C14N
   if Nokogiri::XML::Document.new.respond_to?( 'canonicalize' )
-    @c14n_available = TRUE
+    @c14n_available = true
   else
-    @c14n_available = FALSE
+    @c14n_available = false
     @logger.info 'Signature verification: Installed version of Nokogiri does not support C14N. Signature verification will be skipped'
     @logger.info 'Signature verification: Signature verification is a crucial component of full DCP validation'
     @logger.info 'Signature verification: Please consider upgrading your Nokogiri installation'
@@ -4692,7 +4766,7 @@ begin
       @check_hashes_limit_nice = bytes_from_nice_bytes( options.check_hashes_limit ).to_k
       @logger.info "Will skip hash checks for files bigger than #{ @check_hashes_limit_nice }"
     else
-      @check_hashes_limit_nice = NIL
+      @check_hashes_limit_nice = nil
       @logger.info "Option --hash-limit argument #{ options.check_hashes_limit.inspect } does not compute.\nUse integer or decimal plus an optional KB, MB or GB symbol, e.g. 700KB or 1.5GB"
       exit BAD_HASH_LIMIT_ARG
     end
@@ -4803,10 +4877,15 @@ rescue Interrupt => signal
   exit USER_INTERRUPT
 rescue TypeError => error
   print_internal_error_backtrace( error )
-  graceful_shutdown( options, args, crash = TRUE )
+  graceful_shutdown( options, args, crash = true )
   exit RUBY_TYPE_ERROR
 rescue NameError => error
   print_internal_error_backtrace( error )
-  graceful_shutdown( options, args, crash = TRUE )
+  graceful_shutdown( options, args, crash = true )
+  exit RUBY_NAME_ERROR
+rescue ArgumentError => error
+  print_internal_error_backtrace( error )
+  graceful_shutdown( options, args, crash = true )
+  exit RUBY_ARGUMENT_ERROR
 end
 
