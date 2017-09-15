@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 #
 # x509_inspect.rb prints information about a chain of X509 certificates
-# Copyright 2012 Wolfgang Woehl
+# Copyright 2012-2017 Wolfgang Woehl
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename __FILE__
-AppVersion = 'v0.2012.09.05'
+AppVersion = 'v0.2017.07.10'
 #
 # Usage:  x509_inspect.rb chain_0.pem [chain_1.pem [...]]
 #         x509_inspect.rb chain_*
@@ -34,13 +34,14 @@ class Optparser
     # defaults
     options = OpenStruct.new
     options.items = [ 'o', 'ou', 'cn', 'dnq', 'serial' ]
-    options.detect_chain = TRUE
+    options.items_all = %w[ file version serial signature_algorithm not_before not_after o ou cn dnq o_issuer ou_issuer cn_issuer dnq_issuer basicConstraints keyUsage authorityKeyIdentifier pubkey exponent ]
+    options.detect_chain = true
 
     opts = OptionParser.new do |opts|
       # Banner and usage
       opts.banner = <<BANNER
 #{ AppName } #{ AppVersion }
-Usage: #{ AppName } [-l,--list <item1,item2,...>] [--no-chain] [-h,--help] <certs>
+Usage: #{ AppName } [-l,--list <item1,item2,...>] [-a,--all] [--no-chain] [-h,--help] <certs>
 Items:
   file version serial signature_algorithm not_before not_after
   o ou cn dnq o_issuer ou_issuer cn_issuer dnq_issuer
@@ -55,8 +56,11 @@ BANNER
       opts.on( '-l', '--list list', Array, "List of items to be displayed (Default: 'o,ou,cn,dnq,serial')" ) do |p|
         options.items = p
       end
+      opts.on( '-a', '--all' ) do
+        options.items = options.items_all
+      end
       opts.on( '--no-chain', 'Do not try to detect and sort chain' ) do
-        options.detect_chain = FALSE
+        options.detect_chain = false
       end
       opts.on_tail( '-h', '--help', 'Display this screen' ) do
         puts opts
@@ -96,7 +100,7 @@ end
 def sort_certs( certs )
   # Find root ca and collect issuers
   # ruby version of CTP's dsig_cert.py
-  root = NIL
+  root = nil
   issuer_map = Hash.new
   errors = Array.new
 
@@ -112,7 +116,7 @@ def sort_certs( certs )
       issuer_map[ cert.issuer.to_s ] = cert
     end
   end
-  if root == NIL
+  if root == nil
     errors << "Self-signed root certificate not found"
     return [], errors
   end
@@ -218,7 +222,7 @@ if ARGV.empty?
 end
 
 certs = pemfiles_to_obj( ARGV )
-certs, errors = sort_certs( certs ) unless certs.size < 2 or options.detect_chain == FALSE
+certs, errors = sort_certs( certs ) unless certs.size < 2 or options.detect_chain == false
 report = x509_inspect( certs, options )
 puts_padded( report, spacer = ' ' )
 
