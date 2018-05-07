@@ -842,7 +842,7 @@ end
 def amount( item, count )
   if count.is_a? Array or count.is_a? Hash
     "#{ count.size } #{ item }#{ pl count }"
-  elsif count.is_a? Fixnum
+  elsif count.is_a? Integer
     "#{ count } #{ item }#{ pl count }"
   end
 end
@@ -852,7 +852,7 @@ end
 def pl( count )
   if count.is_a? Array or count.is_a? Hash
     count.size != 1 ? 's' : ''
-  elsif count.is_a? Fixnum
+  elsif count.is_a? Integer
     count != 1 ? 's' : ''
   end
 end
