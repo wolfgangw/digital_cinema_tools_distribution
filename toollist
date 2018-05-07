@@ -1,5 +1,4 @@
 certificate_thumbprint.rb
-cinemaslides
 db_adjust_for_dolby_fader_ref.rb
 dc_crypto_context.rb
 dcp_inspect
