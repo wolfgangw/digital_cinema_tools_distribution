@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2015.02.20'
+setup_version='v1.2018.05.07'
 #
 # Usage:
 #
@@ -43,7 +43,7 @@ setup_version='v1.2015.02.20'
 # It tries hard not to break anything and to respect the existing environment.
 # You can run it multiple times, should anything go wrong during a setup run (network problems etc.)
 #
-# Wolfgang Woehl 2012-2013
+# Wolfgang Woehl 2012-2018
 #
 #
 # Location of self
@@ -71,31 +71,20 @@ rbenv_plugins_dir=$rbenv_dir/plugins
 # Ruby build system: ruby-build
 rubybuild_url="git://github.com/sstephenson/ruby-build.git"
 rubybuild_dir=$rbenv_plugins_dir/ruby-build
-ruby_version='2.1.5'
+ruby_version='2.5.1'
 gemrc=$HOME/.gemrc
-
-# JPEG2000 codec: OpenJPEG
-# http://openjpeg.googlecode.com/files/openjpeg-1.5.0.tar.gz (SHA1 dce705ae45f137e4698a8cf39d1fbf22bc434fa8)
-# http://openjpeg.googlecode.com/files/openjpeg-2.0.0.tar.gz (SHA1 0af78ab2283b43421458f80373422d8029a9f7a7)
-opj_googlecode='openjpeg.googlecode.com'
-openjpeg_version='1.5.0'
-openjpeg_tarball="openjpeg-$openjpeg_version.tar.gz"
-openjpeg_tarball_url="http://$opj_googlecode/files/$openjpeg_tarball"
-openjpeg_dir=$libdir/openjpeg
-openjpeg_build_dir="$openjpeg_dir/openjpeg-$openjpeg_version"
-openjpeg_install_dir=$bindir/openjpeg
 
 # Handle SMPTE and Interop trackfiles: ASDCPLib
 cinecert='download.cinecert.com/asdcplib'
-asdcplib_version='1.12.58'
-asdcplib_version_tarball_md5='95f3aa8712a7590fccff60f026659dbe'
+asdcplib_version='2.7.19'
+asdcplib_version_tarball_md5='f9290440d1645cc834cfb9fb5a337348'
 asdcplib_tarball="asdcplib-$asdcplib_version.tar.gz"
 asdcplib_tarball_url="http://$cinecert/$asdcplib_tarball"
 asdcplib_dir=$libdir/asdcplib
 asdcplib_build_dir="$asdcplib_dir/asdcplib-$asdcplib_version"
 asdcplib_install_dir=$bindir/asdcplib
 
-# Digital cinema tools distribution: cinemaslides, dcp_inspect etc.
+# Digital cinema tools distribution:
 dist_url="git://github.com/wolfgangw/digital_cinema_tools_distribution.git"
 dist_dir=$libdir/digital_cinema_tools_distribution
 
@@ -238,6 +227,7 @@ else
   echo 'Required command "sudo" not found. Please install sudo'
   exit 1
 fi
+
 
 # Depending on which OS we're on set the required packager and switches
 # to install a basic set of packages from distribution sources
@@ -594,69 +584,6 @@ else
 fi # Nokogiri
 
 
-# openjpeg
-cd $libdir
-if command_exists image_to_j2k
-then
-  echo 'openjpeg: OK'
-else
-  echo 'openjpeg: Installing ...'
-  if location_exists $openjpeg_dir
-  then
-    cd $openjpeg_dir
-  else
-    mkdir $openjpeg_dir && cd $openjpeg_dir
-  fi
-
-  remove_if_exists $openjpeg_build_dir
-  if [ -e $openjpeg_tarball ]
-  then
-    echo "openjpeg: Tarball exists"
-  else
-    echo "openjpeg: Downloading tarball $openjpeg_tarball_url"
-    if wget $openjpeg_tarball_url
-    then
-      echo "openjpeg: Download OK"
-    else
-      if ! ping -c 1 $opj_googlecode
-      then
-        errors+=("openjpeg: $opj_googlecode seems to be down") && echo_last errors[@]
-      fi
-      errors+=("openjpeg: Failed to download tarball. Try again later") && echo_last errors[@]
-    fi
-  fi
-  if tar xzf $openjpeg_tarball
-  then
-    cd $openjpeg_build_dir
-    if ./configure --disable-doc --prefix=$openjpeg_install_dir && make -j3 && make install
-    then
-      opj_build=ok
-      echo "openjpeg: Build OK"
-    else
-      opj_build=fail
-      errors+=("openjpeg: Failed to configure, build and install") && echo_last errors[@]
-    fi
-  else
-    opj_build=fail
-    errors+=("Failed to extract tarball at $openjpeg_dir") && echo_last errors[@]
-  fi
-fi
-if [ "$opj_build" = 'ok' ]
-then
-  cd $bindir
-  for tool in $openjpeg_install_dir/bin/*
-  do
-    if [ -e $bindir/$(basename ${tool}) ]
-    then
-      echo "openjpeg: $(basename ${tool}) OK"
-    else
-      echo "openjpeg: Add to $bindir: $(basename ${tool})"
-      ln -s $tool .
-    fi
-  done # openjpeg
-fi
-
-
 # asdcplib
 cd $libdir
 if command_exists asdcp-info && [[ `asdcp-info -V` =~ $asdcplib_version ]]
@@ -819,57 +746,6 @@ then
   fi
 else
   errors+=("cinemaslides: Failed to install required gem highline (Required command gem not found)") && echo_last errors[@]
-fi
-# cinemaslides: Set env CINEMASLIDESDIR (will be created on-demand by cinemaslides)
-if [ -z "$CINEMASLIDESDIR" ]
-then
-  cinemaslidesdir=$basedir/CINEMASLIDESDIR
-else
-  cinemaslidesdir="$CINEMASLIDESDIR"
-fi
-# There might be another path exported for CINEMASLIDESDIR (user mod)
-if grep -P "export CINEMASLIDESDIR=" $bashrc $bash_profile &> /dev/null
-then
-  echo 'cinemaslides: CINEMASLIDESDIR is set. OK'
-else
-  echo 'cinemaslides: Setting CINEMASLIDESDIR'
-  echo '' >> $bashrc
-  echo "# $setup_basename: Location of cinemaslides' working directory" >> $bashrc
-  echo "export CINEMASLIDESDIR=$cinemaslidesdir" >> $bashrc
-  exec_shell_required=true
-fi
-
-
-# Local certificate store and example certificates
-certstore=$basedir/CERTSTORE
-if grep -P "export CINEMACERTSTORE=" $bashrc $bash_profile &> /dev/null
-then
-  echo 'cinemaslides: CINEMACERTSTORE is set. OK'
-else
-  echo '' >> $bashrc
-  echo "# $setup_basename: Location of local example cinema certificates" >> $bashrc
-  echo "export CINEMACERTSTORE=$certstore" >> $bashrc
-  exec_shell_required=true
-fi
-if location_exists $certstore
-then
-  cd $certstore
-  if [ -f leaf.key -a -f leaf.signed.pem -a -f intermediate.key -a -f intermediate.signed.pem -a -f ca.key -a -f ca.self-signed.pem -a -f dc-certificate-chain ]
-  then
-    echo 'Local certificate store: Required certificates found'
-  else
-    echo 'Local certificate store: Generating example certificates ...'
-    $bindir/make-dc-certificate-chain.rb
-  fi
-else
-  mkdir $certstore && cd $certstore
-  $bindir/make-dc-certificate-chain.rb
-fi
-if $bindir/dc_crypto_context.rb --quiet $certstore
-then
-  echo 'Local certificate store: OK'
-else
-  echo "Local certificate store: Failed to find valid certificate chain in $certstore"
 fi
 # Done: Digital Cinemas Tools Distribution
 
