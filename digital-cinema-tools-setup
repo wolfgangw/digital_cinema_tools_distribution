@@ -238,7 +238,7 @@ case $os_dist in
     packager='apt-get'
     packager_params='-y install'
     # build-essential odd ..
-    packages_required=( build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox git-core libtiff-dev libpng12-dev )
+    packages_required=( build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox git-core libtiff-dev libpng-dev )
     packager_prep="$packager update"
     ;;
   redhat)
@@ -253,7 +253,7 @@ case $os_dist in
     query_params='--no-refresh se -i'
     packager='zypper'
     packager_params='--gpg-auto-import-keys --non-interactive install'
-    packages_required=( make automake gcc gcc-c++ libxslt-devel libexpat-devel libxmlsec1-openssl-devel xmlsec1 readline-devel zlib-devel openssl-devel ImageMagick mplayer sox git libtiff-devel libpng12-devel )
+    packages_required=( make automake gcc gcc-c++ libxslt-devel libexpat-devel libxmlsec1-openssl-devel xmlsec1 readline-devel zlib-devel openssl-devel ImageMagick mplayer sox git libtiff-devel libpng-devel )
 esac
 
 
