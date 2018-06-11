@@ -238,7 +238,7 @@ case $os_dist in
     packager='apt-get'
     packager_params='-y install'
     # build-essential odd ..
-    packages_required=( build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick mplayer sox git-core libtiff-dev libpng-dev )
+    packages_required=( build-essential curl libxslt1-dev libxml2-dev libexpat1-dev xmlsec1 libreadline-dev zlib1g zlib1g-dev libssl-dev imagemagick sox git-core libtiff-dev libpng-dev )
     packager_prep="$packager update"
     ;;
   redhat)
@@ -246,14 +246,14 @@ case $os_dist in
     query_params='--query'
     packager='yum'
     packager_params='-y install'
-    packages_required=( make automake gcc gcc-c++ wget libxslt-devel expat-devel xmlsec1 xmlsec1-openssl readline-devel zlib-devel openssl-devel ImageMagick mplayer sox git libtiff-devel libpng-devel )
+    packages_required=( make automake gcc gcc-c++ wget libxslt-devel expat-devel xmlsec1 xmlsec1-openssl readline-devel zlib-devel openssl-devel ImageMagick sox git libtiff-devel libpng-devel )
     ;;
   opensuse)
     query='zypper'
     query_params='--no-refresh se -i'
     packager='zypper'
     packager_params='--gpg-auto-import-keys --non-interactive install'
-    packages_required=( make automake gcc gcc-c++ libxslt-devel libexpat-devel libxmlsec1-openssl-devel xmlsec1 readline-devel zlib-devel openssl-devel ImageMagick mplayer sox git libtiff-devel libpng-devel )
+    packages_required=( make automake gcc gcc-c++ libxslt-devel libexpat-devel libxmlsec1-openssl-devel xmlsec1 readline-devel zlib-devel openssl-devel ImageMagick sox git libtiff-devel libpng-devel )
 esac
 
 
@@ -286,18 +286,6 @@ then
 
     # Some distributions need extra repositories
     case $os_dist in
-      redhat)
-        # Special case Fedora/MPlayer: Provided by RPMFusion repository. Add the repo
-        # See repo keys and fingerprints on http://rpmfusion.org/keys
-        repo_rpmfusion_free='http://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-stable.noarch.rpm'
-        repo_rpmfusion_nonfree='http://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-stable.noarch.rpm'
-        if ! sudo $packager -y localinstall $repo_rpmfusion_free $repo_rpmfusion_nonfree
-        then
-          errors+=("$os_dist: Failed to add RPMFusion repositories (required for mplayer)") && echo_last errors[@]
-        else
-          echo "$os_dist: RPMFusion repositories (required for mplayer) OK"
-        fi
-        ;;
       opensuse)
         # openSuSE seems to be a special case in its entirety:
         # In a default installation there is no access to any "devel" packages
