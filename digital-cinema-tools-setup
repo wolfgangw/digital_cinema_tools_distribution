@@ -4,7 +4,7 @@ setup_version='v1.2019.02.16'
 #
 # Usage:
 #
-#   * Ubuntu / Debian / Mint / Raspbian / openSuSE: Run
+#   * Lubuntu / Ubuntu / Debian / Mint / Raspbian / openSuSE: Run
 #       wget http://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
 #     in a terminal
 #
@@ -71,13 +71,13 @@ rbenv_plugins_dir=$rbenv_dir/plugins
 # Ruby build system: ruby-build
 rubybuild_url="git://github.com/sstephenson/ruby-build.git"
 rubybuild_dir=$rbenv_plugins_dir/ruby-build
-ruby_version='2.5.1'
+ruby_version='2.6.1'
 gemrc=$HOME/.gemrc
 
 # Handle SMPTE and Interop trackfiles: ASDCPLib
 cinecert='download.cinecert.com/asdcplib'
-asdcplib_version='2.7.19'
-asdcplib_version_tarball_md5='f9290440d1645cc834cfb9fb5a337348'
+asdcplib_version='2.10.31'
+asdcplib_version_tarball_sha256='71623e8fc57ead6557f1df80ca374fef7e6f92a61b6f8a330d09f9fbeb96eb9b'
 asdcplib_tarball="asdcplib-$asdcplib_version.tar.gz"
 asdcplib_tarball_url="http://$cinecert/$asdcplib_tarball"
 asdcplib_dir=$libdir/asdcplib
@@ -587,9 +587,9 @@ else
   fi
 
   remove_if_exists $asdcplib_build_dir
-  if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
+  if [ -e $asdcplib_tarball ] && [[ $( sha256sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_sha256 ]]
   then
-    echo "asdcplib: $asdcplib_version_tarball_md5: MD5 OK"
+    echo "asdcplib: $asdcplib_version_tarball_sha256: SHA256 OK"
   else
     if [ -e $asdcplib_tarball ]
     then
@@ -599,9 +599,9 @@ else
     if wget $asdcplib_tarball_url
     then
       echo 'asdcplib: Download OK'
-      if [ -e $asdcplib_tarball ] && [[ $( md5sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_md5 ]]
+      if [ -e $asdcplib_tarball ] && [[ $( sha256sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_sha256 ]]
       then
-        echo "asdcplib: $asdcplib_version_tarball_md5: MD5 OK"
+        echo "asdcplib: $asdcplib_version_tarball_sha256: SHA256 OK"
       else
         errors+=("asdcplib: Failed to verify tarball: $asdcplib_dir/$asdcplib_tarball") && echo_last errors[@]
       fi
