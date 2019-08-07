@@ -2994,6 +2994,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
               end
               if intrinsic_duration != meta[ 'ContainerDuration' ].to_i
                 errors << "#{ cpl_reel }: IntrinsicDuration #{ intrinsic_duration } in #{ asset.node_name } does not match ContainerDuration #{ meta[ 'ContainerDuration' ].nil? ? '[NaN]' : meta[ 'ContainerDuration' ] } of asset #{ asset_id }"
+                cpl_errors = true
                 if meta[ 'ContainerDuration' ].to_i - entry_point < duration
                   errors << "#{ cpl_reel }: Duration #{ duration } in #{ asset.node_name } does not compute: ContainerDuration #{ meta[ 'ContainerDuration' ] } of asset #{ asset_id } - EntryPoint #{ entry_point } < Duration #{ duration }"
                   sane_IntrinsicDuration_EntryPoint_Duration = false
