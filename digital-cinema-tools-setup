@@ -180,6 +180,9 @@ then
 elif [ -f /etc/lsb-release ] && grep -P 'LinuxMint' /etc/lsb-release &> /dev/null
 then
   os_dist=ubuntu
+elif [ -f /etc/lsb-release ] && grep -P 'Pop!_OS' /etc/lsb-release &> /dev/null
+then
+  os_dist=ubuntu
 elif command_exists lsb_release
 then
   # do the debian thing here lsb_release -a, -i, -r ...
@@ -818,4 +821,3 @@ echo "$setup_basename: Done"
 echo
 
 exit 0
-
