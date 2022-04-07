@@ -63,13 +63,13 @@ libdir=$basedir/.lib
 bindir=$basedir/.bin
 
 # Ruby version management: rbenv
-rbenv_url="git://github.com/sstephenson/rbenv.git"
+rbenv_url="https://github.com/sstephenson/rbenv.git"
 export RBENV_ROOT=$libdir/.rbenv
 rbenv_dir=$RBENV_ROOT
 rbenv_plugins_dir=$rbenv_dir/plugins
 
 # Ruby build system: ruby-build
-rubybuild_url="git://github.com/sstephenson/ruby-build.git"
+rubybuild_url="https://github.com/sstephenson/ruby-build.git"
 rubybuild_dir=$rbenv_plugins_dir/ruby-build
 ruby_version='2.6.1'
 gemrc=$HOME/.gemrc
@@ -85,7 +85,7 @@ asdcplib_build_dir="$asdcplib_dir/asdcplib-$asdcplib_version"
 asdcplib_install_dir=$bindir/asdcplib
 
 # Digital cinema tools distribution:
-dist_url="git://github.com/wolfgangw/digital_cinema_tools_distribution.git"
+dist_url="https://github.com/wolfgangw/digital_cinema_tools_distribution.git"
 dist_dir=$libdir/digital_cinema_tools_distribution
 
 errors=()
@@ -818,4 +818,3 @@ echo "$setup_basename: Done"
 echo
 
 exit 0
-
