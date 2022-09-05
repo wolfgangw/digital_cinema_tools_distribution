@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2019.02.16'
+setup_version='v1.2022.10.04'
 #
 # Usage:
 #
 #   * Lubuntu / Ubuntu / Debian / Mint / Raspbian / openSuSE: Run
-#       wget http://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
+#       wget https://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
 #     in a terminal
 #
 #   * Fedora: Run
-#       curl -sLO http://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
+#       curl -sLO https://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
 #     in a terminal
 #
 #   * For updates or re-runs run
@@ -20,10 +20,6 @@ setup_version='v1.2019.02.16'
 #
 #   * dcp_inspect:  Inspect and validate digital cinema packages (DCPs)
 #                   See https://github.com/wolfgangw/backports#readme
-#
-#   * cinemaslides: Build plaintext/encrypted digital cinema packages (DCPs)
-#                   and generate key delivery messages (KDMs)
-#                   See https://github.com/wolfgangw/digital_cinema_tools/wiki/Cinemaslides
 #
 # and a number of other digital cinema-related tools:
 #
@@ -43,7 +39,7 @@ setup_version='v1.2019.02.16'
 # It tries hard not to break anything and to respect the existing environment.
 # You can run it multiple times, should anything go wrong during a setup run (network problems etc.)
 #
-# Wolfgang Woehl 2012-2018
+# Wolfgang Woehl 2012-2022
 #
 #
 # Location of self
@@ -63,13 +59,13 @@ libdir=$basedir/.lib
 bindir=$basedir/.bin
 
 # Ruby version management: rbenv
-rbenv_url="git://github.com/sstephenson/rbenv.git"
+rbenv_url="https://github.com/sstephenson/rbenv.git"
 export RBENV_ROOT=$libdir/.rbenv
 rbenv_dir=$RBENV_ROOT
 rbenv_plugins_dir=$rbenv_dir/plugins
 
 # Ruby build system: ruby-build
-rubybuild_url="git://github.com/sstephenson/ruby-build.git"
+rubybuild_url="https://github.com/sstephenson/ruby-build.git"
 rubybuild_dir=$rbenv_plugins_dir/ruby-build
 ruby_version='2.6.1'
 gemrc=$HOME/.gemrc
@@ -85,7 +81,7 @@ asdcplib_build_dir="$asdcplib_dir/asdcplib-$asdcplib_version"
 asdcplib_install_dir=$bindir/asdcplib
 
 # Digital cinema tools distribution:
-dist_url="git://github.com/wolfgangw/digital_cinema_tools_distribution.git"
+dist_url="https://github.com/wolfgangw/digital_cinema_tools_distribution.git"
 dist_dir=$libdir/digital_cinema_tools_distribution
 
 errors=()
@@ -402,6 +398,7 @@ then
   echo "Sorry. This installer insists on using rbenv for Ruby version management."
   echo "You have RVM installed and those 2 won't co-exist peacefully, so there."
   echo "If you want to continue remove RVM from your system and re-run this installer."
+  echo "Apologies for the obtrusive hassle."
   echo
   exit 1
 fi
@@ -717,23 +714,6 @@ then
       echo 'dcp_inspect: Nice-to-have gem ttfunk OK'
     fi
   fi
-fi
-# cinemaslides: gem highline required
-if command_exists gem
-then
-  if gem list -i highline &> /dev/null
-  then
-    echo 'cinemaslides: Required gem highline OK'
-  else
-    if ! gem install highline && rbenv rehash
-    then
-      errors+=("cinemaslides: Failed to install required gem highline. Try again later") && echo_last errors[@]
-    else
-      echo 'cinemaslides: Required gem highline OK'
-    fi
-  fi
-else
-  errors+=("cinemaslides: Failed to install required gem highline (Required command gem not found)") && echo_last errors[@]
 fi
 # Done: Digital Cinemas Tools Distribution
 
