@@ -798,7 +798,7 @@ then
   echo
 fi
 
-echo "$setup_basename: Done"
+echo "$setup_basename ($setup_version): Done"
 echo
 
 exit 0
