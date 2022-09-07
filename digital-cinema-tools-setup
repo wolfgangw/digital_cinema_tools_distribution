@@ -404,7 +404,7 @@ else
       errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
     fi
 
-    env_target=$bashrc ;;
+    env_target=$bashrc
     
     echo '' >> $env_target
     echo "# $setup_basename: rbenv environment" >> $env_target
