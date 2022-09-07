@@ -352,34 +352,12 @@ if ! location_exists $libdir ; then mkdir $libdir ; fi
 if ! location_exists $bindir ; then mkdir $bindir ; fi
 
 
-# Source .bash_profile from .bashrc
-if grep -P '^(source|\.) .*/.bash_profile' $bashrc
-then
-  echo 'bashrc: OK'
-else
-  # Fedora sources ~/.bashrc from ~/.bash_profile so we loop source if we add the following
-  if [ $os_dist = 'ubuntu' -o $os_dist = 'debian' ]
-  then
-    echo "$setup_basename: Source ~/.bash_profile from ~/.bashrc"
-    echo '' >> $bashrc
-    echo "# $setup_basename: Use .bash_profile to read rbenv environment" >> $bashrc
-    echo 'source $HOME/.bash_profile' >> $bashrc
-    if ! [ -f $bash_profile ]
-    then
-      touch $bash_profile
-      echo 'bash_profile: Touched'
-    fi
-    exec_shell_required=true
-  fi
-fi
-
-
 # Check for ~/bin and inclusion in PATH
 if string_includes $PATH "$bindir"
 then
   echo "PATH: $bindir available in PATH"
 else
-  if grep -P "export PATH=$bindir:" $bashrc $bash_profile
+  if grep -P "export PATH=$bindir:" $bashrc
   then
     echo "bashrc: $bindir already included. OK"
   else
@@ -426,12 +404,8 @@ else
       errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
     fi
 
-    case $os_dist in
-      debian|ubuntu)
-        env_target=$bashrc ;;
-      redhat|opensuse)
-        env_target=$bashrc ;;
-    esac
+    env_target=$bashrc ;;
+    
     echo '' >> $env_target
     echo "# $setup_basename: rbenv environment" >> $env_target
     echo "export RBENV_ROOT=$rbenv_dir" >> $env_target
