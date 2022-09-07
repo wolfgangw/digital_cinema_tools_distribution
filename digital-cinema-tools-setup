@@ -428,7 +428,7 @@ else
 
     case $os_dist in
       debian|ubuntu)
-        env_target=$bash_profile ;;
+        env_target=$bashrc ;;
       redhat|opensuse)
         env_target=$bashrc ;;
     esac
@@ -436,7 +436,7 @@ else
     echo "# $setup_basename: rbenv environment" >> $env_target
     echo "export RBENV_ROOT=$rbenv_dir" >> $env_target
     echo "export PATH=$rbenv_dir/bin:"'$PATH' >> $env_target
-    echo 'eval "$(rbenv init -)"' >> $env_target
+    echo 'eval "$(rbenv init - bash)"' >> $env_target
     source $env_target
     exec_shell_required=true
 
