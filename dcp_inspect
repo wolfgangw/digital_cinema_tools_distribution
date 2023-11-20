@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2019.08.07'
+AppVersion = 'v1.2023.11.20'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -2148,7 +2148,7 @@ end # Eta
 
 
 def command_exists?( command )
-  ENV[ 'PATH' ].split( File::PATH_SEPARATOR ).any? { |d| File.exists? File.join( d, command ) }
+  ENV[ 'PATH' ].split( File::PATH_SEPARATOR ).any? { |d| File.exist? File.join( d, command ) }
 end
 
 def detect_terminal_size
@@ -2340,7 +2340,7 @@ end
 # FIXME Rather brittle mechanism here. I'd like to have infrastructure types show up (CompositionPlaylist, PackingList, DCSubtitle, DCMetadata)
 def get_asset_uuid( file )
   id = nil
-  if File.exists?( file )
+  if File.exist?( file )
     xml = xml?( file )
     if xml
       xml.remove_namespaces!
@@ -2551,7 +2551,7 @@ end
 
 def confirm_or_create( location )
   testfile = File.join( location, rand.to_s )
-  if File.exists?( location )
+  if File.exist?( location )
     begin
       result = FileUtils.touch( testfile )
       File.delete( testfile )
@@ -2916,7 +2916,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
         if dict[ asset_id ]
           asset_file = package dict[ asset_id ]
 
-          if File.exists?( asset_file )
+          if File.exist?( asset_file )
 
             meta = MxfTools.mxf_inspect( asset_file )
 
@@ -3500,7 +3500,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                             errors << "#{ cpl_reel }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not in AssetMap"
                             cpl_errors = true
                           else
-                            unless File.exists?( package asset_pick.values.first ) # FIXME
+                            unless File.exist?( package asset_pick.values.first ) # FIXME
                               errors << "#{ cpl_reel }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not found on the medium"
                               cpl_errors = true
                             end
@@ -3521,7 +3521,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                       font_path = nil
                       if dict.values.any? { |val| val =~ /#{ font_asset }$/ && font_path = val }
                         font_asset = package font_path
-                        if File.exists?( font_asset )
+                        if File.exist?( font_asset )
                           if font?( font_asset )
                             # Check for font max size recommendation
                             font_asset_size = File.size font_asset
@@ -3646,7 +3646,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
               cpl_referenced_assets_encrypted_inferred_from_key_id << asset_id
             end
 
-          end # File.exists?
+          end # File.exist?
 
         else # ok case: Supplemental/VF/External
 
@@ -4236,10 +4236,10 @@ def dcp_inspect( options, arg )
           # Assetmap dictionary
           dict[ index ][ listed_id ] = Pathname( File.join( am_base, path ) ).cleanpath.to_s
           asset_file = package dict[ index ][ listed_id ]
-          @logger.debug "#{ listed_id }: #{ dict[ index ][ listed_id ] }#{ File.exists?( package dict[ index ][ listed_id ] ) ? '' : ' (file missing)' }"
+          @logger.debug "#{ listed_id }: #{ dict[ index ][ listed_id ] }#{ File.exist?( package dict[ index ][ listed_id ] ) ? '' : ' (file missing)' }"
 
           # Check listed_id vs actual asset_id
-          if File.exists?( asset_file )
+          if File.exist?( asset_file )
             asset_id = get_asset_uuid( asset_file )
             if asset_id
               unless asset_id.downcase =~ MStr::Uuid_re
@@ -4263,7 +4263,7 @@ def dcp_inspect( options, arg )
           # Check for Chunklist:Chunk:Length element and compare to actual asset size.
           # In the case of a mismatch this results in a hint as Length is optional
           # and no crucial processing can depend on it. Field behaviour undefined ttbomk.
-          if File.exists?( asset_file )
+          if File.exist?( asset_file )
             length_el = asset.xpath( 'ChunkList/Chunk/Length' )
             if ! length_el.empty?
               begin
@@ -4330,7 +4330,7 @@ def dcp_inspect( options, arg )
     @logger.debug "Assetmap #{ am_id } lists #{ amount( 'PKL', pkls[ index ] ) }:"
     pkls[ index ].map { |pkl_id|
       pkl_file = package dict[ index ][ pkl_id ]
-      if File.exists?( pkl_file )
+      if File.exist?( pkl_file )
         @logger.debug "PKL file present: #{ pkl_id }: #{ pkl_file }"
       else
         pkls_missing[ index ] << pkl_id
@@ -4373,7 +4373,7 @@ def dcp_inspect( options, arg )
     am_pkls.each do |pkl_id|
       if dict[ index ][ pkl_id ]
         pkl_file = package dict[ index ][ pkl_id ]
-        @logger.debug "PKL file#{ File.exists?( pkl_file ) ? '' : ' not' } present: #{ [ pkl_id, pkl_file ].join( ': ' ) }"
+        @logger.debug "PKL file#{ File.exist?( pkl_file ) ? '' : ' not' } present: #{ [ pkl_id, pkl_file ].join( ': ' ) }"
       end
     end
   end
@@ -4470,13 +4470,13 @@ def dcp_inspect( options, arg )
             pkl_errors = true
           end
           # List all assets listed in PKL and report AM mapping status
-          @logger.debug "#{ id }: #{ type.empty? ? '[Type not specified in PKL]' : type }: #{ dict[ index ][ id ] ? File.exists?( package dict[ index ][ id ] ) ? dict[ index ][ id ] : dict[ index ][ id ] + ' (missing)' : 'Asset UUID not in assetmap dictionary' }"
+          @logger.debug "#{ id }: #{ type.empty? ? '[Type not specified in PKL]' : type }: #{ dict[ index ][ id ] ? File.exist?( package dict[ index ][ id ] ) ? dict[ index ][ id ] : dict[ index ][ id ] + ' (missing)' : 'Asset UUID not in assetmap dictionary' }"
 
           if dict[ index ].keys.include?( id )
             asset_file = package dict[ index ][ id ]
             size_listed = asset.xpath( 'Size' ).text.to_i
 
-            if File.exists?( asset_file )
+            if File.exist?( asset_file )
               size_asset = File.size( asset_file )
               #
               # Plug in checks here. we might be skipping validation hence the tag test
@@ -4563,7 +4563,7 @@ def dcp_inspect( options, arg )
         @logger.debug "PKL #{ pkl_id } lists #{ amount( 'composition', pkl_cpls ) }"
         pkl_cpls.map { |cpl_id|
           cpl_file = package dict[ index ][ cpl_id ]
-          if File.exists?( cpl_file )
+          if File.exist?( cpl_file )
             @logger.debug "CPL file present: #{ cpl_id }: #{ cpl_file }"
           else
             cpls_missing[ index ] << cpl_id
@@ -4598,7 +4598,7 @@ def dcp_inspect( options, arg )
     dict.each_with_index do |dictionary, index|
       cpls[ index ].each do |cpl_id|
         cpl_file = package dictionary[ cpl_id ]
-        if File.exists? cpl_file
+        if File.exist? cpl_file
           @logger.debug "CPL file present: #{ cpl_id }: #{ cpl_file }"
         else
           errors << "CPL #{ cpl_id }: CPL file missing: #{ cpl_file }"
@@ -4618,7 +4618,7 @@ def dcp_inspect( options, arg )
     cpls[ index ].each do |cpl_id|
       if dictionary.include?( cpl_id )
         cpl_file = package dictionary[ cpl_id ]
-        if File.exists?( cpl_file )
+        if File.exist?( cpl_file )
           xml = xml?( cpl_file )
           if xml
 
@@ -4801,8 +4801,8 @@ begin
   AppDir = File.dirname( Pathname.new( __FILE__ ).realpath )
   XSDDir = File.join( AppDir, 'xsd' )
   local_xml_catalog = File.join( XSDDir, 'catalog.xml' )
-  if File.exists?( XSDDir ) and File.ftype( XSDDir ) == 'directory'
-    if File.exists? local_xml_catalog
+  if File.exist?( XSDDir ) and File.ftype( XSDDir ) == 'directory'
+    if File.exist? local_xml_catalog
       c = File.read local_xml_catalog
       m = c.match( /xml:base="file:\/\/(.+)">/ )
       if m[ 1 ] != File.join( XSDDir, '' )
@@ -4820,7 +4820,7 @@ begin
 
 
   # main
-  if args.size == 1 and File.exists?( args[ 0 ] ) and File.directory?( Pathname( args[ 0 ] ).realpath )
+  if args.size == 1 and File.exist?( args[ 0 ] ) and File.directory?( Pathname( args[ 0 ] ).realpath )
 
     # Full audio/image examination?
     if options.audio_analysis or options.image_analysis
@@ -4845,7 +4845,7 @@ begin
 
     # Check requested logfile early (exists? overwrite? writable?)
     if options.logfile
-      if File.exists?( options.logfile )
+      if File.exist?( options.logfile )
         puts " Requested logfile #{ options.logfile.inspect } exists. Will #{ options.overwrite_logfile ? '' : 'not ' }overwrite"
         exit LOGFILE_EXISTS_ERROR unless options.overwrite_logfile
       end
