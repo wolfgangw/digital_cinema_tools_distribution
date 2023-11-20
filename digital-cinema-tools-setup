@@ -73,12 +73,13 @@ gemrc=$HOME/.gemrc
 # Handle SMPTE and Interop trackfiles: ASDCPLib
 # https://github.com/cinecert/asdcplib/archive/refs/tags/rel_2_10_35.tar.gz
 cinecert='github.com/cinecert/asdcplib/archive/refs/tags'
-asdcplib_version='rel_2_10_35'
+asdcplib_version='2.10.35'
+asdcplib_version_rel='rel_2_10_35'
 asdcplib_version_tarball_sha256='a68eec9ae0cc363f75331dc279c6dd6d3a9999a9e5f0a4405fd9afa8a29ca27b'
-asdcplib_tarball="$asdcplib_version.tar.gz"
+asdcplib_tarball="$asdcplib_version_rel.tar.gz"
 asdcplib_tarball_url="https://$cinecert/$asdcplib_tarball"
 asdcplib_dir=$libdir/asdcplib
-asdcplib_build_dir="$asdcplib_dir/asdcplib-$asdcplib_version"
+asdcplib_build_dir="$asdcplib_dir/asdcplib-$asdcplib_version_rel"
 asdcplib_install_dir=$bindir/asdcplib
 
 # Digital cinema tools distribution:
