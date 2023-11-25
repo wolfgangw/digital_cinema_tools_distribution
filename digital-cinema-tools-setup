@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2023.11.20'
+setup_version='v1.2023.11.24'
 #
 # Usage:
 #
@@ -39,7 +39,7 @@ setup_version='v1.2023.11.20'
 # It tries hard not to break anything and to respect the existing environment.
 # You can run it multiple times, should anything go wrong during a setup run (network problems etc.)
 #
-# Wolfgang Woehl 2012-2022
+# Wolfgang Woehl 2012-2023
 #
 #
 # Location of self
