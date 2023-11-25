@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2023.11.20'
+AppVersion = 'v1.2023.11.25'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -2178,7 +2178,7 @@ end
 
 def digest_with_etabar( digest_algorithm, title, file, pbar_width, looks_like, options, logger )
   size = File.size file
-  chunksize = 4096
+  chunksize = 25000000 # had this at 4096 since forever which is ~30 times slower on my system -_-
   chunks = size / chunksize + ( size % chunksize > 0 ? 1 : 0 )
   chunks_per_percent = chunks / 100 + 1
 
