@@ -154,7 +154,7 @@ fi
 # Who'da thunk it that figuring out OS would be so messy:
 #
 #   - Fedora has lsb_release and *-release files pre-installed,
-#   - Ubuntu doesn't have lsb_release initially, has os-release and lsb-release
+#   - Ubuntu has os-release and lsb-release
 #   - openSuSE has os-release, SuSE-release and lsb_release
 #   - Debian 6.0.4 has lsb_release but no *-release files
 #   - Mint 15 has lsb_release and lsb-release
@@ -512,8 +512,8 @@ then
   then
     echo "Ruby: OK"
   else
-    echo "Ruby: Installing ... This will take a while (~5 minutes)"
-    if ! rbenv install $ruby_version
+    echo "Ruby: Installing ... This will take a while"
+    if ! rbenv install $ruby_version --verbose
     then
       errors+=("Ruby: Failed to install requested version") && echo_last errors[@]
     else
