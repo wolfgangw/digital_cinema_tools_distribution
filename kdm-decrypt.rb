@@ -110,7 +110,7 @@ class KDMCipher
         [:key_data,           16]
       ]
     else
-      raise "#{ decrypted_blob.size } bytes: Plaintext package size does not match Interop or SMPTE specs"
+      raise "#{ decrypted_blob.size } bytes: KDMCipher plaintext package size does not match Interop or SMPTE specs"
     end
 
     pos = 0
