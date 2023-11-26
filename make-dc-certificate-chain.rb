@@ -1,9 +1,12 @@
 #!/usr/bin/env ruby
 #
 # make-dc-certificate-chain.rb
-# Wolfgang Woehl 2010-2012
+#
+# Wolfgang Woehl 2010-2023
+#
 # v0.2010.12.07
 # v1.2012.04.06.distribution
+# v1.2023.11.26
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -56,7 +59,6 @@
 # $ mkdir certstore
 # $ cd certstore
 # $ make-dc-certificate-chain.rb # creates keys and certificates in the current directory
-# $ export CINEMACERTSTORE=`pwd` # allows cinemaslides to find the certificates when signing or generating KDMs
 #
 # Use leaf.key to sign files. For example:
 # $ xmlsec --sign --privkey-pem leaf.key --trusted-pem intermediate.signed.pem --trusted-pem ca.self-signed.pem presigned_cpl.xml
