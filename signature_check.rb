@@ -41,7 +41,7 @@ class Optparser
   def self.parse( args )
     # defaults
     options = OpenStruct.new
-    options.verbose = TRUE
+    options.verbose = true
 
     opts = OptionParser.new do |opts|
 
@@ -53,7 +53,7 @@ BANNER
 
       # Options
       opts.on( '-q', '--quiet', "Quiet operation. Exit codes 0 for verified signature and 1 for failure" ) do |p|
-        options.verbose = FALSE
+        options.verbose = false
       end
       opts.on_tail( '-h', '--help', 'Display this screen' ) do
         puts opts
@@ -100,21 +100,21 @@ class DC_Signature_Verification
   def report
     if @signature_node.size == 1
       case @reference_digests_check
-      when TRUE
+      when true
         @messages << "Document and SignedInfo match"
         case @signature_value_check
-        when TRUE
+        when true
           @messages << "Signature value and SignedInfo match"
-        when FALSE
+        when false
           @messages << "Signature value and SignedInfo do not match"
         end
 
-      when FALSE
+      when false
         @messages << "Document and SignedInfo do not match"
         case @signature_value_check
-        when TRUE
+        when true
           @messages << "Signature value and SignedInfo match"
-        when FALSE
+        when false
           @messages << "Signature value and SignedInfo do not match"
         end
       end
@@ -162,7 +162,7 @@ class DC_Signature_Verification
     @signature_node = doc.xpath( "//#{ prefix }:Signature", sig_ns )
     if @signature_node.size != 1
       @messages << "#{ @signature_node.size == 0 ? 'No' : @signature_node.size } signature node#{ @signature_node.size > 1 ? 's' : '' } found"
-      return FALSE
+      return false
     end
 
     # 3. Extract and check signer certs
@@ -174,7 +174,7 @@ class DC_Signature_Verification
         @crypto.errors[ :pre_context ].each do |e|
           @messages << e
         end
-        return FALSE
+        return false
       else
         # Compliance issues in the extracted certs.
         # List those errors but then try to continue anyway,
@@ -199,7 +199,7 @@ class DC_Signature_Verification
     @reference_digests_check = check_references( doc, sig_ns, prefix )
     @signature_value_check = check_signature_value( doc, sig_ns, prefix, pub_k )
 
-    return TRUE
+    return true
   end # signature_verify
 
   def check_signature_value( doc, sig_ns, prefix, pub_k )
@@ -208,7 +208,7 @@ class DC_Signature_Verification
     signature_value_doc = extract_signature_value( doc, sig_ns, prefix )
     if signature_value_doc.size != pub_k.n.to_i.size
       @messages << "Invalid signature: sig_doc: #{ signature_value_doc.size } octets (RSA modulus: #{ pub_k.n.to_i.size } octets)"
-      return FALSE
+      return false
     end
     signed_info_c14n_xml = signed_info_c14n( doc, sig_ns, prefix )
 
@@ -221,9 +221,9 @@ class DC_Signature_Verification
   end
 
   def check_references( doc, sig_ns, prefix )
-    check = TRUE
+    check = true
     references = doc_references( doc, sig_ns, prefix )
-    check = FALSE if references.size == 0
+    check = false if references.size == 0
     @messages << "Found #{ references.size } reference#{ references.size != 1 ? 's' : '' }"
     references.each do |ref|
       digest_algo = doc_reference_digest_method_algorithm( ref, sig_ns, prefix )
@@ -238,7 +238,7 @@ class DC_Signature_Verification
             ref_xml = extract_uri( doc, uri ).canonicalize
           else
             @messages << "Reference URI not valid"
-            check = FALSE
+            check = false
             next
           end
         end
@@ -249,7 +249,7 @@ class DC_Signature_Verification
           @messages << "Reference digest value correct"
         else
           @messages << "Reference digest value not correct"
-          check = FALSE
+          check = false
         end
       else
         # not reached if doc was validated against schema
@@ -412,16 +412,16 @@ class DC_Signer_Crypto_Compliance
     @context, @errors[ :pre_context ] = find_crypto_context( certs )
     if @errors[ :pre_context ].empty?
       @errors[ :context ], @types_seen = check_compliance
-      if @errors[ :pre_context ].empty? and @errors[ :context ].values.flatten.empty? and @chain_verified == TRUE
+      if @errors[ :pre_context ].empty? and @errors[ :context ].values.flatten.empty? and @chain_verified == true
         if @types_seen.uniq.size == 1
           @type = @types_seen.first
-          @crypto_context_valid = TRUE
+          @crypto_context_valid = true
         end
       else
-        @crypto_context_valid = FALSE
+        @crypto_context_valid = false
       end
     else
-      @crypto_context_valid = FALSE
+      @crypto_context_valid = false
     end
   end # crypto_context
 
@@ -445,7 +445,7 @@ class DC_Signer_Crypto_Compliance
         end
       end
     end
-    e << "Chain signatures #{ @chain_verified == TRUE ? 'verified' : 'verification failed' }"
+    e << "Chain signatures #{ @chain_verified == true ? 'verified' : 'verification failed' }"
     if total_errors == 0
       e << "Compliant certificate chain found: #{ @type } (#{ context.to_a.size } certificate#{ context.to_a.size != 1 ? 's' : '' }, 0 errors)"
     else
@@ -469,7 +469,7 @@ class DC_Signer_Crypto_Compliance
 
     # Find root ca and collect issuers
     # ruby version of CTP's dsig_cert.py
-    root = NIL
+    root = nil
     issuer_map = Hash.new
 
     context.each do |cert|
@@ -484,7 +484,7 @@ class DC_Signer_Crypto_Compliance
         issuer_map[ cert.issuer.to_s ] = cert
       end
     end
-    if root == NIL
+    if root == nil
       pre_context_errors << "Self-signed root certificate not found"
       return [], pre_context_errors
     end
@@ -523,7 +523,7 @@ class DC_Signer_Crypto_Compliance
     types_seen = Array.new
     @context.each_with_index do |member, index|
       cert = member
-      type = NIL
+      type = nil
       errors = Array.new
       errors << 'Not a X509 certificate' unless cert.is_a?( OpenSSL::X509::Certificate )
       # ctp sections:
@@ -715,7 +715,7 @@ class DC_Signer_Crypto_Compliance
         cn_subject = field_cn_subject.first[ 1 ]
         cn_subject_roles = cn_subject.split( /\..+/ )
         if cn_subject_roles.empty?
-          roles = NIL
+          roles = nil
         else
           roles = cn_subject_roles.first.split( ' ' )
         end
@@ -771,10 +771,10 @@ class DC_Signer_Crypto_Compliance
       begin
         cert.verify cert.public_key
       rescue Exception => e
-        return FALSE
+        return false
       end
     end
-    return TRUE
+    return true
   end
 
   def find_field( fieldname, x509_name )
@@ -813,13 +813,13 @@ def get_xml( file, options )
     xml = Nokogiri::XML( open file )
   rescue Exception => e
     puts "#{ file }: #{ e.message }" if options.verbose
-    return FALSE
+    return false
   end
   unless xml.errors.empty?
     xml.errors.each do |e|
       puts "Syntax error: #{ file }: #{ e }" if options.verbose
     end
-    return FALSE
+    return false
   end
   return xml
 end
@@ -835,12 +835,12 @@ end
 
 # Nokogiri git master (2012.01.11) implements interface to libxml2's C14N
 if Nokogiri::XML::Document.new.respond_to?( 'canonicalize' )
-  c14n_available = TRUE
+  c14n_available = true
   xml = get_xml( ARGV[ 0 ], options )
 else
   puts "Installed version of Nokogiri does not support C14N which is required for signature verification"
   puts "See https://github.com/wolfgangw/digital_cinema_tools/wiki/MISC for notes on how to install Nokogiri with C14N support from current git (https://github.com/tenderlove/nokogiri)"
-  c14n_available = FALSE
+  c14n_available = false
 end
 
 if c14n_available and xml
