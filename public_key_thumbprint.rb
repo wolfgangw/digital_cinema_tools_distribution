@@ -1,7 +1,8 @@
 #!/usr/bin/env ruby
 #
-# Calculate public key thumbprint of X509 certificates
-# 2012 Wolfgang Woehl
+# public_key_thumbprint.rb calculates the public key thumbprint of X509 certificates
+#
+# Wolfgang Woehl 2012-2023
 #
 # See https://bugs.ruby-lang.org/issues/4421 for a related ticket and discussion
 #
@@ -33,13 +34,21 @@ ARGV.each do |arg|
   begin
     cert = OpenSSL::X509::Certificate.new( open arg )
   rescue Exception => e
-    puts "#{ arg }: #{ e.inspect }"
+    puts "#{ arg }: #{ e.message }"
+    exit 1
     next
   end
-  pkey_der = OpenSSL::ASN1::Sequence( [ OpenSSL::ASN1::Integer( cert.public_key.n ), OpenSSL::ASN1::Integer( cert.public_key.e ) ] ).to_der
+  pkey_der = OpenSSL::ASN1::Sequence(
+    [
+      OpenSSL::ASN1::Integer( cert.public_key.n ),
+      OpenSSL::ASN1::Integer( cert.public_key.e )
+    ]
+  ).to_der
   public_key_thumbprint = OpenSSL::Digest.new( 'sha1', pkey_der ).digest
   public_key_thumbprint_b64 = Base64.encode64( public_key_thumbprint ).chomp
   public_key_thumbprint_b16 = public_key_thumbprint.unpack( 'H2' * 20 ).join
+
+  puts "Note: If present, dnQualifier in #{ arg }'s Subject shall match calculated public key thumbprint b64"
   puts "Subject: #{ cert.subject.to_s }"
   puts "Public key thumbprint b64: #{ public_key_thumbprint_b64 }"
   puts "Public key thumbprint b16: #{ public_key_thumbprint_b16 }"
