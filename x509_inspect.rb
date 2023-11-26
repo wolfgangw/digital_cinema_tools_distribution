@@ -91,7 +91,7 @@ def pemfiles_to_obj( list )
       certs << OpenSSL::X509::Certificate.new( open pemfile )
       certs.last.file = pemfile
     rescue Exception => e
-      puts e.inspect
+      puts e.message
     end
   end
   return certs
