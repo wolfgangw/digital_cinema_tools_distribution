@@ -64,7 +64,7 @@ class Optparser
   def self.parse( args )
     # defaults
     options = OpenStruct.new
-    options.verbose = TRUE
+    options.verbose = true
 
     opts = OptionParser.new do |opts|
 
@@ -76,7 +76,7 @@ BANNER
 
       # Options
       opts.on( '-q', '--quiet', "Quiet operation. Exit codes 0 for complete and compliant certificate chain and 1 for failure" ) do |p|
-        options.verbose = FALSE
+        options.verbose = false
       end
       opts.on_tail( '-h', '--help', 'Display this screen' ) do
         puts opts
@@ -109,19 +109,19 @@ class DC_Crypto_Context
     @context, @errors[ :pre_context ] = crypto_context( files )
     if @errors[ :pre_context ].empty? or ( @errors[ :pre_context ].size == 1 and @errors[ :pre_context ][0] == CHAINFILE_FOUND )
       @errors[ :context ], @types_seen = check_compliance
-      if @errors[ :pre_context ].empty? and @errors[ :context ].values.flatten.empty? and @chain_verified == TRUE
+      if @errors[ :pre_context ].empty? and @errors[ :context ].values.flatten.empty? and @chain_verified == true
         if @types_seen.uniq.size == 1
           @type = @types_seen.first
-          @crypto_context_valid = TRUE
+          @crypto_context_valid = true
         else
           @type = 'Mixed'
-          @crypto_context_valid = FALSE
+          @crypto_context_valid = false
         end
       else
-        @crypto_context_valid = FALSE
+        @crypto_context_valid = false
       end
     else
-      @crypto_context_valid = FALSE
+      @crypto_context_valid = false
     end
   end # crypto_context_find
 
@@ -147,7 +147,7 @@ class DC_Crypto_Context
 
     # Find root ca and collect issuers in order to be able to sort the chain.
     # (Basically a ruby version of CTP's dsig_cert.py)
-    root = NIL
+    root = nil
     issuer_map = Hash.new
 
     context.each do |cert|
@@ -164,7 +164,7 @@ class DC_Crypto_Context
         issuer_map[ cert[ :x509 ].issuer.to_s ] = cert
       end
     end
-    if root == NIL
+    if root == nil
       pre_context_errors << "Self-signed root certificate not found"
       return [], pre_context_errors
     end
@@ -203,7 +203,7 @@ class DC_Crypto_Context
           # move on (e.message)
         end
       end
-      if tmp_list.last[ :rsa_key_file ] == NIL
+      if tmp_list.last[ :rsa_key_file ] == nil
         pre_context_errors << "Leaf certificate's private key not found"
       end
     end
@@ -224,7 +224,7 @@ class DC_Crypto_Context
     @context.each_with_index do |member, index|
       errors = Array.new
       cert = member[ :x509 ]
-      type = NIL
+      type = nil
       cert_file = member[ :cert_file ]
       errors << 'Not a X509 certificate' unless cert.is_a?( OpenSSL::X509::Certificate )
 
@@ -428,7 +428,7 @@ class DC_Crypto_Context
         cn_subject = field_cn_subject.first[ 1 ]
         cn_subject_roles = cn_subject.split( /\..+/ )
         if cn_subject_roles.empty?
-          roles = NIL
+          roles = nil
         else
           roles = cn_subject_roles.first.split( ' ' )
         end
@@ -468,9 +468,9 @@ class DC_Crypto_Context
     end
     x509_store.verify( @context.first[ :x509 ] )
     if x509_store.error != 0
-      @chain_verified = FALSE
+      @chain_verified = false
     else
-      @chain_verified = TRUE
+      @chain_verified = true
     end
 
     # 2.1.17 Chain complete? Validity period of child cert contained within validity of parent? Root ca valid?
