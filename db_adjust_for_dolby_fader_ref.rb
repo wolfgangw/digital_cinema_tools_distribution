@@ -72,12 +72,12 @@ if options.fader_input.nil?
 end
 
 # Check valid range 0.0 - 10.0
-fader_out_of_range = FALSE
+fader_out_of_range = false
 [ 'Fader input', 'Fader target' ].each do |moniker|
   var_name = moniker.downcase.gsub( ' ', '_' )
   if options.send( var_name ) < 0.0 or options.send( var_name ) > 10.0
     puts "#{ moniker } '#{ options.send( var_name ) }' out of range. Specify a value between 0.0 and 10.0"
-    fader_out_of_range = TRUE
+    fader_out_of_range = true
   end
 end
 exit 1 if fader_out_of_range
