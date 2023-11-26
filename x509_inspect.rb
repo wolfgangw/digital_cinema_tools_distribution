@@ -184,8 +184,11 @@ Methmap = {
   'exponent' => lambda { |cert| cert.public_key.e },
 }
 Methmap[ 'version' ] = lambda { |cert| ( cert.send 'version' ).to_i + 1 }
-%w( file serial signature_algorithm not_before not_after ).each do |item|
+%w( file signature_algorithm not_before not_after ).each do |item|
   Methmap[ item ] = lambda { |cert| cert.send item }
+end
+%w( serial ).each do |item|
+  Methmap[ item ] = lambda { |cert| (cert.send item).to_i }
 end
 %w( o ou cn dnq o_issuer ou_issuer cn_issuer dnq_issuer ).each do |item|
   Methmap[ item ] = lambda { |cert| name_field( name_fields_canon[ item.split( '_' ).first ], ( item =~ /issuer$/ ? cert.issuer : cert.subject ) ) }
