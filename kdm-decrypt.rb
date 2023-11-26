@@ -36,7 +36,7 @@ class Optparser
   def self.parse( args )
     # defaults
     options = OpenStruct.new
-    options.output_as_keyid_keytype_keydata_triple = FALSE
+    options.output_as_keyid_keytype_keydata_triple = false
 
     opts = OptionParser.new do |opts|
 
@@ -48,7 +48,7 @@ BANNER
 
       # Options
       opts.on( '--as-triple', "Output content keys as <key id>:<key type>:<key data> triple to STDOUT" ) do |p|
-        options.output_as_keyid_keytype_keydata_triple = TRUE
+        options.output_as_keyid_keytype_keydata_triple = true
       end
       opts.on_tail( '-h', '--help', 'Display this screen' ) do
         puts opts
@@ -177,7 +177,7 @@ else
     puts kdm_info
   end
 
-  kc = NIL
+  kc = nil
   cipher_values.each do |cvn|
     cv = cvn.text
     kc = KDMCipher.new( cv, pkey )
