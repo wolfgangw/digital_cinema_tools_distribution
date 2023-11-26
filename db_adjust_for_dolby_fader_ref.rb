@@ -16,14 +16,14 @@
 # When the fader knob is rotated between readings 4.0 and 10,
 # the output level changes in 3 1/3 dB steps between –10 and +10 dB."
 #
-# Wolfgang Woehl 2013
+# Wolfgang Woehl 2013-2023
 #
 
 require 'optparse'
 require 'ostruct'
 
 AppName = File.basename __FILE__
-AppVersion = 'v0.2013.12.30'
+AppVersion = 'v0.2023.11.26'
 
 class Optparser
   def self.parse( args )
