@@ -21,6 +21,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename __FILE__
+AppVersion = 'v0.2023.11.26'
 
 require 'openssl'
 require 'base64'
