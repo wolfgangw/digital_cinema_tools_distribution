@@ -532,18 +532,23 @@ class DC_Crypto_Context
     else
       puts "Not a compliant certificate chain: #{ @context.to_a.size } certificate#{ @context.to_a.size != 1 ? 's' : '' } with #{ total_errors } error#{ total_errors != 1 ? 's' : '' }"
     end
-    puts "Chain signatures #{ @chain_verified == TRUE ? 'verified' : 'verification failed' }"
+    puts "Chain signatures #{ @chain_verified == true ? 'verified' : 'verification failed' }"
   end
 
-end # DCSignatureContext
+end # DC_Crypto_Context
 
 
 # Example usage:
 # $ dc_crypto_context.rb <dir>
 if ARGV.size == 1
   dir = ARGV[ 0 ]
-  if File.exists?( dir ) and File.ftype( dir ) == 'directory'
-    files = Dir.glob( File.join( dir, '*' ) )
+  if File.exist?( dir ) and File.ftype( dir ) == 'directory'
+    begin
+      files = Dir.glob( File.join( dir, '*' ) )
+    rescue Exception => e
+      puts e.message
+      exit 1
+    end
   else
     puts "Not found: #{ dir }"
     exit 1
