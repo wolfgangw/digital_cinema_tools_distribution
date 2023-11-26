@@ -4,7 +4,7 @@
 #
 # Usage: dc_crypto_context.rb <dir>
 #
-# 2011-2017 Wolfgang Woehl
+# 2011-2023 Wolfgang Woehl
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename __FILE__
-AppVersion = 'v0.2017.09.15'
+AppVersion = 'v0.2023.11.26'
 #
 # Script will check a given set of files for the presence of a SMPTE compliant certificate chain, used in 
 # digital cinema to sign Composition Playlists (CPL), Packing Lists (PKL) and Key Delivery Messages (KDM).
