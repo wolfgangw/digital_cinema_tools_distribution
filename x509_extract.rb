@@ -183,19 +183,19 @@ def get_xml( file )
     xml = Nokogiri::XML( open file )
   rescue Exception => e
     puts "#{ file }: #{ e.message }"
-    return FALSE
+    return false
   end
   unless xml.errors.empty?
     xml.errors.each do |e|
       puts "Syntax error: #{ file }: #{ e }"
     end
-    return FALSE
+    return false
   end
   return xml
 end
 
 def pad( padsize, item )
-  "%#{ padsize }#{ { 'String' => 's', 'Fixnum' => 'd' }[ item.class.to_s ] }" % item
+  sprintf( "%0#{ padsize }d", item )
 end
 
 if ARGV.size != 1
