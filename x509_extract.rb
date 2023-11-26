@@ -2,7 +2,7 @@
 #
 # x509_extract.rb extracts X509 certificates from signed DCinema documents
 #
-# Wolfgang Woehl 2012
+# Wolfgang Woehl 2012-2023
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename __FILE__
-AppVersion = 'v0.2012.02.12'
+AppVersion = 'v0.2023.11.26'
 #
 # Usage:  x509_extract.rb path/to/signed.xml
 #         x509_extract.rb --help
