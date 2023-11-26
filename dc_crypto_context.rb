@@ -189,14 +189,14 @@ class DC_Crypto_Context
       return context, pre_context_errors
     else
       # Find leaf's private key
-      leaf_public_key = tmp_list.last[ :x509 ].public_key.inspect
+      leaf_public_key = tmp_list.last[ :x509 ].public_key.to_s
       files.each do |file|
         next unless File.ftype( file ) == 'file'
         begin
           # Again, brute-force try and rescue
           rsa_key = OpenSSL::PKey::RSA.new( File.read( file ) )
           # equiv. check_private_key( key )
-          if leaf_public_key == rsa_key.public_key.inspect
+          if leaf_public_key == rsa_key.public_key.to_s
             tmp_list.last[ :rsa_key_file ] = file
           end
         rescue OpenSSL::PKey::RSAError => e
