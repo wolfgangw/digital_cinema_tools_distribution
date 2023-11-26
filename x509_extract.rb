@@ -44,7 +44,7 @@ class Optparser
     # defaults
     options = OpenStruct.new
     options.prefix = 'chain'
-    options.quiet = FALSE
+    options.quiet = false
 
     opts = OptionParser.new do |opts|
       # Banner and usage
@@ -58,7 +58,7 @@ BANNER
         options.prefix = p
       end
       opts.on( '-q', '--quiet', 'No verbose output (Use exit codes 0 or 1)' ) do
-        options.quiet = TRUE
+        options.quiet = true
       end
       opts.on_tail( '-h', '--help', 'Display this screen' ) do
         puts opts
@@ -94,7 +94,7 @@ end
 def sort_certs( certs )
   # Find root ca and collect issuers
   # ruby version of CTP's dsig_cert.py
-  root = NIL
+  root = nil
   issuer_map = Hash.new
   errors = Array.new
 
@@ -110,7 +110,7 @@ def sort_certs( certs )
       issuer_map[ cert.issuer.to_s ] = cert
     end
   end
-  if root == NIL
+  if root == nil
     errors << "Self-signed root certificate not found"
     return nil, errors
   end
