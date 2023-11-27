@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2023.11.25'
+AppVersion = 'v1.2023.11.27'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -559,7 +559,6 @@ end
 
 
 def audio_characteristics( ramdisk, asset_file, channel_count, entry_point, duration, key = nil )
-  @logger.debug "ASDCPVersion: #{ASDCPVersion}"
   fifo_tokens = Array.new
   asdcp_prefix_token = File.join( ramdisk.path, 'asdcp-temp-audio' )
   ( 1 .. channel_count ).each do |ch|
@@ -575,21 +574,16 @@ def audio_characteristics( ramdisk, asset_file, channel_count, entry_point, dura
     rmfifo( fz )
   end
 
-  @logger.debug "fifo tokens: #{fifo_tokens.inspect}"
   fifo_tokens.each do |fifo|
     mkfifo( ramdisk, fifo )
   end
 
   unwrap_call = "asdcp-unwrap -1 -f #{ entry_point } -d #{ duration } #{ key ? '-k ' + key : '' } #{ Shellwords.escape asset_file } #{ asdcp_prefix_token } 2>/dev/null" 
-  @logger.debug "unwrap call: #{unwrap_call}"
   pid = Process.spawn( unwrap_call )
   Process.detach pid
   system( 'sleep 0.1' )
 
-  system "ls -al #{ramdisk.path}"
-
   sox_call = "sox -t wavpcm -M #{ fifo_tokens.join( ' ' ) } -n stats" 
-  @logger.debug "sox call: #{sox_call}"
   out, err, status = Open3.capture3( sox_call )
 
   fifo_tokens.each do |fifo|
