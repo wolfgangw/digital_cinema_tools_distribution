@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2023.11.24'
+setup_version='v1.2023.11.28'
 #
 # Usage:
 #
