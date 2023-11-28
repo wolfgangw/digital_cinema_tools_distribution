@@ -4,13 +4,10 @@ setup_version='v1.2023.11.24'
 #
 # Usage:
 #
-#   * Lubuntu / Ubuntu / Debian / Mint / Raspbian / openSuSE: Run
+#   * To install run
 #       wget https://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
 #     in a terminal
 #
-#   * Fedora: Run
-#       curl -sLO https://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
-#     in a terminal
 #
 #   * For updates or re-runs run
 #       digital-cinema-tools-setup
@@ -33,7 +30,7 @@ setup_version='v1.2023.11.24'
 #   * x509_inspect.rb:                  Inspect X.509 certificates
 #   * xsd-check.rb:                     Validate XML documents against Schema definitions
 #
-# This installer supports Debian / Ubuntu / Fedora / openSUSE systems
+# This installer supports Debian / Ubuntu / Fedora
 # Needs a working network connection
 #
 # It tries hard not to break anything and to respect the existing environment.
@@ -169,9 +166,6 @@ then
 elif [ -f /etc/redhat-release ]
 then
   os_dist=redhat
-elif [ -f /etc/SuSE-release ]
-then
-  os_dist=opensuse
 elif [ -f /etc/lsb-release ] && grep -P 'Ubuntu' /etc/lsb-release &> /dev/null
 then
   os_dist=ubuntu
@@ -248,13 +242,6 @@ case $os_dist in
     packager='yum'
     packager_params='-y install'
     packages_required=( make automake cmake gcc gcc-c++ wget libxslt-devel xerces-c-devel xmlsec1 xmlsec1-openssl readline-devel zlib-devel openssl-devel ImageMagick sox git libtiff-devel libpng-devel libffi-devel libyaml-devel )
-    ;;
-  opensuse)
-    query='zypper'
-    query_params='--no-refresh se -i'
-    packager='zypper'
-    packager_params='--gpg-auto-import-keys --non-interactive install'
-    packages_required=( make automake cmake gcc gcc-c++ libxslt-devel libxerces-c-devel libxmlsec1-openssl-devel xmlsec1 readline-devel zlib-devel openssl-devel ImageMagick sox git libtiff-devel libpng-devel libffi-devel libyaml-devel)
 esac
 
 
@@ -281,45 +268,8 @@ then
     case $os_dist in
       debian|ubuntu)
         echo "Please enter your password" ;;
-      redhat|opensuse)
+      redhat)
         echo 'Please enter your root password' ;;
-    esac
-
-    # Some distributions need extra repositories
-    case $os_dist in
-      opensuse)
-        # openSuSE seems to be a special case in its entirety:
-        # In a default installation there is no access to any "devel" packages
-        # and crucial stuff lives on packman. Go figure.
-        if command_exists lsb_release
-        then
-          os_info_blob_thank_you_very_much=`lsb_release -a`
-        elif [ -f /etc/SuSE-release ]
-        then
-          os_info_blob_thank_you_very_much=`cat /etc/SuSE-release`
-        elif [ -f /etc/os-release ]
-        then
-          os_info_blob_thank_you_very_much=`cat /etc/os-release`
-        fi
-        case $os_info_blob_thank_you_very_much in
-          *11.4*)
-            os_dist_version='11.4'
-            ;;
-          *12.1*)
-            os_dist_version='12.1'
-            ;;
-          *)
-            echo 'Sorry, openSuSE 12.1 and 11.4 support only for now'
-            exit 1
-            ;;
-        esac
-        repo_packman="http://packman.inode.at/suse/openSUSE_$os_dist_version"
-        if ! sudo $packager ar -f -n packman $repo_packman packman && $packager refresh
-        then
-          errors+=("$os_dist $os_dist_version: Failed to add Packman repositories") && echo_last errors[@]
-        else
-          echo "$os_dist $os_dist_version: Packman repositories OK"
-        fi
     esac
 
     # Install packages
@@ -354,27 +304,10 @@ if ! location_exists $libdir ; then mkdir $libdir ; fi
 if ! location_exists $bindir ; then mkdir $bindir ; fi
 
 
-# Source .bash_profile from .bashrc
-if grep -P '^(source|\.) .*/.bash_profile' $bashrc
-then
-  echo 'bashrc: OK'
-else
-  # Fedora sources ~/.bashrc from ~/.bash_profile so we loop source if we add the following
-  if [ $os_dist = 'ubuntu' -o $os_dist = 'debian' ]
-  then
-    echo "$setup_basename: Source ~/.bash_profile from ~/.bashrc"
-    echo '' >> $bashrc
-    echo "# $setup_basename: Use .bash_profile to read rbenv environment" >> $bashrc
-    echo 'source $HOME/.bash_profile' >> $bashrc
-    if ! [ -f $bash_profile ]
-    then
-      touch $bash_profile
-      echo 'bash_profile: Touched'
-    fi
-    exec_shell_required=true
-  fi
-fi
-
+# Note: used to do this for support of various Linux distributions
+# But there are just too many worms in that can so it's gone
+#
+# Gone: Source .bash_profile from .bashrc
 
 # Check for ~/bin and inclusion in PATH
 if string_includes $PATH "$bindir"
@@ -429,9 +362,7 @@ else
     fi
 
     case $os_dist in
-      debian|ubuntu)
-        env_target=$bash_profile ;;
-      redhat|opensuse)
+      debian|ubuntu|redhat)
         env_target=$bashrc ;;
     esac
     
@@ -708,18 +639,18 @@ then
 else
   errors+=("Digital cinema tools distribution: Failed to update $bindir. Repository missing") && echo_last errors[@]
 fi
-# dcp_inspect: gem ttfunk nice-to-have
+# dcp_inspect: gem ttfunk
 if command_exists gem
 then
   if gem list -i ttfunk &> /dev/null
   then
-    echo 'dcp_inspect: Nice-to-have gem ttfunk OK'
+    echo 'dcp_inspect: gem ttfunk OK'
   else
     if ! gem install ttfunk && rbenv rehash
     then
-      echo 'dcp_inspect: Failed to install nice-to-have gem ttfunk. This is not a critical error'
+      echo 'dcp_inspect: Failed to install gem ttfunk'
     else
-      echo 'dcp_inspect: Nice-to-have gem ttfunk OK'
+      echo 'dcp_inspect: gem ttfunk OK'
     fi
   fi
 fi
