@@ -413,7 +413,7 @@ cd $rbenv_plugins_dir
 if location_is_git_repo $rubybuild_dir
 then
   cd $rubybuild_dir
-  if ! git pull
+  if ! git pull origin master
   then
     errors+=("ruby-build: Failed to pull updates. Try again later") && echo_last errors[@]
   else
@@ -597,7 +597,7 @@ if location_is_git_repo $dist_dir
 then
   cd $dist_dir
   echo "Digital cinema tools distribution: Pulling updates ..."
-  if ! git pull
+  if ! git pull origin master
   then
     errors+=("Digital cinema tools distribution: Failed to pull updates. Try again later") && echo_last errors[@]
   fi
