@@ -47,7 +47,6 @@ setup_fullpath="$setup_dirname/$setup_basename"
 echo "$setup_basename $setup_version"
 
 bashrc=$HOME/.bashrc
-bash_profile=$HOME/.bash_profile
 inputrc=$HOME/.inputrc
 script_runner=$(whoami)
 
@@ -314,7 +313,7 @@ if string_includes $PATH "$bindir"
 then
   echo "PATH: $bindir available in PATH"
 else
-  if grep -P "export PATH=$bindir:" $bashrc $bash_profile
+  if grep -P "export PATH=$bindir:" $bashrc
   then
     echo "bashrc: $bindir already included. OK"
   else
