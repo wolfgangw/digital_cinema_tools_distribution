@@ -714,6 +714,7 @@ then
     echo "Error: $e"
   done
   echo
+  exit 1
 fi
 
 
