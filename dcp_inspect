@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2023.11.27'
+AppVersion = 'v1.2023.12.02'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -882,6 +882,7 @@ def print_inspection_messages( inspection )
 end
 
 
+#
 # lib/timecode-ticks_tc.rb (Julik's timecode -- https://github.com/guerilla-di/timecode + parse_with_ticks)
 # Timecode is a convenience object for calculating SMPTE timecode natively. 
 # The promise is that you only have to store two values to know the timecode - the amount
@@ -891,11 +892,6 @@ end
 # You can calculate in timecode objects as well as with conventional integers and floats.
 # Timecode is immutable and can be used as a value object. Timecode objects are sortable.
 #
-# Here's how to use it with ActiveRecord (your column names will be source_tc_frames_total and tape_fps)
-#
-#   composed_of :source_tc, :class_name => 'Timecode',
-#     :mapping => [%w(source_tc_frames total), %w(tape_fps fps)]
-
 class Timecode
   VERSION = '1.0.0'
 
@@ -1268,6 +1264,7 @@ class Timecode
   end
 end # Timecode
 
+
 # TC helper: parse both hh:mm:ss:ttt and hh:mm:ss.sss TC formats used in DCSubtitle
 def parse_dcsubtitle_tc_string( tc_string, fps )
   case tc_string
@@ -1319,20 +1316,20 @@ class DC_Signer_Crypto_Compliance
       msgs << "Issuer:  #{ cert.issuer.to_s }"
       unless @errors[ :context ].nil?
         if @errors[ :context ][ cert.subject.to_s ].empty?
-          msgs << 'OK'
+          msgs << 'OK ✅'
         else
-          msgs << "Not a #{ @types_seen[ index ] } compliant certificate:"
+          msgs << "Not a #{ @types_seen[ index ] } compliant certificate: ❌"
           @errors[ :context][ cert.subject.to_s ].each do |error|
             msgs << "\t" + error
           end
         end
       end
     end
-    msgs << "Chain signatures #{ @chain_verified == true ? 'verified' : 'verification failed' }"
+    msgs << "Chain signatures #{ @chain_verified == true ? 'verified' : 'verification failed ❌' }"
     if total_errors == 0
       msgs << "Compliant certificate chain found: #{ @type } (#{ context.to_a.sizmsgs } certificates, 0 errors)"
     else
-      msgs << "Not a compliant certificate chain: #{ context.to_a.size } certificate#{ context.to_a.size != 1 ? 's' : '' } with #{ total_errors } error#{ total_errors != 1 ? 's' : '' }"
+      msgs << "Not a compliant certificate chain ❌: #{ context.to_a.size } certificate#{ context.to_a.size != 1 ? 's' : '' } with #{ total_errors } error#{ total_errors != 1 ? 's' : '' }"
     end
     return msgs
   end
@@ -1358,7 +1355,7 @@ class DC_Signer_Crypto_Compliance
     context.each do |cert|
       if cert.issuer.to_s == cert.subject.to_s
         if root
-          pre_context_errors << 'Multiple self-signed (root) certificates found'
+          pre_context_errors << 'Multiple self-signed (root) certificates found ❌'
           return [], pre_context_errors
         else
           root = cert
@@ -1368,7 +1365,7 @@ class DC_Signer_Crypto_Compliance
       end
     end
     if root == nil
-      pre_context_errors << 'Self-signed root certificate not found'
+      pre_context_errors << 'Self-signed root certificate not found ❌'
       return [], pre_context_errors
     end
 
@@ -1388,12 +1385,12 @@ class DC_Signer_Crypto_Compliance
     end # ruby version of CTP's dsig_cert.py
 
     if tmp_list.size == 1
-      pre_context_errors << 'No issued certificates found'
+      pre_context_errors << 'No issued certificates found ❌'
       return context, pre_context_errors
     end
 
     if context.size != tmp_list.size
-      pre_context_errors << 'Certificates do not form a complete chain'
+      pre_context_errors << 'Certificates do not form a complete chain ❌'
       return context, pre_context_errors
     end
     # from here on 1st is leaf, 2nd .. n are intermediate ca's, last is self-signed root ca
@@ -1408,15 +1405,15 @@ class DC_Signer_Crypto_Compliance
       cert = member
       type = nil
       errors = Array.new
-      errors << 'Not a X509 certificate' unless cert.is_a?( OpenSSL::X509::Certificate )
+      errors << 'Not a X509 certificate ❌' unless cert.is_a?( OpenSSL::X509::Certificate )
       # ctp sections:
 
       # 2.1.1 X.509 version 3
-      errors << 'Not X509 version 3' unless cert.version == 2 # sic. versions 1 2 3 -> 0 1 2
+      errors << 'Not X509 version 3 ❌' unless cert.version == 2 # sic. versions 1 2 3 -> 0 1 2
 
       # 2.1.1 Issuer and subject present
-      errors << 'Issuer missing' unless cert.issuer.is_a?( OpenSSL::X509::Name )
-      errors << 'Subject missing' unless cert.subject.is_a?( OpenSSL::X509::Name )
+      errors << 'Issuer missing ❌' unless cert.issuer.is_a?( OpenSSL::X509::Name )
+      errors << 'Subject missing ❌' unless cert.subject.is_a?( OpenSSL::X509::Name )
 
       # * 2.1.2 Signature algorithm
       case cert.signature_algorithm
@@ -1425,7 +1422,7 @@ class DC_Signer_Crypto_Compliance
       when 'sha1WithRSAEncryption'
         type = :interop
       else
-        errors << 'Signature algorithm not sha256WithRSAEncryption or sha1WithRSAEncryption'
+        errors << 'Signature algorithm not sha256WithRSAEncryption or sha1WithRSAEncryption ❌'
       end
 
       # 2.1.3
@@ -1434,16 +1431,16 @@ class DC_Signer_Crypto_Compliance
       # * 2.1.4 Serial number field non-negative integer less or equal to 64 or 160 bits respectively
       case type
       when :smpte
-        errors << 'Serial number not in valid range' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 64
+        errors << 'Serial number not in valid range ❌' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 64
       when :interop
-        errors << 'Serial number not in valid range' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 160
+        errors << 'Serial number not in valid range ❌' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 160
       else
-        errors << 'Serial number not checked (Certificate type has not been established)'
+        errors << 'Serial number not checked (Certificate type has not been established) ❌'
       end
 
       # 2.1.5 SubjectPublicKeyInfo field modulus 2048 bit and e == 65537
-      errors << 'Modulus not 2048 bits long' unless cert.public_key.n.to_i.size == 256 # 'n' is modulus (as OpenSSL::BN)
-      errors << 'Public exponent not 65537' unless cert.public_key.e == 65537 # 'e' is public exponent (OpenSSL::BN)
+      errors << 'Modulus not 2048 bits long ❌' unless cert.public_key.n.to_i.size == 256 # 'n' is modulus (as OpenSSL::BN)
+      errors << 'Public exponent not 65537 ❌' unless cert.public_key.e == 65537 # 'e' is public exponent (OpenSSL::BN)
 
       # 2.1.6 Deleted (in CTP 1.1) section
 
@@ -1457,12 +1454,12 @@ class DC_Signer_Crypto_Compliance
       # See DC_Signer_Crypto_Compliance Section 2.1.17 for another spot where this matters.
       #
       begin
-        errors << 'Not before field missing' if cert.not_before.nil?
-        errors << 'Not after field missing' if cert.not_after.nil?
-        errors << 'Not before field is not UTC' unless cert.not_before.utc?
-        errors << 'Not after field is not UTC' unless cert.not_after.utc?
+        errors << 'Not before field missing ❌' if cert.not_before.nil?
+        errors << 'Not after field missing ❌' if cert.not_after.nil?
+        errors << 'Not before field is not UTC ❌' unless cert.not_before.utc?
+        errors << 'Not after field is not UTC ❌' unless cert.not_after.utc?
       rescue Exception => e
-        errors << "Internal error: Skip DC_Signer_Crypto_Compliance Section 2.1.7 Validity: RUBY_VERSION #{ RUBY_VERSION } on 32 bit systems broken for UTC times > Jan 19th 2038. Inspect certificate manually." if e.class == ArgumentError
+        errors << "Internal error: Skip DC_Signer_Crypto_Compliance Section 2.1.7 Validity: RUBY_VERSION #{ RUBY_VERSION } on 32 bit systems broken for UTC times > Jan 19th 2038. Inspect certificate manually ❌" if e.class == ArgumentError
       end
 
       # Check X.509 extensions
@@ -1483,33 +1480,33 @@ class DC_Signer_Crypto_Compliance
           # 2.1.9 KeyUsage field
           when 'keyUsage'
             if index == 0 # leaf cert
-              errors << 'digitalSignature missing from keyUsage' unless values.include?( 'Digital Signature' )
-              errors << 'keyEncipherment missing from keyUsage' unless values.include?( 'Key Encipherment' )
+              errors << 'digitalSignature missing from keyUsage ❌' unless values.include?( 'Digital Signature' )
+              errors << 'keyEncipherment missing from keyUsage ❌' unless values.include?( 'Key Encipherment' )
             else # ca's
-              errors << 'keyCertSign missing from keyUsage' unless values.include?( 'Certificate Sign' )
+              errors << 'keyCertSign missing from keyUsage ❌' unless values.include?( 'Certificate Sign' )
             end
 
           # * 2.1.10 basicConstraints field
           when 'basicConstraints'
             if index == 0 # leaf cert
-              errors << "CA true in potential #{ type } leaf certificate" unless values.include?( 'CA:FALSE' )
+              errors << "CA true in potential #{ type } leaf certificate ❌" unless values.include?( 'CA:FALSE' )
               case type
               when :smpte
                 if values.find { |v| v.match( /pathlen:[^0]/ ) }
-                  errors << "Pathlen present and non-zero in potential #{ type } leaf certificate"
+                  errors << "Pathlen present and non-zero in potential #{ type } leaf certificate ❌"
                 end
               when :interop
                 if values.find { |v| v.match( /pathlen:[^0]/ ) }
-                  errors << "Pathlen present and non-zero in potential #{ type } leaf certificate"
+                  errors << "Pathlen present and non-zero in potential #{ type } leaf certificate ❌"
                 end
               end
             else # ca's
-              errors << 'basicConstraints not marked critical' unless x.critical?
-              errors << 'CA false for authority certificate' unless values.include?( 'CA:TRUE' )
+              errors << 'basicConstraints not marked critical ❌' unless x.critical?
+              errors << 'CA false for authority certificate ❌' unless values.include?( 'CA:TRUE' )
               if ! values.find { |v| v.match( /pathlen:\d+/ ) }
                 # FIXME If the value in pathlen is negative the regexp above will not match
                 # and thus trigger the error but the message will be misleading
-                errors << 'Pathlen missing for authority certificate'
+                errors << 'Pathlen missing for authority certificate ❌'
               end
             end
           end # case oid
@@ -1517,7 +1514,7 @@ class DC_Signer_Crypto_Compliance
           additional_oids << x # see 2.1.15 checks
         end # required oid
       end # extensions
-      errors << "Extensions #{ required_oids.join( ', ' ) } missing" unless required_oids.empty?
+      errors << "Extensions #{ required_oids.join( ', ' ) } missing ❌" unless required_oids.empty?
 
       # 2.1.11 Public key thumbprint dnQualifier
       #
@@ -1533,16 +1530,16 @@ class DC_Signer_Crypto_Compliance
       #
       field_dnq = find_field( 'dnQualifier', cert.subject )
       if field_dnq.empty?
-        errors << 'dnQualifier field missing in subject name'
+        errors << 'dnQualifier field missing in subject name ❌'
       elsif field_dnq.size > 1
-        errors << 'More than 1 dnQualifier field present'
+        errors << 'More than 1 dnQualifier field present ❌'
       else
         dnq_cert = field_dnq.first[ 1 ]
         if dnq_cert.empty?
-          errors << 'dnQualifier missing in subject name'
+          errors << 'dnQualifier missing in subject name ❌'
         end
         if dnq_calc != dnq_cert
-          errors << 'dnQualifier mismatch'
+          errors << 'dnQualifier mismatch ❌'
         end
       end
 
@@ -1550,22 +1547,22 @@ class DC_Signer_Crypto_Compliance
       field_o_issuer = find_field( 'O', cert.issuer )
       field_o_subject = find_field( 'O', cert.subject )
       if field_o_issuer.empty?
-        errors << 'Organization name field missing in issuer name'
+        errors << 'Organization name field missing in issuer name ❌'
       elsif field_o_issuer.size > 1
-        errors << 'More than 1 Organization name field present in issuer name'
+        errors << 'More than 1 Organization name field present in issuer name ❌'
       else
         o_issuer = field_o_issuer.first[ 1 ]
       end
       if field_o_subject.empty?
-        errors << 'Organization name missing in subject name'
+        errors << 'Organization name missing in subject name ❌'
       elsif field_o_subject.size > 1
-        errors << 'More than 1 Organization name field present in subject name'
+        errors << 'More than 1 Organization name field present in subject name ❌'
       else
         o_subject = field_o_subject.first[ 1 ]
       end
       unless o_issuer.nil? and o_subject.nil?
         if o_issuer != o_subject
-          errors << 'Organization name issuer/subject mismatch'
+          errors << 'Organization name issuer/subject mismatch ❌'
         end
       end
 
@@ -1573,40 +1570,40 @@ class DC_Signer_Crypto_Compliance
       field_ou_issuer = find_field( 'OU', cert.issuer )
       field_ou_subject = find_field( 'OU', cert.subject )
       if field_ou_issuer.empty?
-        errors << 'OrganizationUnit field missing in issuer name'
+        errors << 'OrganizationUnit field missing in issuer name❌'
       elsif field_ou_issuer.size > 1
-        errors << 'More than 1 OrganizationUnit fields present in issuer name'
+        errors << 'More than 1 OrganizationUnit fields present in issuer name ❌'
       else
         ou_issuer = field_ou_issuer.first[ 1 ]
       end
       if field_ou_subject.empty?
-        errors << 'OrganizationUnit field missing in subject name'
+        errors << 'OrganizationUnit field missing in subject name ❌'
       elsif field_ou_subject.size > 1
-        errors << 'More than 1 OrganizationUnit fields present in subject name'
+        errors << 'More than 1 OrganizationUnit fields present in subject name ❌'
       else
         ou_subject = field_ou_subject.first[ 1 ]
       end
       if ou_issuer.nil?
-        errors << 'OrganizationUnit name of issuer empty'
+        errors << 'OrganizationUnit name of issuer empty ❌'
       end
       if ou_subject.nil?
-        errors << 'OrganizationUnit name of subject empty'
+        errors << 'OrganizationUnit name of subject empty ❌'
       end
 
       # 2.1.14 Entity name and roles field
       field_cn_issuer = find_field( 'CN', cert.issuer )
       field_cn_subject = find_field( 'CN', cert.subject )
       if field_cn_issuer.empty?
-        errors << 'CommonName field missing in issuer name'
+        errors << 'CommonName field missing in issuer name ❌'
       elsif field_cn_issuer.size > 1
-        errors << 'More than 1 CommonName field present in issuer name'
+        errors << 'More than 1 CommonName field present in issuer name ❌'
       else
         cn_issuer = field_cn_issuer.first[ 1 ]
       end
       if field_cn_subject.empty?
-        errors << 'CommonName field missing in subject name'
+        errors << 'CommonName field missing in subject name ❌'
       elsif field_cn_subject.size > 1
-        errors << 'More than 1 CommonName field present in subject name'
+        errors << 'More than 1 CommonName field present in subject name ❌'
       else
         cn_subject = field_cn_subject.first[ 1 ]
         cn_subject_roles = cn_subject.split( /\..+/ )
@@ -1621,21 +1618,21 @@ class DC_Signer_Crypto_Compliance
         case type
         when :smpte
           if cn_subject_roles.empty?
-            errors << 'Role title missing in CommonName field of leaf certificate subject name'
+            errors << 'Role title missing in CommonName field of leaf certificate subject name ❌'
           else
-            errors << 'CS role missing in CommonName field of leaf certificate subject name' unless roles.include?( 'CS' )
-            errors << 'Superfluous roles present in CommonName field of leaf certificate subject name' unless roles.size == 1 and roles[ 0 ] == 'CS'
+            errors << 'CS role missing in CommonName field of leaf certificate subject name  ❌' unless roles.include?( 'CS' )
+            errors << 'Superfluous roles present in CommonName field of leaf certificate subject name  ❌' unless roles.size == 1 and roles[ 0 ] == 'CS'
           end
         when :interop
           # lax rules noop
         end
       else # ca's
-        errors << 'Role title present in CommonName field of authority certificate' unless roles.nil?
+        errors << 'Role title present in CommonName field of authority certificate ❌' unless roles.nil?
       end
 
       # 2.1.15 unrecognized x509v3 extensions not marked critical
       additional_oids.each do |x|
-        errors << 'Additional, non-required X.509v3 extension is marked critical' if x.critical?
+        errors << 'Additional, non-required X.509v3 extension is marked critical ❌' if x.critical?
       end
 
       context_errors[ cert.subject.to_s ] = errors
@@ -1651,10 +1648,10 @@ class DC_Signer_Crypto_Compliance
       break if index == @context.size - 1 # root ca
       begin
         if ! ( cert.not_before >= @context[ index + 1 ].not_before and cert.not_after <= @context[ index + 1 ].not_after )
-          context_errors[ cert.subject.to_s ] << "Validity period not contained within parent certificate's validity period"
+          context_errors[ cert.subject.to_s ] << "Validity period not contained within parent certificate's validity period ❌"
         end
       rescue Exception => e
-        context_errors[ cert.subject.to_s ] << "Internal error: Skip DC_Signer_Crypto_Compliance Section 2.1.17 Chain completeness: RUBY_VERSION #{ RUBY_VERSION } on 32 bit systems broken for UTC times > Jan 19th 2038. Inspect certificate manually." if e.class == ArgumentError
+        context_errors[ cert.subject.to_s ] << "Internal error: Skip DC_Signer_Crypto_Compliance Section 2.1.17 Chain completeness: RUBY_VERSION #{ RUBY_VERSION } on 32 bit systems broken for UTC times > Jan 19th 2038. Inspect certificate manually ❌" if e.class == ArgumentError
       end
     end
     return context_errors, types_seen
@@ -1668,7 +1665,7 @@ class DC_Signer_Crypto_Compliance
       if index == 0 then issuer = cert else issuer = certs[ index - 1 ] end
       begin
         check = cert.verify issuer.public_key
-        context_errors[ cert.subject.to_s ] << 'Verification with issuer public key failed' if check == false
+        context_errors[ cert.subject.to_s ] << 'Verification with issuer public key failed ❌' if check == false
         verification << check
       rescue Exception => e
         verification << e
@@ -1745,25 +1742,25 @@ class DC_Signature_Verification
         when true
           @messages << 'Signature value and SignedInfo match'
         when false
-          @messages << 'Signature value and SignedInfo do not match'
+          @messages << 'Signature value and SignedInfo do not match ❌'
         end
 
       when false
-        @messages << 'Document and SignedInfo do not match'
+        @messages << 'Document and SignedInfo do not match ❌'
         case @signature_value_check
         when true
           @messages << 'Signature value and SignedInfo match'
         when false
-          @messages << 'Signature value and SignedInfo do not match'
+          @messages << 'Signature value and SignedInfo do not match ❌'
         end
       end
 
       if @reference_digests_check and @signature_value_check
         @verified = true
-        @messages << 'Signature check: OK'
+        @messages << 'Signature check: OK ✅'
       else
         @verified = false
-        @messages << 'Signature check: Verification failure'
+        @messages << 'Signature check: Verification failure ❌'
       end
     end
   end
@@ -1872,7 +1869,7 @@ class DC_Signature_Verification
     sig_digest_algo = sig_algo.split( 'rsa-' ).last
     signature_value_doc = extract_signature_value( doc, sig_ns, prefix )
     if signature_value_doc.size != pub_k.n.to_i.size
-      @messages << "Invalid signature: sig_doc: #{ signature_value_doc.size } octets (RSA modulus: #{ pub_k.n.to_i.size } octets)"
+      @messages << "Invalid signature ❌: sig_doc: #{ signature_value_doc.size } octets (RSA modulus: #{ pub_k.n.to_i.size } octets)"
       return false
     end
     signed_info_c14n_xml = signed_info_c14n( doc, sig_ns, prefix )
@@ -1902,7 +1899,7 @@ class DC_Signature_Verification
           if uri =~ /^#ID_/
             ref_xml = extract_uri( doc, uri ).canonicalize
           else
-            @messages << 'Reference URI not valid'
+            @messages << 'Reference URI not valid ❌'
             check = false
             next
           end
@@ -1913,12 +1910,12 @@ class DC_Signature_Verification
         if digest_calc == digest_doc
           @messages << 'Reference digest value correct'
         else
-          @messages << 'Reference digest value not correct'
+          @messages << 'Reference digest value not correct ❌'
           check = false
         end
       else
         # not reached if doc was validated against schema
-        @messages << 'Reference has more than 1 attribute'
+        @messages << 'Reference has more than 1 attribute ❌'
       end
     end
     return check
@@ -2233,10 +2230,10 @@ def validate_xml( xml, file )
     validation_errors = xsd.validate( xml )
   else
     if xml.namespaces.empty?
-      errors << "Could not determine Schema (no namespace provided)"
+      errors << "Could not determine Schema (no namespace provided) ❌"
       return false, errors
     else
-      errors << "Could not determine Schema for #{ xml.namespaces.inspect }"
+      errors << "Could not determine Schema for #{ xml.namespaces.inspect } ❌"
       return false, errors
     end
   end
@@ -2273,11 +2270,11 @@ def errors_signature_verification( errors, error_status, signature_result, id, f
     # While the signature might verify there could be problems
     # with dc specific certificate properties. Report those.
     if ! signature_result.crypto.errors[ :context ].values.flatten.empty?
-      errors << "#{ type_indicator } #{ id }: Signature: #{ signature_result.crypto.errors[ :context ].inspect }"
+      errors << "#{ type_indicator } #{ id }: Signature ❌: #{ signature_result.crypto.errors[ :context ].inspect }"
       error_status = true
     end
   else
-    errors << "#{ type_indicator } #{ id }: Signature verification failure:\n\t#{ signature_result.messages.join( "\n\t" ) }"
+    errors << "#{ type_indicator } #{ id }: Signature verification failure ❌:\n\t#{ signature_result.messages.join( "\n\t" ) }"
     error_status = true
   end
   return errors, error_status
@@ -2299,7 +2296,7 @@ def get_xml_of_type( asdcp_type, file, errors, errors_status )
     xml.errors.each do |error|
       # expected errors from non-xml
       next if error.message =~ /Start tag expected/ or error.message =~ /Document is empty/
-      errors << "Syntax error: #{ file }: #{ error }"
+      errors << "Syntax error ❌: #{ file }: #{ error }"
       errors_status = true
       @logger.info errors.last
     end
@@ -2602,9 +2599,9 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     cpl_type = 'Interop'
   else
     cpl_type = 'Unknown'
-    errors << "CPL #{ cpl_id }: Default namespace unknown: #{ cpl_ns }: #{ cpl_file }"
-    errors << "CPL #{ cpl_id }: Default namespace unknown: This might be a dcp_inspect bug. If you think it is ..."
-    errors << "CPL #{ cpl_id }: Default namespace unknown: ... please file an issue at https://github.com/wolfgangw/backports/issues/new"
+    errors << "CPL #{ cpl_id }: Default namespace unknown ❌: #{ cpl_ns }: #{ cpl_file }"
+    errors << "CPL #{ cpl_id }: Default namespace unknown ❌: This might be a dcp_inspect bug. If you think it is ..."
+    errors << "CPL #{ cpl_id }: Default namespace unknown ❌: ... please file an issue at https://github.com/wolfgangw/backports/issues/new"
     cpl_errors = true
   end
   cpl_referenced_assets_types << cpl_type
@@ -2613,9 +2610,9 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   if options.validate
     begin
       valid, errors, cpl_errors = validation( errors, cpl_errors, xml, cpl_file, cpl_id, 'CPL' )
-      report << "CPL #{ cpl_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }"
+      report << "CPL #{ cpl_id }: Schema check: #{ valid ? 'OK ✅' : "Errors ❌ (See #{ error_output })" }"
     rescue Exception => e
-      errors << "CPL #{ cpl_id }: Exception in Schema check: #{ e.message }"
+      errors << "CPL #{ cpl_id }: Exception in Schema check ❌: #{ e.message }"
       cpl_errors = true
       report << errors.last
     end
@@ -2646,21 +2643,21 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     # See e.g. dcp_2/V174* for a serial mismatch
     if ! signature_result.signer_node.empty? and sig_info[ :x509serialnumber ] and sig_info[ :cert_serial ]
       if sig_info[ :x509serialnumber ] != sig_info[ :cert_serial ]
-        report << "Signer serial mismatch: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
-        errors << "CPL #{ cpl_id }: Signer serial mismatch: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
+        report << "Signer serial mismatch ❌: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
+        errors << "CPL #{ cpl_id }: Signer serial mismatch ❌: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
         cpl_errors = true
       end
     else
-      report << 'Signer info :x509serialnumber or :cert_serial could not be retrieved'
-      errors << "CPL #{ cpl_id }: Signer info :x509serialnumber or :cert_serial could not be retrieved"
+      report << 'Signer info :x509serialnumber or :cert_serial could not be retrieved ❌'
+      errors << "CPL #{ cpl_id }: Signer info :x509serialnumber or :cert_serial could not be retrieved ❌"
       cpl_errors = true
     end
   end
 
   # CPL:Id RFC-4122 compliant?
   if cpl_id !~ MStr::Uuid_rfc4122_re
-    report << "CPL Id:           #{ cpl_id } [Not RFC-4122 compliant]"
-    errors << "CPL #{ cpl_id }: Value of CompositionPlaylist:Id is not RFC-4122 compliant"
+    report << "CPL Id:           #{ cpl_id } [Not RFC-4122 compliant] ❌"
+    errors << "CPL #{ cpl_id }: Value of CompositionPlaylist:Id is not RFC-4122 compliant ❌"
     cpl_errors = true
   else
     report << "CPL Id:           #{ cpl_id }"
@@ -2672,8 +2669,8 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   # Scrounge ContentTitleText
   content_title_text = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ContentTitleText" ).text
   if content_title_text.empty?
-    hints << "CPL #{ cpl_id }: ContentTitleText is empty"
-    report << "ContentTitleText: [Empty]"
+    report << "ContentTitleText: [Empty] ❌"
+    errors << "CPL #{ cpl_id }: ContentTitleText is empty ❌"
   else
     report << "ContentTitleText: #{ content_title_text }"
   end
@@ -2727,22 +2724,22 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   issue_date = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:IssueDate" )
   if issue_date
     if issue_date.text.empty?
-      errors << "CPL #{ cpl_id }: IssueDate is empty"
+      errors << "CPL #{ cpl_id }: IssueDate is empty ❌"
       cpl_errors = true
-      report << "IssueDate:        [Empty -- See schema errors #{ error_output }]"
+      report << "IssueDate:        [Empty -- See schema errors #{ error_output }] ❌"
     else
       begin
         issue_date_dt = DateTime.parse issue_date.text
         now_dt = DateTime.now
       rescue Exception => e
-        errors << "CPL #{ cpl_id }: Can not parse IssueDate #{ issue_date.text.inspect }"
+        errors << "CPL #{ cpl_id }: Can not parse IssueDate #{ issue_date.text.inspect } ❌"
         cpl_errors = true
       end
       if issue_date_dt
         if issue_date_dt >= now_dt
           info << "CPL #{ cpl_id }: Composition #{ content_title_text.empty? ? '[ContentTitleText empty]' : content_title_text.inspect } was issued in the future: IssueDate #{ issue_date.text.inspect } ahead of now (#{ now_dt.to_s }) by #{ distance_of_time_in_words( issue_date_dt, now_dt ) }"
         elsif issue_date_dt < now_dt
-          info << "CPL #{ cpl_id }: Composition #{ content_title_text.empty? ? '[ContentTitleText empty]' : content_title_text.inspect } was issued #{ distance_of_time_in_words( issue_date_dt, now_dt ) } ago"
+          info << "CPL #{ cpl_id }: Composition #{ content_title_text.empty? ? '[ContentTitleText empty] ❌' : content_title_text.inspect } was issued #{ distance_of_time_in_words( issue_date_dt, now_dt ) } ago"
         end
         issue_date_friendly = datetime_friendly( issue_date_dt )
         report << "IssueDate:        #{ issue_date.text } (#{ issue_date_friendly })"
@@ -2919,7 +2916,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
 
               # Check asset Id for RFC-4122 compliance. All assets except DCSubtitle require this
               if asset_id !~ MStr::Uuid_rfc4122_re
-                errors << "#{ cpl_reel }: Listed asset Id #{ asset_id } is not RFC-4122 compliant"
+                errors << "#{ cpl_reel }: Listed asset Id #{ asset_id } is not RFC-4122 compliant ❌"
                 cpl_errors = true
               end
 
@@ -2928,7 +2925,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 n, d = ( meta[ 'EditRate' ] || meta[ 'SampleRate' ] ).split( '/' ).map { |num| num.to_i }
                 asset_edit_rate = Rational( n, d ).to_f
               rescue Exception => e
-                errors << "#{ cpl_reel }: Could not scrounge edit rate from #{ asset.node_name } asset #{ asset_id }"
+                errors << "#{ cpl_reel }: Could not scrounge edit rate from #{ asset.node_name } asset #{ asset_id } ❌"
                 cpl_errors = true
               end
 
@@ -2956,41 +2953,41 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                     else
                       case cpl_key_id
                       when nil
-                        errors << "#{ cpl_reel }: #{ asset.node_name }: References encrypted asset but KeyId is [nil]: #{ asset_id }"
+                        errors << "#{ cpl_reel }: #{ asset.node_name }: References encrypted asset but KeyId is [nil] ❌: #{ asset_id }"
                         cpl_errors = true
                       else
-                        errors << "#{ cpl_reel }: #{ asset.node_name }: KeyId and CryptographicKeyID mismatch: #{ asset_id }: #{ asset_file }"
+                        errors << "#{ cpl_reel }: #{ asset.node_name }: KeyId and CryptographicKeyID mismatch ❌: #{ asset_id }: #{ asset_file }"
                         cpl_errors = true
                       end
                     end
                   else
-                    errors << "#{ cpl_reel }: #{ asset.node_name }: Could not read CryptographicKeyID in #{ asset_file }"
+                    errors << "#{ cpl_reel }: #{ asset.node_name }: Could not read CryptographicKeyID in #{ asset_file } ❌"
                     cpl_errors = true
                   end
                 end
               else
-                errors << "#{ cpl_reel }: #{ asset.node_name }: Could not read EncryptedEssence Yes/No in #{ asset_file }"
+                errors << "#{ cpl_reel }: #{ asset.node_name }: Could not read EncryptedEssence Yes/No in #{ asset_file } ❌"
                 cpl_errors = true
               end
 
               # IntrinsicDuration / EntryPoint / Duration sane?
               sane_IntrinsicDuration_EntryPoint_Duration = true
               if intrinsic_duration - entry_point < duration
-                errors << "#{ cpl_reel }: Duration #{ duration } in #{ asset.node_name } does not compute: IntrinsicDuration #{ intrinsic_duration } - EntryPoint #{ entry_point } < Duration #{ duration }"
+                errors << "#{ cpl_reel }: Duration #{ duration } in #{ asset.node_name } does not compute ❌: IntrinsicDuration #{ intrinsic_duration } - EntryPoint #{ entry_point } < Duration #{ duration }"
                 sane_IntrinsicDuration_EntryPoint_Duration = false
                 cpl_errors = true
               end
               if entry_point >= intrinsic_duration
                 exceed_frames = entry_point + 1 - intrinsic_duration
-                errors << "#{ cpl_reel }: EntryPoint #{ entry_point } in #{ asset.node_name } exceeds IntrinsicDuration #{ intrinsic_duration } by #{ amount( 'frame', exceed_frames ) }"
+                errors << "#{ cpl_reel }: EntryPoint #{ entry_point } in #{ asset.node_name } exceeds IntrinsicDuration #{ intrinsic_duration } by #{ amount( 'frame', exceed_frames ) } ❌"
                 sane_IntrinsicDuration_EntryPoint_Duration = false
                 cpl_errors = true
               end
               if intrinsic_duration != meta[ 'ContainerDuration' ].to_i
-                errors << "#{ cpl_reel }: IntrinsicDuration #{ intrinsic_duration } in #{ asset.node_name } does not match ContainerDuration #{ meta[ 'ContainerDuration' ].nil? ? '[NaN]' : meta[ 'ContainerDuration' ] } of asset #{ asset_id }"
+                errors << "#{ cpl_reel }: IntrinsicDuration #{ intrinsic_duration } in #{ asset.node_name } does not match ContainerDuration #{ meta[ 'ContainerDuration' ].nil? ? '[NaN]' : meta[ 'ContainerDuration' ] } of asset #{ asset_id } ❌"
                 cpl_errors = true
                 if meta[ 'ContainerDuration' ].to_i - entry_point < duration
-                  errors << "#{ cpl_reel }: Duration #{ duration } in #{ asset.node_name } does not compute: ContainerDuration #{ meta[ 'ContainerDuration' ] } of asset #{ asset_id } - EntryPoint #{ entry_point } < Duration #{ duration }"
+                  errors << "#{ cpl_reel }: Duration #{ duration } in #{ asset.node_name } does not compute ❌: ContainerDuration #{ meta[ 'ContainerDuration' ] } of asset #{ asset_id } - EntryPoint #{ entry_point } < Duration #{ duration }"
                   sane_IntrinsicDuration_EntryPoint_Duration = false
                   cpl_errors = true
                 end
@@ -3010,7 +3007,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 else
                   picture_decomposition_levels = nil
                   composition_picture_decomposition_levels << nil
-                  errors << "#{ cpl_reel }: Expected to read image DecompositionLevels value but got nil"
+                  errors << "#{ cpl_reel }: Expected to read image DecompositionLevels value but got nil ❌"
                   cpl_errors = true
                 end
 
@@ -3065,14 +3062,16 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 end
                 composition_picture_resolutions << picture_dimensions_moniker
 
+                # FIXME wording: HFR is part of DCI/SMPTE
                 # bitrate
                 if picture_bitrate_max_mbs
                   if picture_bitrate_max_mbs > PictureBitrateMaxDCI
                     if picture_bitrate_max_mbs > PictureBitrateMaxHFR
-                      errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI and HFR maxima (#{ PictureBitrateMaxDCI } and #{ PictureBitrateMaxHFR } Mb/s)"
+                      errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI and HFR maxima (#{ PictureBitrateMaxDCI } and #{ PictureBitrateMaxHFR } Mb/s) ❌"
                       cpl_errors = true
+                    # FIXME
                     elsif picture_bitrate_max_mbs <= PictureBitrateMaxHFR
-                      errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI maximum (#{ PictureBitrateMaxDCI } Mb/s)"
+                      errors << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI maximum (#{ PictureBitrateMaxDCI } Mb/s) ❌"
                       cpl_errors = true
                       hints << "#{ cpl_reel }: #{ asset.node_name } bitrate maximum #{ meta[ 'Max BitRate' ] } exceeds DCI maximum (#{ PictureBitrateMaxDCI } Mb/s). Playback might fail on DCI systems. Playback might work on HFR systems"
                     end
@@ -3106,7 +3105,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 else
                   audio_channel_format = nil
                   composition_sound_channel_formats << nil
-                  errors << "#{ cpl_reel }: Expected to read sound ChannelFormat but got nil"
+                  errors << "#{ cpl_reel }: Expected to read sound ChannelFormat but got nil ❌"
                   cpl_errors = true
                 end
 
@@ -3114,14 +3113,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 audio_sampling_rate = meta[ 'AudioSamplingRate' ]
                 audio_sampling_rate_f = audio_sampling_rate.to_r.to_f
                 if audio_sampling_rate != '48000/1' and audio_sampling_rate != '96000/1'
-                  errors << "#{ cpl_reel }: MainSound sampling rate #{ audio_sampling_rate } Hz. Expected 48 kHz or 96 kHz"
+                  errors << "#{ cpl_reel }: MainSound sampling rate #{ audio_sampling_rate } Hz. Expected 48 kHz or 96 kHz ❌"
                   cpl_errors = true
                 end
 
                 # Bits per sample
                 audio_quantization_bits = meta[ 'QuantizationBits' ].to_i
                 if audio_quantization_bits != 24
-                  errors << "#{ cpl_reel }: MainSound quantization #{ audio_quantization_bits } bps. Expected 24 bps"
+                  errors << "#{ cpl_reel }: MainSound quantization #{ audio_quantization_bits } bps. Expected 24 bps ❌"
                   cpl_errors = true
                 end
 
@@ -3129,7 +3128,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 audio_channel_count = meta[ 'ChannelCount' ].to_i
                 case audio_channel_count
                 when 1, 3, 4, 5, 7
-                  errors << "#{ cpl_reel }: MainSound has #{ amount( 'channel', audio_channel_count ) }: Use 5.1, 7.1, 7.1DS or wild track (2.0 is expected to mostly work)"
+                  errors << "#{ cpl_reel }: MainSound has #{ amount( 'channel', audio_channel_count ) } ❌: Use 5.1, 7.1, 7.1DS or wild track (2.0 is expected to mostly work)"
                   cpl_errors = true
                   audio_channel_count_moniker = audio_channel_count.to_s
                 when 2
@@ -3149,13 +3148,13 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 # Block align
                 audio_block_align = meta[ 'BlockAlign' ].to_i
                 if audio_block_align != audio_channel_count * 3 # don't use audio_quantization_bits here -- anything other than 24 bps is an error
-                  errors << "#{ cpl_reel }: MainSound has unexpected BlockAlign value #{ audio_block_align }: Expected #{ audio_channel_count * 3 }: Check audio source"
+                  errors << "#{ cpl_reel }: MainSound has unexpected BlockAlign value #{ audio_block_align } ❌: Expected #{ audio_channel_count * 3 }: Check audio source"
                   cpl_errors = true
                 end
 
                 # Edit rate
                 if asset_edit_rate != edit_rate
-                  errors << "#{ cpl_reel }: MainSound EditRate #{ edit_rate } does not match asset EditRate #{ asset_edit_rate }"
+                  errors << "#{ cpl_reel }: MainSound EditRate #{ edit_rate } does not match asset EditRate #{ asset_edit_rate } ❌"
                   cpl_errors = true
                 end
 
@@ -3184,14 +3183,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
 
                     if @dcp_inspect_temp
                       if audio_stats[ asset_id ][ asset_snippet ]
-                        @logger.info "#{ cpl_reel }: Audio analysis: Seen #{ asset_id }:#{ entry_point }:#{ duration } before. Using previous result"
+                        @logger.info "#{ cpl_reel }: Audio analysis: Seen #{ asset_id }:#{ entry_point }:#{ duration } before. Using previous result ✅"
                       else
                         if key
                           audio_stats[ asset_id ][ asset_snippet ] = audio_characteristics( @dcp_inspect_temp, asset_file, audio_channel_count, entry_point, duration, key )
                         elsif meta[ 'EncryptedEssence' ] == 'No'
                           @logger.cr "#{ cpl_reel }: Audio analysis ..."
                           audio_stats[ asset_id ][ asset_snippet ] = audio_characteristics( @dcp_inspect_temp, asset_file, audio_channel_count, entry_point, duration, key )
-                          @logger.info "#{ cpl_reel }: Audio analysis: Done"
+                          @logger.info "#{ cpl_reel }: Audio analysis: Done ✅"
                         end
                       end
                     else
@@ -3238,7 +3237,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 if options.validate
                   begin
                     valid, errors, cpl_errors = validation( errors, cpl_errors, xml, asset_file, asset_id, 'DCSubtitle' )
-                    report << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }"
+                    report << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Schema check: #{ valid ? 'OK ✅' : "Errors ❌ (See #{ error_output })" }"
                   rescue Exception => e
                     errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Exception in Schema check: #{ e.message }"
                     cpl_errors = true
@@ -3263,7 +3262,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                         report << hints.last
                       end
                     else
-                      errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber has unexpected content: #{ reelnumber_el.children.first.class }"
+                      errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber has unexpected content ❌: #{ reelnumber_el.children.first.class }"
                       cpl_errors = true
                       report << errors.last
                     end
@@ -3278,11 +3277,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                   end
                 else
                   if reelnumber_el.size == 0
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber element not found"
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber element not found ❌"
                     cpl_errors = true
                     report << errors.last
                   else
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: More than 1 ReelNumber element found"
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: More than 1 ReelNumber element found ❌"
                     cpl_errors = true
                     report << errors.last
                   end
@@ -3302,7 +3301,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                         report << hints.last
                       end
                     else
-                      errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language has unexpected content: #{ language_el.children.first.class }"
+                      errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language has unexpected content ❌: #{ language_el.children.first.class }"
                       cpl_errors = true
                       report << errors.last
                     end
@@ -3317,11 +3316,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                   end
                 else
                   if language_el.size == 0
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language element not found"
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language element not found ❌"
                     cpl_errors = true
                     report << errors.last
                   else
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: More than 1 Language element found"
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: More than 1 Language element found ❌"
                     cpl_errors = true
                     report << errors.last
                   end
@@ -3350,7 +3349,6 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                   # Last subtitle is not necessarily the last displayed
                   # Scrounge content snippets along the way
                   #
-                  #
                   # See CRAWL which sports empty Subtitle elements
                   #
                   # TI spec 2.9 Subtitle says
@@ -3366,7 +3364,6 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                   #     </xs:choice>
                   #
                   # Correctness tbd
-                  #
                   #
                   # First
                   #
@@ -3413,7 +3410,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                     first_time_in = parse_dcsubtitle_tc_string( first_time_in, edit_rate )
                     last_time_out = parse_dcsubtitle_tc_string( last_time_out, edit_rate )
                   rescue Exception => e
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Timecode: #{ e.message }"
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Timecode: #{ e.message } ❌"
                     cpl_errors = true
                   end
 
@@ -3426,7 +3423,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                   # duration (self) and last TimeOut
                   #
                   if last_time_out.to_i > duration
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut #{ last_time_out.to_s } exceeds MainSubtitle duration #{ Timecode.new( duration, edit_rate ).to_s }"
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut #{ last_time_out.to_s } exceeds MainSubtitle duration #{ Timecode.new( duration, edit_rate ).to_s } ❌"
                     cpl_errors = true
                   end
                   #
@@ -3436,7 +3433,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                     begin
                       reel_duration_prelim = Timecode.new( durations[ 0 .. -2 ].min, edit_rates[ 0 .. -2 ].min )
                       if last_time_out > reel_duration_prelim
-                        errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut #{ last_time_out.to_s } exceeds reel duration #{ reel_duration_prelim }"
+                        errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut #{ last_time_out.to_s } exceeds reel duration #{ reel_duration_prelim } ❌"
                         cpl_errors = true
                       end
                     rescue Exception => e
@@ -3454,7 +3451,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                     spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : nil )
                     if sub.children.empty? or ( sub.children.size == 1 and sub.children.first.is_a? Nokogiri::XML::Text )
                       empty_subtitles += 1
-                      errors << "#{ cpl_reel }: DCSubtitle: Empty Subtitle element#{ spot_number ? ': SpotNumber ' + spot_number : '' }"
+                      errors << "#{ cpl_reel }: DCSubtitle: Empty Subtitle element#{ spot_number ? ': SpotNumber ' + spot_number : '' } ❌"
                       cpl_errors = true
                     elsif ( nodeset = sub.xpath( '*/Text|Text|*/Image|Image' ) )
                       nodeset.each do |node|
@@ -3520,7 +3517,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                             # Check for font max size recommendation
                             font_asset_size = File.size font_asset
                             if font_asset_size > 655360 # 640 KB
-                              errors << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } size #{ font_asset_size.to_k } exceeds 640 KB"
+                              errors << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } size #{ font_asset_size.to_k } exceeds 640 KB ❌"
                               cpl_errors = true
                             end
                             # Get font name
@@ -3544,23 +3541,23 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                                   spot[ :text ].split( '' ).each do |char|
                                     glyphs_missing_list << char unless font_fu.provides_glyphs_for?( char )
                                   end
-                                  hints << "#{ cpl_reel }: DCSubtitle: SpotNumber #{ spot[ :number ] }: Font is missing #{ amount( 'glyph', glyphs_missing_list ) } to render #{ spot[ :text ].inspect } (#{ spot[ :text ].encoding }): #{ glyphs_missing_list.inspect }"
+                                  hints << "#{ cpl_reel }: DCSubtitle: SpotNumber #{ spot[ :number ] }: Font is missing #{ amount( 'glyph', glyphs_missing_list ) } to render #{ spot[ :text ].inspect } (#{ spot[ :text ].encoding }) ❌: #{ glyphs_missing_list.inspect }"
                                 end
                               end
                               if glyphs_missing
-                                hints << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } is missing some required glyphs"
+                                hints << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } is missing some required glyphs ❌"
                               end
                             rescue NoMethodError => e
-                              errors << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset } not valid: #{ e.message }"
+                              errors << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset } not valid ❌: #{ e.message }"
                               cpl_errors = true
                             end
                           else
-                            errors << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } referenced in LoadFont is neither #{ MStr::TTF } nor #{ MStr::OTF }"
+                            errors << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } referenced in LoadFont is neither #{ MStr::TTF } nor #{ MStr::OTF } ❌"
                             cpl_errors = true
                           end
                         end
                       else
-                        errors << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset } not in AssetMap"
+                        errors << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset } not in AssetMap ❌"
                         cpl_errors = true
                       end
                       if load_font_el.size > 1
@@ -3578,12 +3575,12 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                   end
                   font_ids.uniq!
                   if font_ids.size > 1
-                    errors << "#{ cpl_reel }: DCSubtitle: Multiple Font Ids referenced: #{ font_ids.inspect }"
+                    errors << "#{ cpl_reel }: DCSubtitle: Multiple Font Ids referenced ❌: #{ font_ids.inspect }"
                     cpl_errors = true
                   end
                   if load_font_el.empty?
                     if font_ids.size > 0
-                      errors << "#{ cpl_reel }: DCSubtitle: No Font Id declared via LoadFont but referenced Font Ids found: #{ font_ids.inspect }"
+                      errors << "#{ cpl_reel }: DCSubtitle: No Font Id declared via LoadFont but referenced Font Ids found ❌: #{ font_ids.inspect }"
                       cpl_errors = true
                     end
                   else
@@ -3591,7 +3588,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                       load_font_id = load_font_el.first.attributes[ 'Id' ].value
                       font_ids.each do |font_id|
                         if font_id != load_font_id
-                          errors << "#{ cpl_reel }: DCSubtitle: Referenced font Id '#{ font_id }' does not match the Id '#{ load_font_id }' declared in LoadFont. Font cannot be loaded"
+                          errors << "#{ cpl_reel }: DCSubtitle: Referenced font Id '#{ font_id }' does not match the Id '#{ load_font_id }' declared in LoadFont. Font cannot be loaded ❌"
                           cpl_errors = true
                         end
                       end
@@ -3618,7 +3615,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                 broken_assets << asset_id
                 cpl_referenced_assets << { asset_id => false }
                 cpl_referenced_assets_types << MStr::AssetTypeUnknown
-                meta_report = 'File found but not AS-DCP MXF'
+                meta_report = 'File found but not AS-DCP MXF ❌'
 
                 # We don't have meta. Infer encryption from presence of KeyId
                 if cpl_key_id
@@ -3633,7 +3630,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
             broken_assets << asset_id
             cpl_referenced_assets << { asset_id => false }
             cpl_referenced_assets_types << MStr::AssetTypeUnknown
-            meta_report = "Referenced asset file missing: #{ dict[ asset_id ] }"
+            meta_report = "Referenced asset file missing ❌: #{ dict[ asset_id ] }"
 
             # Infer encryption from presence of KeyId
             if cpl_key_id
@@ -3693,25 +3690,25 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
         case asset.node_name
         when 'MainStereoscopicPicture'
           unless meta[ 'EssenceType' ] == MStr::Stereoscopic_pictures
-            reels_report << "Essence type mismatch: Expected MainStereoscopicPicture, got #{ meta[ 'EssenceType' ] || '[nil]' }"
+            reels_report << "Essence type mismatch ❌: Expected MainStereoscopicPicture, got #{ meta[ 'EssenceType' ] || '[nil]' }"
             errors << "#{ cpl_reel }: " + reels_report.last
             cpl_errors = true
           end
         when 'MainPicture'
           unless ( meta[ 'EssenceType' ] == MStr::Pictures or meta[ 'EssenceType' ] == MStr::Mpeg2 )
-            reels_report << "Essence type mismatch: Expected MainPicture, got #{ meta[ 'EssenceType' ] || '[nil]' }"
+            reels_report << "Essence type mismatch ❌: Expected MainPicture, got #{ meta[ 'EssenceType' ] || '[nil]' }"
             errors << "#{ cpl_reel }: " + reels_report.last
             cpl_errors = true
           end
         when 'MainSound'
           unless meta[ 'EssenceType' ] == MStr::Audio
-            reels_report << "Essence type mismatch: Expected MainSound, got #{ meta[ 'EssenceType' ] || '[nil]' }"
+            reels_report << "Essence type mismatch ❌: Expected MainSound, got #{ meta[ 'EssenceType' ] || '[nil]' }"
             errors << "#{ cpl_reel }: " + reels_report.last
             cpl_errors = true
           end
         when 'MainSubtitle'
           unless meta[ 'EssenceType' ] == MStr::Timed_text
-            reels_report << "Essence type mismatch: Expected MainSubtitle, got #{ meta[ 'EssenceType' ] || '[nil]' }"
+            reels_report << "Essence type mismatch ❌: Expected MainSubtitle, got #{ meta[ 'EssenceType' ] || '[nil]' }"
             errors << "#{ cpl_reel }: " + reels_report.last
             cpl_errors = true
           end
@@ -3722,14 +3719,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
 
     # Check reel's duration sanity
     if durations.uniq.size != 1
-      reels_report << "\tDuration mismatch"
-      errors << "#{ cpl_reel }: Duration mismatch: #{ durations.inspect }"
+      reels_report << "\tDuration mismatch ❌"
+      errors << "#{ cpl_reel }: Duration mismatch ❌: #{ durations.inspect }"
       cpl_errors = true
     else
       reel_duration = durations.first / edit_rates.min # gets it done but ugh
       if edit_rates.min > 0 and reel_duration < 1
-        reels_report << "\tReel duration less than 1 second"
-        errors << "#{ cpl_reel }: Reel duration less than 1 second (#{ "%0.3f" % reel_duration } seconds, #{ amount( 'frame', durations.first.to_i ) }@#{ edit_rates.min } fps)"
+        reels_report << "\tReel duration less than 1 second ❌"
+        errors << "#{ cpl_reel }: Reel duration less than 1 second (#{ "%0.3f" % reel_duration } seconds, #{ amount( 'frame', durations.first.to_i ) }@#{ edit_rates.min } fps) ❌"
         cpl_errors = true
       elsif edit_rates.min > 0 and reel_duration < 5 # Doremi TB 65 (2010-03-09)
         hints << "#{ cpl_reel }: Reel duration less than 5 seconds. Doremi TB 65 suggests a 5 second minimum for safe playback on Doremi systems"
@@ -3738,8 +3735,8 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
 
     # Check reel's editrate sanity
     if edit_rates.uniq.size != 1
-      reels_report << "\tEditRate mismatch"
-      errors << "#{ cpl_reel }: EditRate mismatch"
+      reels_report << "\tEditRate mismatch ❌"
+      errors << "#{ cpl_reel }: EditRate mismatch ❌"
       cpl_errors = true
     end
 
@@ -3758,7 +3755,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   begin
     total_duration_tc = Timecode.new( total_duration, composition_edit_rate )
   rescue Exception => e
-    errors << "CPL #{ cpl_id }: Exception in reel report: #{ e.message }"
+    errors << "CPL #{ cpl_id }: Exception in reel report ❌: #{ e.message }"
   end
   if composition_edit_rate == 0
     cpl_errors = true
@@ -3768,7 +3765,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     composition_summary[ :duration ] = total_duration_tc.to_s
     composition_summary[ :edit_rate ] = "#{ composition_edit_rate } fps"
   else
-    composition_summary[ :duration ] = '[Duration does not compute]'
+    composition_summary[ :duration ] = '[Duration does not compute] ❌'
   end
 
   # Cosmetics: Interleave reels_report
@@ -3786,7 +3783,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     composition_type = ( cpl_referenced_assets_types.include?( MStr::AssetTypeUnknown ) ? MStr::AssetTypeUndetermined : assets_status_list.include?( false ) ? MStr::AssetTypeUndetermined : MStr::AssetTypeMixed )
     composition_summary[ :type ] = composition_type
     if broken_assets.size != 0
-      errors << "CPL #{ cpl_id }: Composition type: #{ composition_type }"
+      errors << "CPL #{ cpl_id }: Composition type ❌: #{ composition_type }"
       cpl_errors = true
     else
       hints << "CPL #{ cpl_id }: Composition type: #{ composition_type }: Supplemental/VF/External"
@@ -3824,11 +3821,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   # Check consistency of decomposition levels in picture essence
   if composition_picture_decomposition_levels.uniq.size == 1 and composition_picture_decomposition_levels.first != nil
     # we're good
+  elsif composition_picture_decomposition_levels.size == 0
+    errors << "CPL #{ cpl_id }: No picture essence present ❌"
+    cpl_errors = true
   elsif composition_picture_decomposition_levels.uniq.size == 1 and composition_picture_decomposition_levels.first == nil
-    errors << "CPL #{ cpl_id }: Failed to read DecompositionLevels from picture essence. Should not happen"
+    errors << "CPL #{ cpl_id }: Failed to read DecompositionLevels from picture essence. Should not happen ❌"
     cpl_errors = true
   else
-    errors << "CPL #{ cpl_id }: Found inconsistent image DecompositionLevels values across the composition (#{ composition_picture_decomposition_levels.each_with_index.map { |v, index| 'Reel ' + ( index + 1 ).to_s + ': ' + v.to_s }.join( ', ' ) }). This will produce visual artefacts in reel transitions"
+    errors << "CPL #{ cpl_id }: Found inconsistent image DecompositionLevels values across the composition (#{ composition_picture_decomposition_levels.each_with_index.map { |v, index| 'Reel ' + ( index + 1 ).to_s + ': ' + v.to_s }.join( ', ' ) }). This will produce visual artefacts in reel transitions ❌"
     cpl_errors = true
   end
 
@@ -3850,13 +3850,13 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
       end
       composition_summary[ :aspect ] = composition_picture_aspect_ratio[ :name ]
     else
-      errors << "CPL #{ cpl_id }: Found different asset aspect ratios: #{ composition_picture_aspect_ratios.inspect }"
+      errors << "CPL #{ cpl_id }: Found different asset aspect ratios: #{ composition_picture_aspect_ratios.inspect } ❌"
       cpl_errors = true
     end
   else
     expected_aspect_ratios = reels.size - supplemental_refs[ :main_picture ]
     if expected_aspect_ratios != composition_picture_aspect_ratios.size
-      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'aspect ratio', expected_aspect_ratios ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_picture_aspect_ratios.size }"
+      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'aspect ratio', expected_aspect_ratios ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_picture_aspect_ratios.size } ❌"
       cpl_errors = true
     end
   end
@@ -3882,13 +3882,13 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
       end
       composition_summary[ :resolution ] = composition_picture_resolution[ :abbrev ]
     else
-      errors << "CPL #{ cpl_id }: Found different picture resolutions: #{ composition_picture_resolutions.inspect }"
+      errors << "CPL #{ cpl_id }: Found different picture resolutions: #{ composition_picture_resolutions.inspect } ❌"
       cpl_errors = true
     end
   else
     expected_picture_resolutions = reels.size - supplemental_refs[ :main_picture ]
     if expected_picture_resolutions != composition_picture_resolutions.size
-      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'picture resolution', expected_picture_resolutions ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_picture_resolutions.size }"
+      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'picture resolution', expected_picture_resolutions ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_picture_resolutions.size } ❌"
       cpl_errors = true
     end
   end
@@ -3927,7 +3927,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   else
     expected_audio_types = reels.size - supplemental_refs[ :main_sound ]
     if expected_audio_types != composition_sound_channel_counts.size
-      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'audio type', expected_audio_types ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_sound_channel_counts.size }"
+      errors << "CPL #{ cpl_id }: Expected to scrounge #{ amount( 'audio type', expected_audio_types ) } (#{ amount( 'reel', reels.size ) }) but got #{ composition_sound_channel_counts.size } ❌"
       cpl_errors = true
     end
   end
@@ -3942,7 +3942,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
       assets_missing_refs = Array.new
       assets_missing_refs << 'MainPicture or MainStereoscopicPicture' if ! reel_refs[ :picture ]
       assets_missing_refs << 'MainSound' if ! reel_refs[ :sound ]
-      reels_report << "#{ composition_type }: Reel #{ reel_no }: Missing #{ amount( 'reference', assets_missing_refs ) }: #{ assets_missing_refs.join( ', ' ) }"
+      reels_report << "#{ composition_type }: Reel #{ reel_no }: Missing #{ amount( 'reference', assets_missing_refs ) } ❌: #{ assets_missing_refs.join( ', ' ) }"
       case composition_type
       when MStr::AssetTypeSmpte
         errors << "CPL #{ cpl_id }: #{ reels_report.last }"
@@ -3975,8 +3975,8 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   # Composition completeness
   if assets_status_list.include?( false )
     if broken_assets.size != 0
-      report << "Composition incomplete: Broken assets: #{ broken_assets.inspect }"
-      errors << "CPL #{ cpl_id }: Composition incomplete"
+      report << "Composition incomplete ❌: Broken assets: #{ broken_assets.inspect }"
+      errors << "CPL #{ cpl_id }: Composition incomplete ❌"
       cpl_errors = true
     else
       report << "Composition incomplete: Supplemental/VF/External"
@@ -3988,7 +3988,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     cpl_reels_references_complete.each_with_index do |e, i| incomplete_reels << ( i + 1 ).to_s if e == false end
     case composition_type
     when MStr::AssetTypeSmpte
-      report << "Composition incomplete: SMPTE reels require both MainPicture or MainStereoscopicPicture and MainSound: #{ plural( 'Reel', incomplete_reels ) } #{ incomplete_reels.join( ', ' ) } incomplete"
+      report << "Composition incomplete ❌: SMPTE reels require both MainPicture or MainStereoscopicPicture and MainSound: #{ plural( 'Reel', incomplete_reels ) } #{ incomplete_reels.join( ', ' ) } incomplete"
       errors << "CPL #{ cpl_id }: #{ report.last }"
       cpl_errors = true
     else
@@ -3996,10 +3996,10 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
       hints << "CPL #{ cpl_id }: #{ report.last }"
     end
   else
-    report << 'Composition complete'
+    report << 'Composition complete ✅'
   end
   if cpl_errors == true
-    report << "There were errors. See CPL #{ cpl_id } errors #{ error_output }"
+    report << "There were errors ❌. See CPL #{ cpl_id } errors #{ error_output }"
   end
 
   #
@@ -4118,9 +4118,9 @@ def dcp_inspect( options, arg )
   #
   am_candidates = find_assetmap_candidates( package_dir_tree, options )
   if am_candidates.empty?
-    errors << 'No Assetmap candidates found'
+    info << 'No Assetmap candidates found'
   else
-    @logger.debug "Found #{ amount( 'Assetmap candidate', am_candidates ) }: #{ am_candidates.inspect }"
+    @logger.debug "Found #{ amount( 'Assetmap candidate', am_candidates ) } ✅: #{ am_candidates.inspect }"
     @logger.debug "Found #{ amount( 'file', package_dir_tree ) } in total"
   end
 
@@ -4138,7 +4138,7 @@ def dcp_inspect( options, arg )
         if options.validate
           begin
             valid, errors, error_status = validation( errors, true, xml, am_file, am_id, 'AM' )
-            @logger.debug "AM #{ am_id.nil? ? am_id.inspect : am_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }: #{ am_file }"
+            @logger.debug "AM #{ am_id.nil? ? am_id.inspect : am_id }: Schema check: #{ valid ? 'OK ✅' : "Errors (See #{ error_output })" }: #{ am_file }"
           rescue Exception => e
             errors << "AM #{ am_id.nil? ? am_id.inspect : am_id }: Exception in Schema check: #{ e.message }"
             error_status = true
@@ -4230,18 +4230,18 @@ def dcp_inspect( options, arg )
           # Assetmap dictionary
           dict[ index ][ listed_id ] = Pathname( File.join( am_base, path ) ).cleanpath.to_s
           asset_file = package dict[ index ][ listed_id ]
-          @logger.debug "#{ listed_id }: #{ dict[ index ][ listed_id ] }#{ File.exist?( package dict[ index ][ listed_id ] ) ? '' : ' (file missing)' }"
+          @logger.debug "#{ listed_id }: #{ dict[ index ][ listed_id ] }#{ File.exist?( package dict[ index ][ listed_id ] ) ? '' : ' (file missing) ❌' }"
 
           # Check listed_id vs actual asset_id
           if File.exist?( asset_file )
             asset_id = get_asset_uuid( asset_file )
             if asset_id
               unless asset_id.downcase =~ MStr::Uuid_re
-                errors << "AM #{ am_id }: Asset UUID: Not a UUID: #{ asset_file }: #{ asset_id }"
+                errors << "AM #{ am_id }: Asset UUID: Not a UUID ❌: #{ asset_file }: #{ asset_id }"
                 am_errors = true
               end
               if listed_id.downcase != asset_id.downcase
-                errors << "AM #{ am_id }: UUID mismatch: #{ asset_file }: Listed: #{ listed_id } Asset: #{ asset_id }" 
+                errors << "AM #{ am_id }: UUID mismatch ❌: #{ asset_file }: Listed: #{ listed_id } Asset: #{ asset_id }"
                 am_errors = true
               else
                 if listed_id != asset_id
@@ -4250,7 +4250,7 @@ def dcp_inspect( options, arg )
               end
             end
           else
-            errors << "AM #{ am_id }: Listed asset file missing: #{ listed_id }: #{ path }: #{ asset_file }"
+            errors << "AM #{ am_id }: Listed asset file missing ❌: #{ listed_id }: #{ path }: #{ asset_file }"
             am_errors = true
           end
 
@@ -4264,11 +4264,11 @@ def dcp_inspect( options, arg )
                 listed_asset_length = asset.xpath( 'ChunkList/Chunk/Length' ).text.to_i
                 asset_size = File.size asset_file
                 unless listed_asset_length == asset_size
-                  errors << "AM #{ am_id }: Mismatch in optional Length element: Asset: #{ listed_id }: Listed length: #{ listed_asset_length } (#{ listed_asset_length.to_k }) Asset on medium: #{ asset_size } (#{ asset_size.to_k })"
+                  errors << "AM #{ am_id }: Mismatch in optional Length element ❌: Asset: #{ listed_id }: Listed length: #{ listed_asset_length } (#{ listed_asset_length.to_k }) Asset on medium: #{ asset_size } (#{ asset_size.to_k })"
                   am_errors = true
                 end
               rescue Exception => e
-                errors << "AM #{ am_id }: Length check fail: #{ e.message }"
+                errors << "AM #{ am_id }: Length check fail ❌: #{ e.message }"
                 am_errors = true
               end
             end
@@ -4297,7 +4297,7 @@ def dcp_inspect( options, arg )
               end
             end
           else
-            errors << "AM #{ am_id }: Found alleged PackingList asset #{ listed_id } but Path element is empty. Not adding to dictionary"
+            errors << "AM #{ am_id }: Found alleged PackingList asset #{ listed_id } but Path element is empty. Not adding to dictionary ❌"
             am_errors = true
           end
         end
@@ -4325,10 +4325,10 @@ def dcp_inspect( options, arg )
     pkls[ index ].map { |pkl_id|
       pkl_file = package dict[ index ][ pkl_id ]
       if File.exist?( pkl_file )
-        @logger.debug "PKL file present: #{ pkl_id }: #{ pkl_file }"
+        @logger.debug "PKL file present ✅: #{ pkl_id }: #{ pkl_file }"
       else
         pkls_missing[ index ] << pkl_id
-        errors << "AM #{ am_id }: PKL file missing: #{ pkl_id }: #{ pkl_file }"
+        errors << "AM #{ am_id }: PKL file missing ❌: #{ pkl_id }: #{ pkl_file }"
         am_errors = true
         @logger.debug errors.last
       end
@@ -4336,7 +4336,7 @@ def dcp_inspect( options, arg )
     pkls_missing[ index ].map { |pkl_id| pkls[ index ].delete pkl_id }
 
     if am_errors == true
-      @logger.debug "There were errors. See AM #{ am_id } errors #{ error_output }"
+      @logger.debug "There were errors ❌. See AM #{ am_id } errors #{ error_output }"
     end
 
     @logger.debug nil
@@ -4367,7 +4367,12 @@ def dcp_inspect( options, arg )
     am_pkls.each do |pkl_id|
       if dict[ index ][ pkl_id ]
         pkl_file = package dict[ index ][ pkl_id ]
-        @logger.debug "PKL file#{ File.exist?( pkl_file ) ? '' : ' not' } present: #{ [ pkl_id, pkl_file ].join( ': ' ) }"
+        #@logger.debug "PKL file#{ File.exist?( pkl_file ) ? '' : ' not' } present:"
+        if File.exist?( pkl_file )
+          @logger.debug "PKL file present ✅: #{ [ pkl_id, pkl_file ].join( ': ' ) }"
+        else
+          @logger.debug "PKL file missing ❌: #{ [ pkl_id, pkl_file ].join( ': ' ) }"
+        end
       end
     end
   end
@@ -4393,7 +4398,7 @@ def dcp_inspect( options, arg )
         if options.validate
           begin
             valid, errors, pkl_errors = validation( errors, pkl_errors, xml, pkl_file, pkl_id, 'PKL' )
-            @logger.debug "PKL #{ pkl_id }: Schema check: #{ valid ? 'OK' : "Errors (See #{ error_output })" }"
+            @logger.debug "PKL #{ pkl_id }: Schema check: #{ valid ? 'OK ✅' : "Errors (See #{ error_output })" }"
           rescue Exception => e
             errors << "PKL #{ pkl_id }: Exception in Schema check: #{ e.message }"
             pkl_errors = true
@@ -4455,7 +4460,7 @@ def dcp_inspect( options, arg )
         pkl_assets.each do |asset|
           id = asset.xpath( 'Id' ).text.split( ':' ).last
           if id.empty?
-            errors << "PKL #{ pkl_id }: Asset Id missing"
+            errors << "PKL #{ pkl_id }: Asset Id missing ❌"
             pkl_errors = true
           end
           type = asset.xpath( 'Type' ).text
@@ -4464,7 +4469,7 @@ def dcp_inspect( options, arg )
             pkl_errors = true
           end
           # List all assets listed in PKL and report AM mapping status
-          @logger.debug "#{ id }: #{ type.empty? ? '[Type not specified in PKL]' : type }: #{ dict[ index ][ id ] ? File.exist?( package dict[ index ][ id ] ) ? dict[ index ][ id ] : dict[ index ][ id ] + ' (missing)' : 'Asset UUID not in assetmap dictionary' }"
+          @logger.debug "#{ id }: #{ type.empty? ? '[Type not specified in PKL]' : type }: #{ dict[ index ][ id ] ? File.exist?( package dict[ index ][ id ] ) ? dict[ index ][ id ] : dict[ index ][ id ] + ' (missing) ❌' : 'Asset UUID not in assetmap dictionary' }"
 
           if dict[ index ].keys.include?( id )
             asset_file = package dict[ index ][ id ]
@@ -4484,7 +4489,7 @@ def dcp_inspect( options, arg )
                 package_size_listed += size_listed
                 package_size_actual += size_asset
               else
-                errors << "PKL #{ pkl_id }: Size tag missing or bad content: #{ id }: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }"
+                errors << "PKL #{ pkl_id }: Size tag missing or bad content ❌: #{ id }: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }"
                 pkl_errors = true
               end
 
@@ -4508,7 +4513,7 @@ def dcp_inspect( options, arg )
                           errors << "PKL #{ pkl_id }: Hash mismatch: #{ id }: PKL: #{ hash_listed } Asset: #{ hash_check }"
                           pkl_errors = true
                         else
-                          eta.preserve_terminal_title_with_message( "OK (#{ time_string( eta.elapsed ) })" )
+                          eta.preserve_terminal_title_with_message( "OK ✅ (#{ time_string( eta.elapsed ) })" )
                           # info << "Hash value: OK: #{ id }: #{ asset_file }: #{ hash_check }"
                         end
                       else
@@ -4522,7 +4527,7 @@ def dcp_inspect( options, arg )
                   end
                 end
               else
-                errors << "PKL #{ pkl_id }: Hash element missing or bad content: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }: #{ id }"
+                errors << "PKL #{ pkl_id }: Hash element missing or bad content ❌: #{ asset_file }: #{ type.empty? ? '[Type not specified in PKL]' : type }: #{ id }"
                 pkl_errors = true
               end
 
@@ -4538,7 +4543,7 @@ def dcp_inspect( options, arg )
               #
             else
               # asset_file does not exist
-              errors << "PKL #{ pkl_id }: Asset file missing: #{ id }: #{ asset_file }"
+              errors << "PKL #{ pkl_id }: Asset file missing ❌: #{ id }: #{ asset_file }"
               pkl_errors = true
               package_size_listed += size_listed
               package_size_actual += 0
@@ -4558,10 +4563,10 @@ def dcp_inspect( options, arg )
         pkl_cpls.map { |cpl_id|
           cpl_file = package dict[ index ][ cpl_id ]
           if File.exist?( cpl_file )
-            @logger.debug "CPL file present: #{ cpl_id }: #{ cpl_file }"
+            @logger.debug "CPL file present ✅: #{ cpl_id }: #{ cpl_file }"
           else
             cpls_missing[ index ] << cpl_id
-            errors << "CPL #{ cpl_id }: CPL file missing: #{ cpl_file }"
+            errors << "CPL #{ cpl_id }: CPL file missing ❌: #{ cpl_file }"
             @logger.debug errors.last
             pkl_errors = true
           end
@@ -4579,7 +4584,7 @@ def dcp_inspect( options, arg )
       end
 
       if pkl_errors == true
-        @logger.debug "There were errors. See PKL #{ pkl_id } errors #{ error_output }"
+        @logger.debug "There were errors ❌. See PKL #{ pkl_id } errors #{ error_output }"
       end
 
       @logger.debug ''
@@ -4593,9 +4598,9 @@ def dcp_inspect( options, arg )
       cpls[ index ].each do |cpl_id|
         cpl_file = package dictionary[ cpl_id ]
         if File.exist? cpl_file
-          @logger.debug "CPL file present: #{ cpl_id }: #{ cpl_file }"
+          @logger.debug "CPL file present ✅: #{ cpl_id }: #{ cpl_file }"
         else
-          errors << "CPL #{ cpl_id }: CPL file missing: #{ cpl_file }"
+          errors << "CPL #{ cpl_id }: CPL file missing ❌: #{ cpl_file }"
           @logger.debug errors.last
         end
       end
@@ -4621,7 +4626,7 @@ def dcp_inspect( options, arg )
             errors << "PKL listed CPL is not XML: #{ cpl_file }: #{ cpl_id }"
           end
         else
-          report << "CPL file missing: #{ cpl_file }"
+          report << "CPL file missing ❌: #{ cpl_file }"
         end
         report.map { |line| @logger.cpl line }
         @logger.cpl ''
@@ -4648,7 +4653,7 @@ def dcp_inspect( options, arg )
   info << 'Schema checks skipped' unless options.validate
   info << 'Audio analysis skipped' unless options.audio_analysis
   info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls ) } (#{ pkls_signature_info }), #{ amount( 'Composition', cpls ) } (#{ cpls_signature_info }, #{ cpls_encryption_info }"
-  info << "#{ amount( 'Error', errors ) }, #{ amount( 'Hint', hints ) }"
+  info << "#{ amount( 'Error', errors ) }#{ errors.size == 0 ? ' ✅' : ' ❌' }, #{ amount( 'Hint', hints ) }"
 
   return { :errors => errors, :hints => hints, :info => info, :am_files => am_files, :pkls => pkls, :cpls => cpls, :pkls_missing => pkls_missing, :cpls_missing => cpls_missing }
 end # dcp_inspect
