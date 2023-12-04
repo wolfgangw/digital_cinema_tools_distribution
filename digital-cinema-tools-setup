@@ -294,24 +294,22 @@ if ! location_exists $libdir ; then mkdir $libdir ; fi
 if ! location_exists $bindir ; then mkdir $bindir ; fi
 
 
-# Check for ~/bin and inclusion in PATH
+# Check for $bindir and inclusion in PATH
 if string_includes $PATH "$bindir"
 then
   echo "PATH: $bindir available in PATH"
-else
-  if grep -P "export PATH=$bindir:" $bashrc
-  then
-    echo "bashrc: $bindir already included. OK"
-  else
-    echo "bashrc: Adding $bindir to PATH"
-    echo '' >> $bashrc
-    echo "# $setup_basename: Add $bindir to PATH" >> $bashrc
-    echo "export PATH=$bindir:"'$PATH' >> $bashrc
-  fi
-  exec_shell_required=true
 fi
-
-source $bashrc
+if grep -P "export PATH=$bindir:" $bashrc
+then
+  echo "bashrc: $bindir already included. OK"
+else
+  echo "bashrc: Adding $bindir to PATH"
+  echo '' >> $bashrc
+  echo "# $setup_basename: Add $bindir to PATH" >> $bashrc
+  echo "export PATH=$bindir:"'$PATH' >> $bashrc
+  source $bashrc
+fi
+exec_shell_required=true
 
 
 # rbenv
