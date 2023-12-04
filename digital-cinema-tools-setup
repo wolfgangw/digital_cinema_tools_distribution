@@ -147,15 +147,6 @@ fi
 #
 # Which OS distribution are we on?
 #
-# Who'da thunk it that figuring out OS would be so messy:
-#
-#   - Fedora has lsb_release and *-release files pre-installed,
-#   - Ubuntu has os-release and lsb-release
-#   - openSuSE has os-release, SuSE-release and lsb_release
-#   - Debian 6.0.4 has lsb_release but no *-release files
-#   - Mint 15 has lsb_release and lsb-release
-#   - Raspbian (Debian 7) has os-release and no lsb*
-#
 if [ -f /etc/os-release ] && grep -P 'Debian' /etc/os-release &> /dev/null
 then
   os_dist=debian
@@ -302,11 +293,6 @@ if ! location_exists $basedir ; then mkdir $basedir ; fi
 if ! location_exists $libdir ; then mkdir $libdir ; fi
 if ! location_exists $bindir ; then mkdir $bindir ; fi
 
-
-# Note: used to do this for support of various Linux distributions
-# But there are just too many worms in that can so it's gone
-#
-# Gone: Source .bash_profile from .bashrc
 
 # Check for ~/bin and inclusion in PATH
 if string_includes $PATH "$bindir"
