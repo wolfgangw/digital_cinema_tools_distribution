@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2023.12.02'
+AppVersion = 'v1.2023.12.04'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -32,14 +32,11 @@ AppStartSeconds = Time.now
 #
 #   dcp_inspect --help
 #   dcp_inspect /path/to/dir
-#   dcp_inspect /path/to/dir --no-hash
-#
 #
 # Installation:
 #
 #   See https://github.com/wolfgangw/digital_cinema_tools_distribution/wiki
 #   for an easy-to-use setup script. This will install everything required.
-#
 #
 # Features:
 #
@@ -66,54 +63,22 @@ AppStartSeconds = Time.now
 #
 # See [Examples](https://github.com/wolfgangw/backports/wiki/Example-output-from-dcp_inspect).
 #
-#
 # Manual installation / Requirements:
 #
 #   If you prefer manual installation you will need the following:
 #
 #  - $ git clone git://github.com/wolfgangw/backports.git
 #  - asdcplib and its cli tools (http://www.cinecert.com/asdcplib/)
-#  - Nokogiri, a ruby wrapper for libxml2
-#     (http://nokogiri.org/tutorials/installing_nokogiri.html)
-#     For signature verification dcp_inspect requires a recent
-#     (post 2012.01.11) Nokogiri version with C14N support.
+#  - Nokogiri, a ruby wrapper for libxml2 (gem install nokogiri)
 #  - dcp_inspect requires xsd/ next to it.
-#     Clone the whole repository to put everything in place:
-#       $ git clone git://github.com/wolfgangw/backports.git
 #
 #   Run
 #     $ git pull
 #   in backports to keep up-to-date.
 #
 #
-# And then what?
-#
-#   - If you get errors go bug someone:
-#
-#       Either me (https://github.com/wolfgangw/backports/issues) if you
-#       suspect dcp_inspect to report a false positive or negative
-#
-#       or the author/vendor of the DCP's authoring app.
-#
-#       We all write bugs all the time and your feedback is much appreciated.
-#
-#   - If you get hints think about bugging someone. Try and make an informed
-#     decision whether the issues hinted at might lead to trouble in the field.
-#     Some hints will recommend fixing the issue (e.g. empty Text or Image
-#     elements in DCSubtitle). Other hints will be purely informational
-#
-#   - If all you get is info and 0 errors:
-#
-#       Either your package is perfectly ok
-#
-#       or you might still run into issues on a system in the field
-#
-#       or you ran into a dcp_inspect bug :) Again, get in touch if you suspect
-#       the latter (https://github.com/wolfgangw/backports/issues).
-#
-#
 # Thanks to the Nokogiri team. You're a wicked crew.
-# Thanks to Julik for his Timecode library
+# Thanks to Julik for his Timecode library.
 #   https://github.com/guerilla-di/timecode
 # Thanks to Mattias Mattsson for DCSubtitle.v1.mattsson.xsd and
 #   great feedback from Göteborg International Film Festival.
@@ -123,11 +88,12 @@ AppStartSeconds = Time.now
 #   which clearly exceeded what can safely be called a gesture.
 #   Appreciated and you rock.
 # Thanks to Adrianne Jorge for a great user report from Sundance and Sarasota.
-#
-# Tested on linux and Mac OS boxes. Thanks to Terrence Meiczinger for trying
-# on a Windows system (it executed but the libxml infrastructure required for
-# schema validation did not work. Wip)
-#
+# Thanks to Terrence Meiczinger.
+# 
+
+# ruby version and platform
+RubyVersionPlatform = [ RUBY_ENGINE, RUBY_VERSION, RUBY_PLATFORM ].join( ' ' )
+
 # Exit codes
 DCP_OK = 0
 DCP_ERROR = 1
@@ -162,39 +128,54 @@ PictureBitrateMaxDCISafetyMargin = 2.0 # percent
 PictureBitrateMaxDCISafe = ( PictureBitrateMaxDCI / 100 * ( 100 - PictureBitrateMaxDCISafetyMargin ) ).round( 2 )
 PictureBitrateMaxHFR = 400.0 # Mb/s
 
-# Internal
-[
+# Required libs
+required_libs = [
   'optparse',
   'ostruct',
   'pathname',
   'shellwords',
   'openssl',
-  'base64',
   'stringio',
   'fileutils',
   'open3',
-].each do |lib|
+]
+if RUBY_VERSION < '3.4'
+  required_libs << 'base64'
+end
+missing_libs = []
+required_libs.each do |lib|
   begin
     require lib
   rescue LoadError => e
     puts e.inspect
-    exit LIB_LOAD_ERROR
+    missing_libs << lib
   end
 end
-# External
-[
+if missing_libs.any?
+  puts "Ruby installation (#{ RubyVersionPlatform }) is missing required libraries (#{ missing_libs.join( ', ' ) })"
+  exit LIB_LOAD_ERROR
+end
+# Required gems
+required_gems = [
   'nokogiri',
-  'ttfunk'
-].each do |gem|
+  'ttfunk',
+]
+if RUBY_VERSION >= '3.4'
+  required_gems << 'base64'
+end
+missing_gems = []
+required_gems.each do |gem|
   begin
     require gem
   rescue LoadError => e
     puts e.inspect
-    puts "Please run 'gem install #{ gem }' (without the quotes) and try again"
-    exit GEM_LOAD_ERROR
+    missing_gems << gem
   end
 end
-
+if missing_gems.any?
+  puts "Please run 'gem install #{ missing_gems.join( ' ' ) }' (without the quotes) and try again"
+  exit GEM_LOAD_ERROR
+end
 
 # lib/options.rb
 class Options
@@ -3183,14 +3164,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
 
                     if @dcp_inspect_temp
                       if audio_stats[ asset_id ][ asset_snippet ]
-                        @logger.info "#{ cpl_reel }: Audio analysis: Seen #{ asset_id }:#{ entry_point }:#{ duration } before. Using previous result ✅"
+                        @logger.info "#{ cpl_reel }: Audio analysis: Seen #{ asset_id }:#{ entry_point }:#{ duration } before. Using previous result"
                       else
                         if key
                           audio_stats[ asset_id ][ asset_snippet ] = audio_characteristics( @dcp_inspect_temp, asset_file, audio_channel_count, entry_point, duration, key )
                         elsif meta[ 'EncryptedEssence' ] == 'No'
                           @logger.cr "#{ cpl_reel }: Audio analysis ..."
                           audio_stats[ asset_id ][ asset_snippet ] = audio_characteristics( @dcp_inspect_temp, asset_file, audio_channel_count, entry_point, duration, key )
-                          @logger.info "#{ cpl_reel }: Audio analysis: Done ✅"
+                          @logger.info "#{ cpl_reel }: Audio analysis: Done"
                         end
                       end
                     else
@@ -4426,7 +4407,7 @@ def dcp_inspect( options, arg )
             # See e.g. dcp_2/V174* for a serial mismatch
             if ! signature_result.signer_node.empty? and sig_info[ :x509serialnumber ] and sig_info[ :cert_serial ]
               if sig_info[ :x509serialnumber ] != sig_info[ :cert_serial ]
-                errors << "PKL #{ pkl_id }: Signer serial mismatch: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
+                errors << "PKL #{ pkl_id }: Signer serial mismatch ❌: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
                 pkl_errors = true
                 @logger.debug errors.last
               end
@@ -4483,7 +4464,7 @@ def dcp_inspect( options, arg )
               # Check listed and actual asset size
               if size_listed
                 if size_listed != size_asset
-                  errors << "PKL #{ pkl_id }: Size mismatch: #{ id }: PKL: #{ size_listed } (#{ size_listed.to_k }) Asset: #{ size_asset } (#{ size_asset.to_k })"
+                  errors << "PKL #{ pkl_id }: Size mismatch ❌: #{ id }: PKL: #{ size_listed } (#{ size_listed.to_k }) Asset: #{ size_asset } (#{ size_asset.to_k })"
                   pkl_errors = true
                 end
                 package_size_listed += size_listed
@@ -4509,8 +4490,8 @@ def dcp_inspect( options, arg )
                         hash_check, eta = digest_with_etabar( digest_algorithm = 'sha1', title = etabar_title, file = asset_file, width = 20, looks_like = '[= ]', opts = options, logger = @logger )
                         hash_check = Base64.encode64( hash_check ).chomp
                         if hash_listed != hash_check
-                          eta.preserve_terminal_title_with_message( "Mismatch (#{ time_string( eta.elapsed ) })" )
-                          errors << "PKL #{ pkl_id }: Hash mismatch: #{ id }: PKL: #{ hash_listed } Asset: #{ hash_check }"
+                          eta.preserve_terminal_title_with_message( "Mismatch ❌ (#{ time_string( eta.elapsed ) })" )
+                          errors << "PKL #{ pkl_id }: Hash mismatch ❌: #{ id }: PKL: #{ hash_listed } Asset: #{ hash_check }"
                           pkl_errors = true
                         else
                           eta.preserve_terminal_title_with_message( "OK ✅ (#{ time_string( eta.elapsed ) })" )
@@ -4759,10 +4740,6 @@ begin
 
   # asdcplib version
   ASDCPVersion = MxfTools.asdcplib_version.join '.'
-
-
-  # ruby version and platform
-  RubyVersionPlatform = [ RUBY_ENGINE, RUBY_VERSION, RUBY_PLATFORM ].join( ' ' )
 
 
   @logger.debug "#{ AppName } #{ AppVersion } (asdcplib #{ ASDCPVersion }, #{ RubyVersionPlatform }): #{ args }"
