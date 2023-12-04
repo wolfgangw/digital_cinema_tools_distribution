@@ -424,7 +424,7 @@ then
     echo "Ruby: OK"
   else
     echo "Ruby: Installing ... This will take a while"
-    if ! rbenv install $ruby_version --verbose
+    if ! CONFIGURE_OPTS="--disable-install-doc" rbenv install $ruby_version --verbose
     then
       errors+=("Ruby: Failed to install requested version") && echo_last errors[@]
     else
