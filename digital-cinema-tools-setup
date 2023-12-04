@@ -346,17 +346,14 @@ else
       errors+=("rbenv: Failed to clone repository. Try again later") && echo_last errors[@]
     fi
 
-    case $os_dist in
-      debian|ubuntu|redhat)
-        env_target=$bashrc ;;
-    esac
-    
-    echo '' >> $env_target
-    echo "# $setup_basename: rbenv environment" >> $env_target
-    echo "export RBENV_ROOT=$rbenv_dir" >> $env_target
-    echo "export PATH=$rbenv_dir/bin:"'$PATH' >> $env_target
-    echo 'eval "$(rbenv init -)"' >> $env_target
-    source $env_target
+    echo '' >> $bashrc
+    echo "# $setup_basename: rbenv environment" >> $bashrc
+    echo "export RBENV_ROOT=$rbenv_dir" >> $bashrc
+    echo "export PATH=$rbenv_dir/bin:"'$PATH' >> $bashrc
+    echo 'eval "$(rbenv init -)"' >> $bashrc
+    RBENV_ROOT=$rbenv_dir
+    PATH=$rbenv_dir/bin:$PATH
+    eval "$(rbenv init -)"
     exec_shell_required=true
 
     if command_exists rbenv
