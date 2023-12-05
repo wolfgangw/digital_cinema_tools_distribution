@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2023.12.04'
+AppVersion = 'v1.2023.12.05'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -2222,7 +2222,7 @@ def validate_xml( xml, file )
     return true, errors
   else
     validation_errors.each do |e|
-      errors << "Schema check: #{ File.basename xsd_file } #{ file } line #{ e.line }: #{ e }"
+      errors << "Schema check ❌: #{ File.basename xsd_file } #{ file } line #{ e.line }: #{ e }"
     end
     return false, errors
   end
@@ -3220,7 +3220,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
                     valid, errors, cpl_errors = validation( errors, cpl_errors, xml, asset_file, asset_id, 'DCSubtitle' )
                     report << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Schema check: #{ valid ? 'OK ✅' : "Errors ❌ (See #{ error_output })" }"
                   rescue Exception => e
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Exception in Schema check: #{ e.message }"
+                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Exception in Schema check ❌: #{ e.message }"
                     cpl_errors = true
                     report << errors.last
                   end
@@ -4119,9 +4119,9 @@ def dcp_inspect( options, arg )
         if options.validate
           begin
             valid, errors, error_status = validation( errors, true, xml, am_file, am_id, 'AM' )
-            @logger.debug "AM #{ am_id.nil? ? am_id.inspect : am_id }: Schema check: #{ valid ? 'OK ✅' : "Errors (See #{ error_output })" }: #{ am_file }"
+            @logger.debug "AM #{ am_id.nil? ? am_id.inspect : am_id }: Schema check: #{ valid ? 'OK ✅' : "Errors ❌ (See #{ error_output })" }: #{ am_file }"
           rescue Exception => e
-            errors << "AM #{ am_id.nil? ? am_id.inspect : am_id }: Exception in Schema check: #{ e.message }"
+            errors << "AM #{ am_id.nil? ? am_id.inspect : am_id }: Exception in Schema check ❌: #{ e.message }"
             error_status = true
             @logger.debug errors.last
           end
@@ -4379,9 +4379,9 @@ def dcp_inspect( options, arg )
         if options.validate
           begin
             valid, errors, pkl_errors = validation( errors, pkl_errors, xml, pkl_file, pkl_id, 'PKL' )
-            @logger.debug "PKL #{ pkl_id }: Schema check: #{ valid ? 'OK ✅' : "Errors (See #{ error_output })" }"
+            @logger.debug "PKL #{ pkl_id }: Schema check: #{ valid ? 'OK ✅' : "Errors ❌ (See #{ error_output })" }"
           rescue Exception => e
-            errors << "PKL #{ pkl_id }: Exception in Schema check: #{ e.message }"
+            errors << "PKL #{ pkl_id }: Exception in Schema check ❌: #{ e.message }"
             pkl_errors = true
             @logger.debug errors.last
           end
