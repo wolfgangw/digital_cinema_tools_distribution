@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2023.12.05'
+AppVersion = 'v1.2023.12.09'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -2555,8 +2555,13 @@ def error_output
 end
 
 
+def composition_summary_oneliner( composition_summary )
+  "CPL #{ composition_summary[ :cpl_id ] }: Composition summary: " + [ [ :content_title_text, :type, :crypto, :spatiality, :aspect, :resolution, :picture_bitrate_avg, :duration, :edit_rate ].reject { |k| composition_summary[k].nil? }.map { |k| composition_summary[k] } ].join( ', ' )
+end
+
+
 # lib/cpl.rb
-def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, options )
+def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries, errors, hints, info, options )
   cpl_errors = false
   report = Array.new
   reels_report = Array.new
@@ -3728,6 +3733,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
 
   # Setup composition summary one-liner
   composition_summary = Hash.new
+  composition_summary[ :cpl_id ] = cpl_id
   composition_summary[ :content_title_text ] = content_title_text.inspect
 
 
@@ -3802,15 +3808,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   # Check consistency of decomposition levels in picture essence
   if composition_picture_decomposition_levels.uniq.size == 1 and composition_picture_decomposition_levels.first != nil
     # we're good
-  elsif composition_picture_decomposition_levels.size == 0
-    errors << "CPL #{ cpl_id }: No picture essence present ❌"
-    cpl_errors = true
   elsif composition_picture_decomposition_levels.uniq.size == 1 and composition_picture_decomposition_levels.first == nil
     errors << "CPL #{ cpl_id }: Failed to read DecompositionLevels from picture essence. Should not happen ❌"
     cpl_errors = true
   else
-    errors << "CPL #{ cpl_id }: Found inconsistent image DecompositionLevels values across the composition (#{ composition_picture_decomposition_levels.each_with_index.map { |v, index| 'Reel ' + ( index + 1 ).to_s + ': ' + v.to_s }.join( ', ' ) }). This will produce visual artefacts in reel transitions ❌"
-    cpl_errors = true
+    unless composition_picture_decomposition_levels.size == 0 # Supplemental/VF/External
+      errors << "CPL #{ cpl_id }: Found inconsistent image DecompositionLevels values across the composition (#{ composition_picture_decomposition_levels.each_with_index.map { |v, index| 'Reel ' + ( index + 1 ).to_s + ': ' + v.to_s }.join( ', ' ) }). This will produce visual artefacts in reel transitions ❌"
+      cpl_errors = true
+    end
   end
 
   # Set up composition_picture_aspect_ratio
@@ -3936,7 +3941,8 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
   end
 
   # composition summary one-liner
-  report << "CPL #{ cpl_id }: Composition summary: " + [ [ :content_title_text, :type, :crypto, :spatiality, :aspect, :resolution, :picture_bitrate_avg, :duration, :edit_rate ].reject { |k| composition_summary[k].nil? }.map { |k| composition_summary[k] } ].join( ', ' )
+  composition_summaries << composition_summary
+  report << composition_summary_oneliner( composition_summary )
 
   # Naming convention
   case composition_type
@@ -4041,7 +4047,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, errors, hints, info, o
     end
   end
 
-  return report, errors, hints, info
+  return composition_summary, report, errors, hints, info
 end # cpl_inspect_xml
 
 def dir_tree( arg )
@@ -4086,6 +4092,7 @@ def dcp_inspect( options, arg )
   hints = Array.new
   hints << 'Schema checks were skipped' unless options.validate
   info = Array.new
+  composition_summaries = Array.new
 
   #
   # collect all files dangling below arg
@@ -4602,9 +4609,9 @@ def dcp_inspect( options, arg )
           xml = xml?( cpl_file )
           if xml
 
-            report, errors, hints, info = cpl_inspect_xml( xml, dictionary, audio_stats, @package_dir, errors, hints, info, options )
+            composition_summary, report, errors, hints, info = cpl_inspect_xml( xml, dictionary, audio_stats, @package_dir, composition_summaries, errors, hints, info, options )
           else
-            errors << "PKL listed CPL is not XML: #{ cpl_file }: #{ cpl_id }"
+            errors << "PKL listed CPL is not XML ❌: #{ cpl_file }: #{ cpl_id }"
           end
         else
           report << "CPL file missing ❌: #{ cpl_file }"
@@ -4633,6 +4640,9 @@ def dcp_inspect( options, arg )
   info << "Hash checks skipped for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits } total" if @check_hashes_limit_nice
   info << 'Schema checks skipped' unless options.validate
   info << 'Audio analysis skipped' unless options.audio_analysis
+  composition_summaries.each do |composition_summary|
+    info << composition_summary_oneliner( composition_summary )
+  end
   info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls ) } (#{ pkls_signature_info }), #{ amount( 'Composition', cpls ) } (#{ cpls_signature_info }, #{ cpls_encryption_info }"
   info << "#{ amount( 'Error', errors ) }#{ errors.size == 0 ? ' ✅' : ' ❌' }, #{ amount( 'Hint', hints ) }"
 
