@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2023.12.09'
+AppVersion = 'v1.2023.12.11'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -807,6 +807,32 @@ end
 
 # misc helpers
 #
+class String
+  def black;          "\e[30m#{self}\e[0m" end
+  def red;            "\e[31m#{self}\e[0m" end
+  def green;          "\e[32m#{self}\e[0m" end
+  def brown;          "\e[33m#{self}\e[0m" end
+  def blue;           "\e[34m#{self}\e[0m" end
+  def magenta;        "\e[35m#{self}\e[0m" end
+  def cyan;           "\e[36m#{self}\e[0m" end
+  def gray;           "\e[37m#{self}\e[0m" end
+
+  def bg_black;       "\e[40m#{self}\e[0m" end
+  def bg_red;         "\e[41m#{self}\e[0m" end
+  def bg_green;       "\e[42m#{self}\e[0m" end
+  def bg_brown;       "\e[43m#{self}\e[0m" end
+  def bg_blue;        "\e[44m#{self}\e[0m" end
+  def bg_magenta;     "\e[45m#{self}\e[0m" end
+  def bg_cyan;        "\e[46m#{self}\e[0m" end
+  def bg_gray;        "\e[47m#{self}\e[0m" end
+
+  def bold;           "\e[1m#{self}\e[22m" end
+  def italic;         "\e[3m#{self}\e[23m" end
+  def underline;      "\e[4m#{self}\e[24m" end
+  def blink;          "\e[5m#{self}\e[25m" end # temptingudontknowhow
+  def reverse_color;  "\e[7m#{self}\e[27m" end
+end
+
 # turn items like '100KB' or '1.5 GB' to bytes
 def bytes_from_nice_bytes( nice_bytes )
   parts = nice_bytes.downcase.split( /(kb|mb|gb)/ )
@@ -3891,15 +3917,17 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     composition_summary[ :picture_bitrate_avg ] = "Avg [NaN Mb/s]"
   end
 
-  # Check consistency of ChannelFormat
+  # Check consistency of channel formats in sound essence
   if composition_sound_channel_formats.uniq.size == 1 and composition_sound_channel_formats.first != nil
     # we're good
   elsif composition_sound_channel_formats.uniq.size == 1 and composition_sound_channel_formats.first == nil
     errors << "CPL #{ cpl_id }: Failed to read sound ChannelFormat values from sound essence. Should not happen"
     cpl_errors = true
   else
-    errors << "CPL #{ cpl_id }: Found inconsistent sound ChannelFormat values across the composition (#{ composition_sound_channel_formats.each_with_index.map { |v, index| 'Reel ' + ( index + 1 ).to_s + ': ' + v.to_s }.join( ', ' ) }). Playback will fail completely"
-    cpl_errors = true
+    unless composition_sound_channel_formats.size == 0 # Supplemental/VF/External
+      errors << "CPL #{ cpl_id }: Found inconsistent sound ChannelFormat values across the composition (#{ composition_sound_channel_formats.each_with_index.map { |v, index| 'Reel ' + ( index + 1 ).to_s + ': ' + v.to_s }.join( ', ' ) }). Playback will fail completely"
+      cpl_errors = true
+    end
   end
 
   # Set up composition_sound_channel_count
