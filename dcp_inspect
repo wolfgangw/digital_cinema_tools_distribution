@@ -1852,8 +1852,10 @@ class DC_Signature_Verification
     sig_algo = doc_signature_method_algorithm( doc, sig_ns, prefix )
     sig_digest_algo = sig_algo.split( 'rsa-' ).last
     signature_value_doc = extract_signature_value( doc, sig_ns, prefix )
-    if signature_value_doc.size != pub_k.n.to_i.size
-      @messages << "Invalid signature ❌: sig_doc: #{ signature_value_doc.size } octets (RSA modulus: #{ pub_k.n.to_i.size } octets)"
+    signature_value_doc_octets = signature_value_doc.size
+    pub_k_octets = pub_k.n.to_i.size
+    if signature_value_doc_octets != pub_k_octets
+      @messages << "Invalid signature ❌: decoded SignatureValue has #{ signature_value_doc.size } octets (should have #{ pub_k.n.to_i.size } RSA modulus octets)"
       return false
     end
     signed_info_c14n_xml = signed_info_c14n( doc, sig_ns, prefix )
@@ -2658,7 +2660,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   reels = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ReelList/#{ cpl_ns_prefix }:Reel" )
   report << "Number of Reels:  #{ reels.size }"
   total_duration = 0
-  composition_edit_rate = 0
+  composition_edit_rates = Array.new
   #
   # A composition can be "incomplete" in different ways:
   #   - referenced assets can exist outside of a given package (ok case)
@@ -3569,13 +3571,24 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
 
     end # assets.each
 
+    # Check reel's editrate sanity
+    if edit_rates.uniq.size != 1
+      reels_report << "\tEditRate mismatch ❌"
+      composition_edit_rates << edit_rates.max
+      errors << "#{ cpl_reel }: EditRate mismatch ❌"
+      cpl_errors = true
+    else
+      composition_edit_rates << edit_rates.min
+    end
+
     # Check reel's duration sanity
     if durations.uniq.size != 1
       reels_report << "\tDuration mismatch ❌"
       errors << "#{ cpl_reel }: Duration mismatch ❌: #{ durations.inspect }"
       cpl_errors = true
     else
-      reel_duration = durations.first / edit_rates.min # gets it done but ugh
+      reel_duration = durations.first / edit_rates.min # seconds. gets it done but ugh
+      total_duration += durations.first # frames
       if edit_rates.min > 0 and reel_duration < 1
         reels_report << "\tReel duration less than 1 second ❌"
         errors << "#{ cpl_reel }: Reel duration less than 1 second (#{ "%0.3f" % reel_duration } seconds, #{ amount( 'frame', durations.first.to_i ) }@#{ edit_rates.min } fps) ❌"
@@ -3584,16 +3597,6 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
         hints << "#{ cpl_reel }: Reel duration less than 5 seconds. Doremi TB 65 suggests a 5 second minimum for safe playback on Doremi systems"
       end
     end
-
-    # Check reel's editrate sanity
-    if edit_rates.uniq.size != 1
-      reels_report << "\tEditRate mismatch ❌"
-      errors << "#{ cpl_reel }: EditRate mismatch ❌"
-      cpl_errors = true
-    end
-
-    total_duration += durations.min # FIXME ugh
-    composition_edit_rate = edit_rates.min
 
   end # reels loop
 
@@ -3604,6 +3607,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
 
 
   # Composition duration
+  if composition_edit_rates.uniq.size == 1
+    composition_edit_rate = composition_edit_rates.first
+  else
+    composition_edit_rate = 0
+  end
   reels_report << 'Total duration:'
   begin
     total_duration_tc = Timecode.new( total_duration, composition_edit_rate )
@@ -3667,7 +3675,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   elsif is_stereoscopic.uniq.size == 2
     composition_summary[ :spatiality ] = '2D/3D'
     is_stereoscopic = true
-    errors << "CPL #{ cpl_id }: " + report.last
+    errors << "CPL #{ cpl_id }: " + report.last # ? FIXME
     cpl_errors = true
   end
 
@@ -3806,6 +3814,12 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
       end
       cpl_reels_references_complete << false
     end
+  end
+
+  # Fire off a hint wrt Interop composition and non-24 fps composition edit rate
+  if composition_type = 'Interop' && composition_edit_rate != 24.0
+    report << "Interop composition with non-24 fps edit rate (#{ composition_edit_rate })"
+    hints << "CPL #{ cpl_id }: Interop composition with non-24 fps edit rate (#{ composition_edit_rate }). Playback may fail on very old legacy systems"
   end
 
   # composition summary one-liner
