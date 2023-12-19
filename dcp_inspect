@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2023.12.18'
+AppVersion = 'v1.2023.12.19'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -3817,7 +3817,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   end
 
   # Fire off a hint wrt Interop composition and non-24 fps composition edit rate
-  if composition_type = 'Interop' && composition_edit_rate != 24.0
+  if composition_type == 'Interop' && composition_edit_rate != 24.0
     report << "Interop composition with non-24 fps edit rate (#{ composition_edit_rate })"
     hints << "CPL #{ cpl_id }: Interop composition with non-24 fps edit rate (#{ composition_edit_rate }). Playback may fail on very old legacy systems"
   end
