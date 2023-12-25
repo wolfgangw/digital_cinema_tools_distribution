@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2023.12.19'
+AppVersion = 'v1.2023.12.25'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -194,8 +194,8 @@ class Options
     opts = OptionParser.new do |opts|
       opts.banner = <<BANNER
 #{ AppName } #{ AppVersion }
-Usage: #{ AppName } [options] <location>
-
+Usage: #{ AppName } [options] <path>
+ 
 BANNER
       opts.on( '--nh', '--no-hash', 'No asset hash checks' ) do
         options.check_hashes = false
@@ -856,7 +856,8 @@ end
 
 # package path helper
 def package( relative_path )
-  File.join( @package_dir, relative_path )
+  # File.join( @package_dir, relative_path )
+  relative_path
 end
 
 def print_inspection_messages( inspection )
@@ -3859,40 +3860,16 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   return composition_summary, report, errors, hints, info
 end # cpl_inspect_xml
 
-def dir_tree( arg )
-  package_dir_tree = Array.new
+
+def find_assetmap_candidates( package_dir )
   begin
-    Dir.chdir( arg ) { |d| package_dir_tree = Dir[ "**/*" ] }
-    #
-    # Alternatively consider
-    #
-    # require 'find'
-    # package_dir_tree = Find.find( @package_dir ).to_a
-    #
-    # which will not work out-of-the-box, though (see different path results from Dir and Find).
-    # Will need this for superfluous files check.
-    #
+    am_candidates, err, status = Open3.capture3( "#{ @fdfind } ASSETMAP #{ package_dir }" )
+    am_candidates = am_candidates.split( "\n" )
   rescue Exception => e
     @logger.info e.message
     exit FILE_ACCESS_ERROR
   end
-  return package_dir_tree
-end
-
-
-def find_assetmap_candidates( package_dir_tree, options )
-  am_candidates = with_etabar( package_dir_tree, options, 'Looking for Assetmap candidates:', 20, '[= ]', @logger ) { |e|
-    (
-      File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or
-      File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/
-    ) ? e : nil
-  }
-  #
-  # am_candidates = package_dir_tree.select { |e|
-  #   File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP$/ or
-  #     File.basename( e.respond_to?( :force_encoding ) ? e.force_encoding( Encoding::BINARY ) : e ) =~ /^ASSETMAP.xml$/
-  # }.sort
-  #
+  return am_candidates
 end
 
 
@@ -3907,18 +3884,19 @@ def dcp_inspect( options, arg )
   # collect all files dangling below arg
   #
   @package_dir = arg
-  package_dir_tree = dir_tree( @package_dir )
 
   #
   # Find files called what Assetmap(s) would be called.
   # Don't assume they're actually Assetmaps before checking.
   #
-  am_candidates = find_assetmap_candidates( package_dir_tree, options )
+  am_candidates = find_assetmap_candidates( @package_dir )
   if am_candidates.empty?
     info << 'No Assetmap candidates found'
   else
-    @logger.debug "Found #{ amount( 'Assetmap candidate', am_candidates ) } ✅: #{ am_candidates.inspect }"
-    @logger.debug "Found #{ amount( 'file', package_dir_tree ) } in total"
+    @logger.debug "Found #{ amount( 'Assetmap candidate', am_candidates ) } ✅:"
+    am_candidates.each do |am_candidate|
+      @logger.debug am_candidate
+    end
   end
 
   # Check XML for Assetmap content
@@ -4433,7 +4411,7 @@ def dcp_inspect( options, arg )
   end
 
 
-  # Info summary block
+  # prep for Info summary block
   pkls = pkls.flatten
   cpls = cpls.flatten
   execution_time_seconds = Time.now - AppStartSeconds
@@ -4442,6 +4420,11 @@ def dcp_inspect( options, arg )
   pkls_signature_info = "#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }"
   cpls_signature_info = "#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' }"
   cpls_encryption_info = "#{ cpls.size - @encrypted_compositions > 0 ? ( cpls.size - @encrypted_compositions ).to_s + ' plaintext/' : '' }#{ amount( 'KDM', @encrypted_compositions ) } required)"
+
+  # Info summary block
+  composition_summaries.each do |composition_summary|
+    info << composition_summary_oneliner( composition_summary )
+  end
   info << "#{ AppName } #{ AppVersion } (asdcplib #{ ASDCPVersion }, #{ RubyVersionPlatform }) on #{ RunDatetime_friendly } (#{ execution_time })"
   info << "Inspected: #{ Pathname( arg ).realpath }"
   info << "Found #{ amount( 'Package', pkls ) } with total size #{ total_size }"
@@ -4450,9 +4433,6 @@ def dcp_inspect( options, arg )
   info << "Hash checks skipped for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits } total" if @check_hashes_limit_nice
   info << 'Schema checks skipped' unless options.validate
   info << 'Audio analysis skipped' unless options.audio_analysis
-  composition_summaries.each do |composition_summary|
-    info << composition_summary_oneliner( composition_summary )
-  end
   info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls ) } (#{ pkls_signature_info }), #{ amount( 'Composition', cpls ) } (#{ cpls_signature_info }, #{ cpls_encryption_info }"
   info << "#{ amount( 'Error', errors ) }#{ errors.size == 0 ? ' ✅' : ' ❌' }, #{ amount( 'Hint', hints ) }"
 
@@ -4486,7 +4466,6 @@ def graceful_shutdown( options, args, crash = false )
   if crash
     dcp_inspect_crashed_get_in_touch
   end
-  exit GRACEFUL_SHUTDOWN
 end
 
 
@@ -4548,7 +4527,12 @@ begin
 
   # Check required tools
   required_command_not_found = false
-  required_commands = [ 'asdcp-info', 'asdcp-unwrap', 'kmuuidgen' ]
+  if RubyVersionPlatform =~ /linux/
+    @fdfind = 'fdfind'
+  elsif RubyVersionPlatform =~ /darwin/
+    @fdfind = 'fd'
+  end
+  required_commands = [ 'asdcp-info', 'asdcp-unwrap', 'kmuuidgen', @fdfind ]
   required_commands << 'sox' if options.audio_analysis
   required_commands.flatten.each do |command|
     if ! command_exists? command
@@ -4556,14 +4540,17 @@ begin
       required_command_not_found = true
     end
   end
-  exit REQUIRED_COMMAND_NOT_FOUND if required_command_not_found
+  if required_command_not_found
+    exit REQUIRED_COMMAND_NOT_FOUND
+  end
 
 
   # asdcplib version
   ASDCPVersion = MxfTools.asdcplib_version.join '.'
 
 
-  @logger.debug "#{ AppName } #{ AppVersion } (asdcplib #{ ASDCPVersion }, #{ RubyVersionPlatform }): #{ args }"
+  # Hello
+  @logger.debug "#{ AppName } #{ AppVersion } (asdcplib #{ ASDCPVersion }, #{ RubyVersionPlatform })"
 
 
   # Check Nokogiri C14N support
@@ -4623,7 +4610,7 @@ begin
     if options.audio_analysis or options.image_analysis
       @dcp_inspect_temp = Ramdisk.new( 2048 )
       @logger.debug "Image/audio analysis: Setting up temp location at #{ @dcp_inspect_temp.path }"
-      @logger.debug 'Image analysis not yet implemented' if options.image_analysis
+      @logger.debug 'Image analysis not implemented yet' if options.image_analysis
     end
 
     # autolog?
@@ -4632,6 +4619,8 @@ begin
         if ! confirm_or_create( ENV[ 'DCP_INSPECT_DIR' ] )
           @logger.info "Cannot write to #{ ENV[ 'DCP_INSPECT_DIR' ].inspect }"
           exit DCP_INSPECT_DIR_NOT_WRITABLE
+        else
+          @logger.info "Will write autolog to #{ ENV[ 'DCP_INSPECT_DIR' ] }"
         end
       else
         @logger.info "Autolog requested but env DCP_INSPECT_DIR is not set"
@@ -4645,6 +4634,8 @@ begin
       if File.exist?( options.logfile )
         puts " Requested logfile #{ options.logfile.inspect } exists. Will #{ options.overwrite_logfile ? '' : 'not ' }overwrite"
         exit LOGFILE_EXISTS_ERROR unless options.overwrite_logfile
+      else
+        @logger.info "Will write logfile to #{ options.logfile }"
       end
       if ! confirm_or_create( File.dirname options.logfile )
         puts " Cannot write requested logfile at #{ options.logfile.inspect }. Please specify another location"
@@ -4657,6 +4648,9 @@ begin
         exit LOGFILE_WRITE_ERROR
       end
     end
+
+    # Searching at
+    @logger.info "Searching Assetmaps at #{ args[ 0 ] }"
 
     # Inspection
     inspection = dcp_inspect( options, args[ 0 ] )
@@ -4683,7 +4677,8 @@ begin
     @logger.info "No volume or directory given. See #{ AppName } --help"
     exit NO_ARG
   elsif args.size > 1
-    @logger.info "Too many arguments. See #{ AppName } --help"
+    @logger.info "Too many arguments: #{ args.inspect }"
+    @logger.info "#{ AppName } wants 1 path/argument. See #{ AppName } --help"
     exit TOO_MANY_ARGS
   else
     @logger.info "Not a volume or directory. See #{ AppName } --help"
