@@ -147,7 +147,7 @@ fi
 #
 # Which OS distribution are we on?
 #
-if [ -f /etc/os-release ] && grep -P 'Debian' /etc/os-release &> /dev/null
+if [ -f /etc/os-release ] && grep 'Debian' /etc/os-release &> /dev/null
 then
   os_dist=debian
 elif [ -f /etc/fedora-release ]
@@ -156,13 +156,13 @@ then
 elif [ -f /etc/redhat-release ]
 then
   os_dist=redhat
-elif [ -f /etc/lsb-release ] && grep -P 'Ubuntu' /etc/lsb-release &> /dev/null
+elif [ -f /etc/lsb-release ] && grep 'Ubuntu' /etc/lsb-release &> /dev/null
 then
   os_dist=ubuntu
-elif [ -f /etc/lsb-release ] && grep -P 'LinuxMint' /etc/lsb-release &> /dev/null
+elif [ -f /etc/lsb-release ] && grep 'LinuxMint' /etc/lsb-release &> /dev/null
 then
   os_dist=ubuntu
-elif [ -f /etc/lsb-release ] && grep -P 'Pop!_OS' /etc/lsb-release &> /dev/null
+elif [ -f /etc/lsb-release ] && grep 'Pop!_OS' /etc/lsb-release &> /dev/null
 then
   os_dist=ubuntu
 elif command_exists lsb_release
@@ -183,7 +183,6 @@ else
   echo 'OS not supported'
   exit 1
 fi
-
 
 # Bail out if we don't have sudo
 if command_exists sudo
@@ -299,7 +298,7 @@ if string_includes $PATH "$bindir"
 then
   echo "PATH: $bindir available in PATH"
 fi
-if grep -P "export PATH=$bindir:" $bashrc
+if grep "export PATH=$bindir:" $bashrc
 then
   echo "bashrc: $bindir already included. OK"
 else
@@ -368,7 +367,7 @@ fi
 # gems: ri/rdoc switches
 if [ -e $gemrc ]
 then
-  if grep -P '^gem: --no-ri --no-rdoc' $gemrc
+  if grep '^gem: --no-ri --no-rdoc' $gemrc
   then
     echo 'gemrc: OK'
   else
@@ -387,7 +386,7 @@ then
     mkdir $rbenv_plugins_dir
   fi
 else
-  mkdir -p $rbenv_plugins_dir
+  mkdir -p $rbenv_plugins_dir # eh? FIXME
 fi
 cd $rbenv_plugins_dir
 if location_is_git_repo $rubybuild_dir
@@ -641,10 +640,10 @@ fi
 if [ -e $inputrc ]
 then
   # Leave any existing setting untouched
-  if grep -P "^set show-all-if-ambiguous on$" $inputrc
+  if grep "^set show-all-if-ambiguous on$" $inputrc
   then
     echo 'Tab completion: Fastpath set to on. Leaving untouched. OK'
-  elif grep -P "^set show-all-if-ambiguous off$" $inputrc
+  elif grep "^set show-all-if-ambiguous off$" $inputrc
   then
     echo 'Tab completion: Fastpath set to off. Leaving untouched. OK'
   fi
