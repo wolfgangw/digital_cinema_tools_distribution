@@ -726,9 +726,15 @@ then
   echo ' |                                                   |'
   echo ' |  To finish the installation run                   |'
   echo ' |                                                   |'
-  echo ' |    exec $SHELL                                    |'
-  echo ' |                                                   |'
-  echo ' |  in this terminal now (mind the "$" in "$SHELL")  |'
+  case $os_dist in
+    debian|ubuntu|redhat)
+      echo ' |    exec $SHELL                                    |'
+      echo ' |                                                   |'
+      echo ' |  in this terminal now (mind the "$" in "$SHELL")  |'
+      ;;
+    macos)
+      echo ' |    exec /bin/bash                                 |'
+  esac
   echo ' |                                                   |'
   echo '  ---------------------------------------------------'
   echo
