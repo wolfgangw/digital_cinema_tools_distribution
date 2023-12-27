@@ -30,7 +30,7 @@ setup_version='v1.2023.12.19'
 #   * x509_inspect.rb:                  Inspect X.509 certificates
 #   * xsd-check.rb:                     Validate XML documents against Schema definitions
 #
-# This installer supports Debian / Ubuntu / Fedora
+# This installer supports Debian / Ubuntu / Fedora / MacOS
 # Needs a working network connection
 #
 # It tries hard not to break anything and to respect the existing environment.
@@ -111,9 +111,11 @@ location_is_git_repo() {
 
 
 # Only linux systems in mind for now
-if [[ ! $MACHTYPE = *linux* ]]
+if [[ $MACHTYPE =~ linux || $MACHTYPE =~ darwin ]]
 then
-  echo "This installer supports only linux systems"
+  echo "Platform: $MACHTYPE supported"
+else
+  echo "Platform: This installer supports only linux and darwin systems"
   exit 1
 fi
 
@@ -168,8 +170,14 @@ then
   then
     os_dist=debian
   fi
+elif command_exists sw_vers
+then
+  # do the mac thing
+  if [[ "$(sw_vers)" =~ macOS ]]
+  then
+    os_dist=macos
+  fi
 fi
-
 
 # Bail out if non-supported OS distribution
 if ! [ -z $os_dist ]
@@ -202,12 +210,14 @@ then
         echo
         exit 1
       fi
+      ;;
+    macos)
+      echo "$os_dist: sudo not required"
   esac
 else
   echo 'Required command "sudo" not found. Please install sudo'
   exit 1
 fi
-
 
 # Depending on which OS we're on set the required packager and switches
 # to install a basic set of packages from distribution sources
@@ -227,6 +237,15 @@ case $os_dist in
     packager='yum'
     packager_params='-y install'
     packages_required=( make automake autoconf cmake gcc gcc-c++ rustc wget xerces-c-devel xmlsec1 xmlsec1-openssl libyaml-devel readline-devel zlib-devel libgmp-devel libncurses5-devel libgdbm6 libgdbm6-devel uuid-devel openssl-devel sox git libffi-devel fd-find )
+    packager_prep="$packager update" # erm, FIXME
+    ;;
+  macos)
+    query='brew'
+    query_params='list'
+    packager='brew'
+    packager_params='install'
+    packages_required=( cmake git xerces-c openssl@3 gmp libyaml readline rust sox fd )
+    packager_prep="$packager update"
 esac
 
 
@@ -258,24 +277,46 @@ then
     esac
 
     # Install packages
-    if ! [ -z "$packager_prep" ]
-    then
-      if ! sudo $packager_prep
-      then
-        errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
-      else
-        echo "$setup_basename: Package preparation OK"
-      fi
-    fi
-    if ! sudo $packager $packager_params "${packages_missing[@]}"
-    then
-      errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
-      sudo -K # drop sudo privileges
-      exit 1
-    else
-      echo "$packager: OK"
-    fi
-    sudo -K
+    case $os_dist in
+      debian|ubuntu|redhat)
+        if ! [ -z "$packager_prep" ]
+        then
+          if ! sudo $packager_prep
+          then
+            errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
+          else
+            echo "$setup_basename: Package preparation OK"
+          fi
+        fi
+        if ! sudo $packager $packager_params "${packages_missing[@]}"
+        then
+          errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
+          sudo -K # drop sudo privileges
+          exit 1
+        else
+          echo "$packager: OK"
+        fi
+        sudo -K
+        ;;
+      macos)
+        if ! [ -z "$packager_prep" ]
+        then
+          if ! $packager_prep
+          then
+            errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
+          else
+            echo "$setup_basename: Package preparation OK"
+          fi
+        fi
+        if ! $packager $packager_params "${packages_missing[@]}"
+        then
+          errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
+          exit 1
+        else
+          echo "$packager: OK"
+        fi
+        ;;
+    esac
   fi
 else
   errors+=("$setup_basename: Required packager tools not found: $query/$packager. Exiting") && echo_last errors[@]
@@ -303,8 +344,8 @@ else
   echo "# $setup_basename: Add $bindir to PATH" >> $bashrc
   echo "export PATH=$bindir:"'$PATH' >> $bashrc
   source $bashrc
+  exec_shell_required=true
 fi
-exec_shell_required=true
 
 
 # rbenv
