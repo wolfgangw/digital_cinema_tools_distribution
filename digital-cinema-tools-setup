@@ -677,33 +677,6 @@ else
 fi
 
 
-# Keep downloaded setup script around if distribution setup failed (which would have it included)
-if [ -x "$bindir/$setup_basename" -a -L "$bindir/$setup_basename" ] && [[ $( readlink -f "$bindir/$setup_basename" ) = "$dist_dir/$setup_basename" ]]
-then
-  # I am installation
-  echo "$setup_basename: OK"
-  if [[ $setup_dirname != $bindir ]]
-  then
-    echo "$setup_basename: Removing ad-hoc self"
-    rm $setup_fullpath
-  fi
-elif [ -x $bindir/$setup_basename ]
-then
-  # I am ad-hoc
-  echo "$setup_basename: Keep downloaded setup"
-  rm $bindir/$setup_basename
-  chmod u+x $setup_fullpath && mv $setup_fullpath $bindir/$setup_basename
-  if command_exists $setup_basename
-  then
-    echo "$setup_basename: Keeper OK"
-  else
-    echo "$setup_basename: Keeper failed"
-  fi
-else
-  errors+=("$setup_basename: Keeper still borked") && echo_last errors[@]
-fi
-
-
 # Setup done
 echo
 
