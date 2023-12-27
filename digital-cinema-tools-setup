@@ -66,16 +66,12 @@ rubybuild_dir=$rbenv_plugins_dir/ruby-build
 ruby_version='3.2.2'
 gemrc=$HOME/.gemrc
 
-# Handle SMPTE and Interop trackfiles: ASDCPLib
-# https://github.com/cinecert/asdcplib/archive/refs/tags/rel_2_10_35.tar.gz
-cinecert='github.com/cinecert/asdcplib/archive/refs/tags'
-asdcplib_version='2.10.35'
-asdcplib_version_rel='rel_2_10_35'
-asdcplib_version_tarball_sha256='a68eec9ae0cc363f75331dc279c6dd6d3a9999a9e5f0a4405fd9afa8a29ca27b'
-asdcplib_tarball="$asdcplib_version_rel.tar.gz"
-asdcplib_tarball_url="https://$cinecert/$asdcplib_tarball"
+# Handle SMPTE and Interop trackfiles: AS-DCP Lib
+asdcplib_url="https://github.com/cinecert/asdcplib.git"
+asdcplib_version='2.12.3'
+asdcplib_version_tag='rel_2_12_3'
 asdcplib_dir=$libdir/asdcplib
-asdcplib_build_dir="$asdcplib_dir/asdcplib-$asdcplib_version_rel"
+asdcplib_build_dir="$asdcplib_dir/build"
 asdcplib_install_dir=$bindir/asdcplib
 
 # Digital cinema tools distribution:
@@ -487,87 +483,66 @@ fi # Nokogiri
 
 # asdcplib
 cd $libdir
-if command_exists asdcp-info && [[ `asdcp-info -V` =~ $asdcplib_version ]]
+if command_exists asdcp-info && command_exists asdcp-unwrap && command_exists kmuuidgen && [[ `asdcp-info -V` =~ $asdcplib_version ]]
 then
   echo "asdcplib: OK ($asdcplib_version)"
-else
-  echo "asdcplib: Installing $asdcplib_version ..."
-  if location_exists $asdcplib_dir
+  if location_exists $asdcplib_dir && location_is_git_repo $asdcplib_dir
   then
     cd $asdcplib_dir
-  else
-    mkdir $asdcplib_dir && cd $asdcplib_dir
-  fi
-
-  remove_if_exists $asdcplib_build_dir
-  if [ -e $asdcplib_tarball ] && [[ $( sha256sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_sha256 ]]
-  then
-    echo "asdcplib: $asdcplib_version_tarball_sha256: SHA256 OK"
-  else
-    if [ -e $asdcplib_tarball ]
+    git checkout master
+    if ! git pull
     then
-      rm $asdcplib_tarball
+      errors+=("asdcplib: Failed to pull updates") && echo_last errors[@]
     fi
-    echo "asdcplib: Downloading tarball $asdcplib_tarball_url"
-    if wget $asdcplib_tarball_url
-    then
-      echo 'asdcplib: Download OK'
-      if [ -e $asdcplib_tarball ] && [[ $( sha256sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_sha256 ]]
-      then
-        echo "asdcplib: $asdcplib_version_tarball_sha256: SHA256 OK"
-      else
-        errors+=("asdcplib: Failed to verify tarball: $asdcplib_dir/$asdcplib_tarball") && echo_last errors[@]
-      fi
-    else
-      if ! ping -c 1 $cinecert
-      then
-        errors+=("asdcplib: $cinecert seems to be down") && echo_last errors[@]
-      fi
-      errors+=("asdcplib: Failed to download tarball. Try again later") && echo_last errors[@]
-    fi
+  else
+    echo "asdcplib: Is installed but repo $asdcplib_dir not found. Not changing anything"
   fi
-  if tar xzf $asdcplib_tarball
+else
+  echo "asdcplib: Installing $asdcplib_version ..."
+  remove_if_exists $asdcplib_dir
+  mkdir $asdcplib_dir && cd $asdcplib_dir
+  if ! git clone $asdcplib_url $asdcplib_dir
   then
-    cd $asdcplib_build_dir
+    errors+=("asdcplib: Failed to clone repository") && echo_last errors[@]
+  else
+    git checkout $asdcplib_version_tag
+    mkdir $asdcplib_build_dir && cd $asdcplib_build_dir
     case $os_dist in
       ubuntu)
         export LDFLAGS="-L/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)" ;;
       redhat)
         export LDFLAGS='' ;;
+      macos)
+        echo "asdcplib ($os_dist): FIXME patching CMakeLists.txt"
+        sed -i '' -e 's/cmake_minimum_required(VERSION 2.8.12)/cmake_minimum_required(VERSION 3.0)/' ../CMakeLists.txt
     esac
-
-    if mkdir build
+    if cmake -DCMAKE_INSTALL_PREFIX=$asdcplib_install_dir .. && make -j4 && make install
     then
-      cd build
-      cmake -DCMAKE_INSTALL_PREFIX=$asdcplib_install_dir ..
-      make -j3
-      make install
       asdcplib_build=ok
     else
       asdcplib_build=fail
       errors+=("asdcplib: Can not create build directory") && echo_last errors[@]
     fi
-  else
-    asdcplib_build=fail
-    errors+=("asdcplib: Failed to extract tarball at $asdcplib_dir") && echo_last errors[@]
-  fi
-fi
-if [ "$asdcplib_build" = 'ok' ]
-then
-  cd $bindir
-  for tool in $asdcplib_install_dir/bin/*
-  do
-    if [ -e $bindir/$(basename ${tool}) ]
+    if [ "$asdcplib_build" = 'ok' ]
     then
-      rm $bindir/$(basename ${tool})
-      echo "asdcplib: Updating $(basename ${tool})"
-      ln -s $tool .
+      cd $bindir
+      for tool in $asdcplib_install_dir/bin/*
+      do
+        if [ -e $bindir/$(basename ${tool}) ]
+        then
+          rm $bindir/$(basename ${tool})
+          echo "asdcplib: Updating $(basename ${tool})"
+          ln -s $tool .
+        else
+          echo "asdcplib: Add to $bindir: $(basename ${tool})"
+          ln -s $tool .
+        fi
+      done # asdcplib
     else
-      echo "asdcplib: Add to $bindir: $(basename ${tool})"
-      ln -s $tool .
+      errors+=("asdcplib: Building asdcplib failed") && echo_last errors[@]
     fi
-  done # asdcplib
-fi
+  fi
+fi # asdcplib installed or built
 
 
 # Digital Cinema Tools distribution
