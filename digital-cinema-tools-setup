@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2023.12.19'
+setup_version='v1.2023.12.27'
 #
 # Usage:
 #
@@ -30,7 +30,7 @@ setup_version='v1.2023.12.19'
 #   * x509_inspect.rb:                  Inspect X.509 certificates
 #   * xsd-check.rb:                     Validate XML documents against Schema definitions
 #
-# This installer supports Debian / Ubuntu / Fedora
+# This installer supports Debian / Ubuntu / Fedora / MacOS
 # Needs a working network connection
 #
 # It tries hard not to break anything and to respect the existing environment.
@@ -66,16 +66,12 @@ rubybuild_dir=$rbenv_plugins_dir/ruby-build
 ruby_version='3.2.2'
 gemrc=$HOME/.gemrc
 
-# Handle SMPTE and Interop trackfiles: ASDCPLib
-# https://github.com/cinecert/asdcplib/archive/refs/tags/rel_2_10_35.tar.gz
-cinecert='github.com/cinecert/asdcplib/archive/refs/tags'
-asdcplib_version='2.10.35'
-asdcplib_version_rel='rel_2_10_35'
-asdcplib_version_tarball_sha256='a68eec9ae0cc363f75331dc279c6dd6d3a9999a9e5f0a4405fd9afa8a29ca27b'
-asdcplib_tarball="$asdcplib_version_rel.tar.gz"
-asdcplib_tarball_url="https://$cinecert/$asdcplib_tarball"
+# Handle SMPTE and Interop trackfiles: AS-DCP Lib
+asdcplib_url="https://github.com/cinecert/asdcplib.git"
+asdcplib_version='2.12.3'
+asdcplib_version_tag='rel_2_12_3'
 asdcplib_dir=$libdir/asdcplib
-asdcplib_build_dir="$asdcplib_dir/asdcplib-$asdcplib_version_rel"
+asdcplib_build_dir="$asdcplib_dir/build"
 asdcplib_install_dir=$bindir/asdcplib
 
 # Digital cinema tools distribution:
@@ -115,9 +111,11 @@ location_is_git_repo() {
 
 
 # Only linux systems in mind for now
-if [[ ! $MACHTYPE = *linux* ]]
+if [[ $MACHTYPE =~ linux || $MACHTYPE =~ darwin ]]
 then
-  echo "This installer supports only linux systems"
+  echo "Platform: $MACHTYPE supported"
+else
+  echo "Platform: This installer supports only linux and darwin systems"
   exit 1
 fi
 
@@ -147,7 +145,7 @@ fi
 #
 # Which OS distribution are we on?
 #
-if [ -f /etc/os-release ] && grep -P 'Debian' /etc/os-release &> /dev/null
+if [ -f /etc/os-release ] && grep 'Debian' /etc/os-release &> /dev/null
 then
   os_dist=debian
 elif [ -f /etc/fedora-release ]
@@ -156,13 +154,13 @@ then
 elif [ -f /etc/redhat-release ]
 then
   os_dist=redhat
-elif [ -f /etc/lsb-release ] && grep -P 'Ubuntu' /etc/lsb-release &> /dev/null
+elif [ -f /etc/lsb-release ] && grep 'Ubuntu' /etc/lsb-release &> /dev/null
 then
   os_dist=ubuntu
-elif [ -f /etc/lsb-release ] && grep -P 'LinuxMint' /etc/lsb-release &> /dev/null
+elif [ -f /etc/lsb-release ] && grep 'LinuxMint' /etc/lsb-release &> /dev/null
 then
   os_dist=ubuntu
-elif [ -f /etc/lsb-release ] && grep -P 'Pop!_OS' /etc/lsb-release &> /dev/null
+elif [ -f /etc/lsb-release ] && grep 'Pop!_OS' /etc/lsb-release &> /dev/null
 then
   os_dist=ubuntu
 elif command_exists lsb_release
@@ -172,8 +170,14 @@ then
   then
     os_dist=debian
   fi
+elif command_exists sw_vers
+then
+  # do the mac thing
+  if [[ "$(sw_vers)" =~ macOS ]]
+  then
+    os_dist=macos
+  fi
 fi
-
 
 # Bail out if non-supported OS distribution
 if ! [ -z $os_dist ]
@@ -183,7 +187,6 @@ else
   echo 'OS not supported'
   exit 1
 fi
-
 
 # Bail out if we don't have sudo
 if command_exists sudo
@@ -207,12 +210,14 @@ then
         echo
         exit 1
       fi
+      ;;
+    macos)
+      echo "$os_dist: sudo not required"
   esac
 else
   echo 'Required command "sudo" not found. Please install sudo'
   exit 1
 fi
-
 
 # Depending on which OS we're on set the required packager and switches
 # to install a basic set of packages from distribution sources
@@ -232,6 +237,15 @@ case $os_dist in
     packager='yum'
     packager_params='-y install'
     packages_required=( make automake autoconf cmake gcc gcc-c++ rustc wget xerces-c-devel xmlsec1 xmlsec1-openssl libyaml-devel readline-devel zlib-devel libgmp-devel libncurses5-devel libgdbm6 libgdbm6-devel uuid-devel openssl-devel sox git libffi-devel fd-find )
+    packager_prep="$packager update" # erm, FIXME
+    ;;
+  macos)
+    query='brew'
+    query_params='list'
+    packager='brew'
+    packager_params='install'
+    packages_required=( cmake git xerces-c openssl@3 gmp libyaml readline rust sox fd )
+    packager_prep="$packager update"
 esac
 
 
@@ -263,24 +277,46 @@ then
     esac
 
     # Install packages
-    if ! [ -z "$packager_prep" ]
-    then
-      if ! sudo $packager_prep
-      then
-        errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
-      else
-        echo "$setup_basename: Package preparation OK"
-      fi
-    fi
-    if ! sudo $packager $packager_params "${packages_missing[@]}"
-    then
-      errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
-      sudo -K # drop sudo privileges
-      exit 1
-    else
-      echo "$packager: OK"
-    fi
-    sudo -K
+    case $os_dist in
+      debian|ubuntu|redhat)
+        if ! [ -z "$packager_prep" ]
+        then
+          if ! sudo $packager_prep
+          then
+            errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
+          else
+            echo "$setup_basename: Package preparation OK"
+          fi
+        fi
+        if ! sudo $packager $packager_params "${packages_missing[@]}"
+        then
+          errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
+          sudo -K # drop sudo privileges
+          exit 1
+        else
+          echo "$packager: OK"
+        fi
+        sudo -K
+        ;;
+      macos)
+        if ! [ -z "$packager_prep" ]
+        then
+          if ! $packager_prep
+          then
+            errors+=("$setup_basename: Failed to prepare package installation") && echo_last errors[@]
+          else
+            echo "$setup_basename: Package preparation OK"
+          fi
+        fi
+        if ! $packager $packager_params "${packages_missing[@]}"
+        then
+          errors+=("$packager: Failed to install basic requirements") && echo_last errors[@]
+          exit 1
+        else
+          echo "$packager: OK"
+        fi
+        ;;
+    esac
   fi
 else
   errors+=("$setup_basename: Required packager tools not found: $query/$packager. Exiting") && echo_last errors[@]
@@ -299,7 +335,7 @@ if string_includes $PATH "$bindir"
 then
   echo "PATH: $bindir available in PATH"
 fi
-if grep -P "export PATH=$bindir:" $bashrc
+if grep "export PATH=$bindir:" $bashrc
 then
   echo "bashrc: $bindir already included. OK"
 else
@@ -308,8 +344,8 @@ else
   echo "# $setup_basename: Add $bindir to PATH" >> $bashrc
   echo "export PATH=$bindir:"'$PATH' >> $bashrc
   source $bashrc
+  exec_shell_required=true
 fi
-exec_shell_required=true
 
 
 # rbenv
@@ -327,9 +363,14 @@ if command_exists rbenv
 then
   echo "rbenv: OK"
 else
-  if location_exists $rbenv_dir && location_exists $rbenv_dir/.git
+  if location_exists $rbenv_dir && location_is_git_repo $rbenv_dir
   then
     echo "rbenv: Repository exists"
+    cd $rbenv_dir
+    if ! git pull
+    then
+      errors+=("rbenv: Failed to pull updates") && echo_last errors[@]
+    fi
     if string_includes $PATH "$rbenv_dir/bin"
     then
       echo "rbenv: PATH includes rbenv bin dir"
@@ -368,7 +409,7 @@ fi
 # gems: ri/rdoc switches
 if [ -e $gemrc ]
 then
-  if grep -P '^gem: --no-ri --no-rdoc' $gemrc
+  if grep '^gem: --no-ri --no-rdoc' $gemrc
   then
     echo 'gemrc: OK'
   else
@@ -387,7 +428,7 @@ then
     mkdir $rbenv_plugins_dir
   fi
 else
-  mkdir -p $rbenv_plugins_dir
+  mkdir -p $rbenv_plugins_dir # eh? FIXME
 fi
 cd $rbenv_plugins_dir
 if location_is_git_repo $rubybuild_dir
@@ -424,7 +465,7 @@ then
     echo "Ruby: OK"
   else
     echo "Ruby: Installing ... This will take a while"
-    if ! CONFIGURE_OPTS="--disable-install-doc" rbenv install $ruby_version --verbose
+    if ! CONFIGURE_OPTS="--disable-install-doc" MAKE_OPTS="-j4" rbenv install $ruby_version --verbose
     then
       errors+=("Ruby: Failed to install requested version") && echo_last errors[@]
     else
@@ -488,87 +529,66 @@ fi # Nokogiri
 
 # asdcplib
 cd $libdir
-if command_exists asdcp-info && [[ `asdcp-info -V` =~ $asdcplib_version ]]
+if command_exists asdcp-info && command_exists asdcp-unwrap && command_exists kmuuidgen && [[ `asdcp-info -V` =~ $asdcplib_version ]]
 then
   echo "asdcplib: OK ($asdcplib_version)"
-else
-  echo "asdcplib: Installing $asdcplib_version ..."
-  if location_exists $asdcplib_dir
+  if location_exists $asdcplib_dir && location_is_git_repo $asdcplib_dir
   then
     cd $asdcplib_dir
-  else
-    mkdir $asdcplib_dir && cd $asdcplib_dir
-  fi
-
-  remove_if_exists $asdcplib_build_dir
-  if [ -e $asdcplib_tarball ] && [[ $( sha256sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_sha256 ]]
-  then
-    echo "asdcplib: $asdcplib_version_tarball_sha256: SHA256 OK"
-  else
-    if [ -e $asdcplib_tarball ]
+    git checkout master
+    if ! git pull
     then
-      rm $asdcplib_tarball
+      errors+=("asdcplib: Failed to pull updates") && echo_last errors[@]
     fi
-    echo "asdcplib: Downloading tarball $asdcplib_tarball_url"
-    if wget $asdcplib_tarball_url
-    then
-      echo 'asdcplib: Download OK'
-      if [ -e $asdcplib_tarball ] && [[ $( sha256sum $asdcplib_tarball | cut -d ' ' -f 1 ) =~ $asdcplib_version_tarball_sha256 ]]
-      then
-        echo "asdcplib: $asdcplib_version_tarball_sha256: SHA256 OK"
-      else
-        errors+=("asdcplib: Failed to verify tarball: $asdcplib_dir/$asdcplib_tarball") && echo_last errors[@]
-      fi
-    else
-      if ! ping -c 1 $cinecert
-      then
-        errors+=("asdcplib: $cinecert seems to be down") && echo_last errors[@]
-      fi
-      errors+=("asdcplib: Failed to download tarball. Try again later") && echo_last errors[@]
-    fi
+  else
+    echo "asdcplib: Is installed but repo $asdcplib_dir not found. Not changing anything"
   fi
-  if tar xzf $asdcplib_tarball
+else
+  echo "asdcplib: Installing $asdcplib_version ..."
+  remove_if_exists $asdcplib_dir
+  mkdir $asdcplib_dir && cd $asdcplib_dir
+  if ! git clone $asdcplib_url $asdcplib_dir
   then
-    cd $asdcplib_build_dir
+    errors+=("asdcplib: Failed to clone repository") && echo_last errors[@]
+  else
+    git checkout $asdcplib_version_tag
+    mkdir $asdcplib_build_dir && cd $asdcplib_build_dir
     case $os_dist in
       ubuntu)
         export LDFLAGS="-L/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)" ;;
       redhat)
         export LDFLAGS='' ;;
+      macos)
+        echo "asdcplib ($os_dist): FIXME patching CMakeLists.txt"
+        sed -i '' -e 's/cmake_minimum_required(VERSION 2.8.12)/cmake_minimum_required(VERSION 3.0)/' ../CMakeLists.txt
     esac
-
-    if mkdir build
+    if cmake -DCMAKE_INSTALL_PREFIX=$asdcplib_install_dir .. && make -j4 && make install
     then
-      cd build
-      cmake -DCMAKE_INSTALL_PREFIX=$asdcplib_install_dir ..
-      make -j3
-      make install
       asdcplib_build=ok
     else
       asdcplib_build=fail
       errors+=("asdcplib: Can not create build directory") && echo_last errors[@]
     fi
-  else
-    asdcplib_build=fail
-    errors+=("asdcplib: Failed to extract tarball at $asdcplib_dir") && echo_last errors[@]
-  fi
-fi
-if [ "$asdcplib_build" = 'ok' ]
-then
-  cd $bindir
-  for tool in $asdcplib_install_dir/bin/*
-  do
-    if [ -e $bindir/$(basename ${tool}) ]
+    if [ "$asdcplib_build" = 'ok' ]
     then
-      rm $bindir/$(basename ${tool})
-      echo "asdcplib: Updating $(basename ${tool})"
-      ln -s $tool .
+      cd $bindir
+      for tool in $asdcplib_install_dir/bin/*
+      do
+        if [ -e $bindir/$(basename ${tool}) ]
+        then
+          rm $bindir/$(basename ${tool})
+          echo "asdcplib: Updating $(basename ${tool})"
+          ln -s $tool .
+        else
+          echo "asdcplib: Add to $bindir: $(basename ${tool})"
+          ln -s $tool .
+        fi
+      done # asdcplib
     else
-      echo "asdcplib: Add to $bindir: $(basename ${tool})"
-      ln -s $tool .
+      errors+=("asdcplib: Building asdcplib failed") && echo_last errors[@]
     fi
-  done # asdcplib
-fi
+  fi
+fi # asdcplib installed or built
 
 
 # Digital Cinema Tools distribution
@@ -641,10 +661,10 @@ fi
 if [ -e $inputrc ]
 then
   # Leave any existing setting untouched
-  if grep -P "^set show-all-if-ambiguous on$" $inputrc
+  if grep "^set show-all-if-ambiguous on$" $inputrc
   then
     echo 'Tab completion: Fastpath set to on. Leaving untouched. OK'
-  elif grep -P "^set show-all-if-ambiguous off$" $inputrc
+  elif grep "^set show-all-if-ambiguous off$" $inputrc
   then
     echo 'Tab completion: Fastpath set to off. Leaving untouched. OK'
   fi
