@@ -322,9 +322,14 @@ if command_exists rbenv
 then
   echo "rbenv: OK"
 else
-  if location_exists $rbenv_dir && location_exists $rbenv_dir/.git
+  if location_exists $rbenv_dir && location_is_git_repo $rbenv_dir
   then
     echo "rbenv: Repository exists"
+    cd $rbenv_dir
+    if ! git pull
+    then
+      errors+=("rbenv: Failed to pull updates") && echo_last errors[@]
+    fi
     if string_includes $PATH "$rbenv_dir/bin"
     then
       echo "rbenv: PATH includes rbenv bin dir"
@@ -419,7 +424,7 @@ then
     echo "Ruby: OK"
   else
     echo "Ruby: Installing ... This will take a while"
-    if ! CONFIGURE_OPTS="--disable-install-doc" rbenv install $ruby_version --verbose
+    if ! CONFIGURE_OPTS="--disable-install-doc" MAKE_OPTS="-j4" rbenv install $ruby_version --verbose
     then
       errors+=("Ruby: Failed to install requested version") && echo_last errors[@]
     else
