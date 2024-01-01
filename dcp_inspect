@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2023.12.29'
+AppVersion = 'v1.2024.01.01'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -733,7 +733,7 @@ class String
   def italic;         "\e[3m#{self}\e[23m" end
   def underline;      "\e[4m#{self}\e[24m" end
   def blink;          "\e[5m#{self}\e[25m" end # temptingudontknowhow
-  def reverse_color;  "\e[7m#{self}\e[27m" end
+  def invert;  "\e[7m#{self}\e[27m" end
 end
 
 # turn items like '100KB' or '1.5 GB' to bytes
@@ -2050,6 +2050,7 @@ class Eta
 end # Eta
 
 
+# FIXME ugh, this seems clonky
 def command_exists?( command )
   ENV[ 'PATH' ].split( File::PATH_SEPARATOR ).any? { |d| File.exist? File.join( d, command ) }
 end
@@ -3834,7 +3835,7 @@ def dcp_inspect( options, arg )
       xml, errors, error_status = get_xml_of_type( 'AssetMap', am_file, errors, error_status )
       if xml
 
-        # Scrounge am id for reporting
+        # Schema validation
         am_id = get_asset_uuid( am_file )
         if options.validate
           begin
@@ -3965,22 +3966,57 @@ def dcp_inspect( options, arg )
                 listed_asset_length = asset.xpath( 'ChunkList/Chunk/Length' ).text.to_i
                 asset_size = File.size asset_file
                 unless listed_asset_length == asset_size
-                  errors << "AM #{ am_id }: Mismatch in optional Length element ❌: Asset: #{ listed_id }: Listed length: #{ listed_asset_length } (#{ listed_asset_length.to_k }) Asset on medium: #{ asset_size } (#{ asset_size.to_k })"
+                errors << "AM #{ am_id }: Mismatch in optional Length element ❌: Asset: #{ listed_id }: Listed length: #{ listed_asset_length } (#{ listed_asset_length.to_k }) #{ asset_file.inspect } on medium: #{ asset_size } (#{ asset_size.to_k })"
                   am_errors = true
                 end
               rescue Exception => e
-                errors << "AM #{ am_id }: Length check fail ❌: #{ e.message }"
+                errors << "AM #{ am_id }: Asset #{ listed_id }: File #{ asset_file.inspect }: Length check fail ❌: #{ e.message }"
                 am_errors = true
               end
             end
           end
 
-          # Check for whitespace in asset filename
+          # Check asset filename for whitespace (keep this as distinct check)
           if path.scan( /\s+/ ).size != 0
-            hints << "AM #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } contains whitespace. Avoid whitespace in filenames"
+            case am_ns
+            when MStr::Smpte_am
+              errors << "AM SMPTE #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } contains whitespace"
+              am_errors = true
+            when MStr::Interop_am
+              hints << "AM Interop #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } contains whitespace. Avoid whitespace in filenames"
+            end
+          end
+          # Check asset filename for codepoints outside of [0-9A-Za-z_-.]
+          char_outsiders = /[^-._0-9A-Za-z]/
+          match_char_outsiders = path.split('').map { |m| m =~ char_outsiders }
+          if match_char_outsiders.include? 0
+            path_hinted = ''
+            path.split('').each_with_index do |m, i|
+              if match_char_outsiders[i].nil?
+                path_hinted += m
+              else
+                path_hinted += m.invert
+              end
+            end
+            case am_ns
+            when MStr::Smpte_am
+              errors << "AM SMPTE #{ am_id }: Asset #{ listed_id }: Filename \"#{ path_hinted }\" contains characters outside of (-._0-9A-Za-z)"
+              am_errors = true
+            when MStr::Interop_am
+              hints << "AM Interop #{ am_id }: Asset #{ listed_id }: Filename \"#{ path_hinted }\" contains characters outside of (-._0-9A-Za-z). Avoid these characters in filenames"
+            end
+          end
+          # Check asset filename for length
+          if am_ns == MStr::Smpte_am and path.codepoints.size > 100
+            errors << "AM SMPTE #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } longer than 100 characters: #{ path.codepoints.size } characters"
+            am_errors = true
+          end
+          if am_ns == MStr::Interop_am and path.codepoints.size > 255
+            errors << "AM Interop #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } longer than 255 characters: #{ path.codepoints.size } characters"
+            am_errors = true
           end
 
-        end
+        end # path.nil?
 
         # PackingList?
         unless asset.xpath( 'PackingList' ).empty?
