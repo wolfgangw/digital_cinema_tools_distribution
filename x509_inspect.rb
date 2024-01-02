@@ -17,7 +17,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename __FILE__
-AppVersion = 'v0.2023.11.26'
+AppVersion = 'v0.2024.01.02'
 #
 # Usage:  x509_inspect.rb chain_0.pem [chain_1.pem [...]]
 #         x509_inspect.rb chain_*
@@ -33,7 +33,7 @@ class Optparser
   def self.parse( args )
     # defaults
     options = OpenStruct.new
-    options.items = [ 'o', 'ou', 'cn', 'dnq', 'serial' ]
+    options.items = [ 'o', 'ou', 'cn', 'not_before', 'not_after', 'dnq', 'serial' ]
     options.items_all = %w[ file version serial signature_algorithm not_before not_after o ou cn dnq o_issuer ou_issuer cn_issuer dnq_issuer basicConstraints keyUsage authorityKeyIdentifier pubkey exponent ]
     options.detect_chain = true
 
@@ -53,7 +53,7 @@ Default items:
 BANNER
 
       # Options
-      opts.on( '-l', '--list list', Array, "List of items to be displayed (Default: 'o,ou,cn,dnq,serial')" ) do |p|
+      opts.on( '-l', '--list list', Array, "List of items to be displayed (Default: 'o,ou,cn,not_before,not_after,dnq,serial')" ) do |p|
         options.items = p
       end
       opts.on( '-a', '--all' ) do
