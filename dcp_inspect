@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2024.01.01'
+AppVersion = 'v1.2024.01.02'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -134,6 +134,7 @@ required_libs = [
   'stringio',
   'fileutils',
   'open3',
+  'date',
 ]
 if RUBY_VERSION < '3.4'
   required_libs << 'base64'
@@ -613,14 +614,16 @@ end
 
 
 # lib/tools.rb
-# date helpers
-require 'date'
+# date and time helpers
 def time_to_datetime( time ) # OpenSSL's ruby bindings return Time objects for certificate validity info
   DateTime.parse( time.to_s )
 end
 
-def datetime_friendly( dt ) # return something in the form of "Tuesday Nov 30 2010 (18:56)"
+def datetime_friendly( dt ) # return something in the form of "Tuesday Nov 30 2010 18:56"
   "#{ DateTime::DAYNAMES[ dt.wday ] } #{ DateTime::ABBR_MONTHNAMES[ dt.month ] } #{ dt.day.to_s } #{ dt.year.to_s } #{ '%02d' % dt.hour.to_s }:#{ '%02d' % dt.min.to_s }"
+end
+def datetime_friendly_mmmddyyyy( dt ) # return something in the form of "Nov 30 2010"
+  "#{ DateTime::ABBR_MONTHNAMES[ dt.month ] } #{ dt.day.to_s } #{ dt.year.to_s }"
 end
 RunDatetime = time_to_datetime AppStartSeconds
 RunDatetime_friendly = datetime_friendly RunDatetime
@@ -1197,9 +1200,10 @@ class DC_Signer_Crypto_Compliance
 
   def crypto_context( certs )
     @errors = Hash.new
+    @hints = Hash.new
     @context, @errors[ :pre_context ] = find_crypto_context( certs )
     if @errors[ :pre_context ].empty?
-      @errors[ :context ], @types_seen = check_compliance
+      @errors[ :context ], @hints[ :context ], @types_seen = check_compliance()
       if @errors[ :pre_context ].empty? and @errors[ :context ].values.flatten.empty? and @chain_verified == true
         if @types_seen.uniq.size == 1
           @type = @types_seen.first
@@ -1309,13 +1313,16 @@ class DC_Signer_Crypto_Compliance
     return context, pre_context_errors
   end # find_crypto_context
 
-  def check_compliance
+  def check_compliance()
     context_errors = Hash.new
+    context_hints = Hash.new
     types_seen = Array.new
     @context.each_with_index do |member, index|
       cert = member
       type = nil
       errors = Array.new
+      hints = Array.new
+
       errors << 'Not a X509 certificate ❌' unless cert.is_a?( OpenSSL::X509::Certificate )
       # ctp sections:
 
@@ -1343,8 +1350,10 @@ class DC_Signer_Crypto_Compliance
       case type
       when :smpte
         errors << 'Serial number not in valid range ❌' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 64
+        hints << "Serial number #{ cert.serial.to_i } exceeds Dolby DSS220 upper limit of 2**32-1 for cert serial numbers (lowest known erroneous upper limit in the field)" unless cert.serial.to_i < 2 ** 32
       when :interop
         errors << 'Serial number not in valid range ❌' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 160
+        hints << "Serial number #{ cert.serial.to_i } exceeds Dolby DSS220 upper limit of 2**32-1 for cert serial numbers (lowest known erroneous upper limit in the field)" unless cert.serial.to_i < 2 ** 32
       else
         errors << 'Serial number not checked (Certificate type has not been established) ❌'
       end
@@ -1546,7 +1555,34 @@ class DC_Signer_Crypto_Compliance
         errors << 'Additional, non-required X.509v3 extension is marked critical ❌' if x.critical?
       end
 
+      #
+      # CTP section 2.2 Certificate Decoder Behavior
+      #
+      # FIXME See https://github.com/wolfgangw/backports/issues/104
+      # FIXME Pulling in 2.2.6 Validity Date Check
+      # FIXME This is and will be biting a couple of outfits
+      # FIXME
+      # FIXME 2.2.6 Validity Date Check
+      # FIXME This needs a lot of refinement but gets it done now
+      #
+      begin
+        now_dt = DateTime.now
+        cert_not_before_dt = time_to_datetime(cert.not_before)
+        cert_not_after_dt = time_to_datetime(cert.not_after)
+        if cert_not_after_dt < now_dt
+          # puts "Cert #{field_cn_subject} expired #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } ago"
+          errors << "Certificate #{ field_cn_subject[0][1].inspect } expired #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } ago (#{ datetime_friendly_mmmddyyyy cert_not_before_dt }-#{ datetime_friendly_mmmddyyyy cert_not_after_dt })"
+        else
+          # puts "Cert #{cert.subject.to_s} will expire in #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) }"
+          hints << "Certificate #{ field_cn_subject[0][1].inspect } will expire in #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } (#{ datetime_friendly_mmmddyyyy cert_not_before_dt }-#{ datetime_friendly_mmmddyyyy cert_not_after_dt })"
+        end
+      rescue Exception => e
+        errors << e.message
+      end
+
       context_errors[ cert.subject.to_s ] = errors
+      context_hints[ cert.subject.to_s ] = hints
+
       types_seen << type
     end # @context.each
 
@@ -1565,7 +1601,7 @@ class DC_Signer_Crypto_Compliance
         context_errors[ cert.subject.to_s ] << "Internal error: Skip DC_Signer_Crypto_Compliance Section 2.1.17 Chain completeness: RUBY_VERSION #{ RUBY_VERSION } on 32 bit systems broken for UTC times > Jan 19th 2038. Inspect certificate manually ❌" if e.class == ArgumentError
       end
     end
-    return context_errors, types_seen
+    return context_errors, context_hints, types_seen
   end # check_compliance
 
   # Verify a sorted certificate chain
@@ -2183,7 +2219,10 @@ def errors_signature_verification( errors, error_status, signature_result, id, f
     # While the signature might verify there could be problems
     # with dc specific certificate properties. Report those.
     if ! signature_result.crypto.errors[ :context ].values.flatten.empty?
-      errors << "#{ type_indicator } #{ id }: Signature ❌: #{ signature_result.crypto.errors[ :context ].inspect }"
+      signature_result.crypto.errors[ :context ].each do |sigerr|
+        next if sigerr[1].empty?
+        errors << "#{ type_indicator } #{ id }: Signature ❌: #{ sigerr[1].join( ', ' ) }"
+      end
       error_status = true
     end
   else
@@ -3155,7 +3194,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                     first_time_in_text = '[No child element]'
                     hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: First Subtitle element has neither Text nor Image"
                   else
-                    first_time_in_text = truncate( nodeset.first.text.gsub( /^\s+|\s+$/, '' ), 3 ) # first line
+                    first_time_in_text = truncate( nodeset.first.text.strip, 3 ) # first line
                   end
                   subtitles[ 1 .. -1 ].each do |sub|
                     if first_time_in < sub.attributes[ 'TimeIn' ].value
@@ -3172,7 +3211,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                     last_time_out_text = '[No child element]'
                     hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last Subtitle element has neither Text nor Image"
                   else
-                    last_time_out_text = truncate( nodeset.last.text.gsub( /^\s+|\s+$/, '' ), 3 )
+                    last_time_out_text = truncate( nodeset.last.text.strip, 3 )
                   end
                   subtitles.reverse[ 1 .. -1 ].each do |sub|
                     if last_time_out > sub.attributes[ 'TimeOut' ].value
@@ -3184,7 +3223,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                       last_time_out_text = '[No child element]'
                       hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last to-be-displayed Subtitle element has neither Text nor Image"
                     else
-                      last_time_out_text = truncate( nodeset.last.text.gsub( /^\s+|\s+$/, '' ), 3 ) # last line
+                      last_time_out_text = truncate( nodeset.last.text.strip, 3 ) # last line
                     end
                   end
 
@@ -3262,7 +3301,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                       case node.name
                       when 'Text'
                         text_elements = true
-                        text_elements_values << { :number => spot_number, :text => node.text.gsub( /^\s+|\s+$/, '' ) }
+                        text_elements_values << { :number => spot_number, :text => node.text.strip }
                       when 'Image'
                         image_elements = true
                         unless node.text.empty? # Checked above
@@ -3346,7 +3385,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                         hints << "#{ cpl_reel }: DCSubtitle: Found multiple LoadFont elements. Playback will use 1st: #{ load_font_uri }"
                       end
                     end
-                  end
+                  end # text_elements
 
                   # Check LoadFont / Font Id dependency
                   # See https://github.com/wolfgangw/digital_cinema_tools_distribution/issues/15 for discussion
