@@ -4026,7 +4026,7 @@ def dcp_inspect( options, arg )
             end
           end
           # Check asset filename for codepoints outside of [0-9A-Za-z_-.]
-          char_outsiders = /[^-._0-9A-Za-z]/
+          char_outsiders = /[^-._\/0-9A-Za-z]/ # path separator is valid. TODO number of segments etc.
           match_char_outsiders = path.split('').map { |m| m =~ char_outsiders }
           if match_char_outsiders.include? 0
             path_hinted = ''
