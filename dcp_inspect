@@ -2395,6 +2395,23 @@ def composition_summary_oneliner( composition_summary )
 end
 
 
+# FIXME ad-hoc 02.01.2024
+def build_signer_issuer_short_report( xml, signature_result, sig_info )
+  report = Array.new
+  if signature_result.crypto.context.size >= 2
+    signer_not_before_dt = time_to_datetime( signature_result.crypto.context[0].not_before )
+    signer_not_after_dt = time_to_datetime( signature_result.crypto.context[0].not_after )
+    issuer_not_before_dt = time_to_datetime( signature_result.crypto.context[1].not_before )
+    issuer_not_after_dt = time_to_datetime( signature_result.crypto.context[1].not_after )
+    report << "Signer:           (#{ datetime_friendly_mmmddyyyy signer_not_before_dt }-#{ datetime_friendly_mmmddyyyy signer_not_after_dt }) #{ sig_info[ :signer_name ] }" if sig_info[ :signer_name ]
+    report << "Signer issuer:    (#{ datetime_friendly_mmmddyyyy issuer_not_before_dt }-#{ datetime_friendly_mmmddyyyy issuer_not_after_dt }) #{ sig_info[ :signer_issuer_name ] }" if sig_info[ :signer_issuer_name ]
+  else # should not happen
+    report = []
+  end
+  return report
+end
+
+
 # lib/cpl.rb
 def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries, errors, hints, info, options )
   cpl_errors = false
@@ -2453,9 +2470,13 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
 
   if signature_result and ! signature_result.signature_node.empty?
     @signed_cpls_count += 1
+    # FIXME why are we doing sig_info instead of just using signature_result.*?
     sig_info = signer_info( xml, signature_result )
-    report << "Signer:           #{ sig_info[ :signer_name ] }" if sig_info[ :signer_name ]
-    report << "Signer issuer:    #{ sig_info[ :signer_issuer_name ] }" if sig_info[ :signer_issuer_name ]
+    short_report = build_signer_issuer_short_report( xml, signature_result, sig_info )
+    unless short_report.empty?
+      report << short_report[ 0 ]
+      report << short_report[ 1 ]
+    end
 
     # Todo: Compare names in Signer and certificate
     #
@@ -4193,8 +4214,11 @@ def dcp_inspect( options, arg )
           if signature_result and ! signature_result.signature_node.empty?
             @signed_pkls_count += 1
             sig_info = signer_info( xml, signature_result )
-            @logger.debug "Signer:        #{ sig_info[ :signer_name ] }" if sig_info[ :signer_name ]
-            @logger.debug "Signer issuer: #{ sig_info[ :signer_issuer_name ] }" if sig_info[ :signer_issuer_name ]
+            short_report = build_signer_issuer_short_report( xml, signature_result, sig_info )
+            unless short_report.empty?
+              @logger.debug short_report[ 0 ]
+              @logger.debug short_report[ 1 ]
+            end
 
             # Todo: Compare names in Signer and certificate
             #
