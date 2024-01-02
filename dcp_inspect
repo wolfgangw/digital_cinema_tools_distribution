@@ -3136,9 +3136,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                   if language_el.children.size == 1
                     if language_el.children.first.class == Nokogiri::XML::Text
                       language_el_content = language_el.children.first.content
-                      if language_el_content =~ /\s*?[:alpha:]\s*?/
-                        #
-                      else
+                      if ! ( language_el_content.strip =~ /[[:alpha:]]/ )
                         hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language content contains unexpected characters: #{ language_el_content.inspect }"
                         report << hints.last
                       end
