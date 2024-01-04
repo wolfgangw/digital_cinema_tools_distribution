@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2024.01.02'
+AppVersion = 'v1.2024.01.04.siginfo'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -190,7 +190,7 @@ class Options
     options.logfile_append = nil
     options.logfile_autolog = nil
     options.overwrite_logfile = false
-    options.verbosity_choices = [ 'quiet', 'dev', 'errors', 'hints', 'info', 'cpl', 'debug', 'trace_func' ]
+    options.verbosity_choices = [ 'quiet', 'errors', 'hints', 'siginfo', 'info', 'cpl', 'debug', 'dev', 'trace_func' ]
 
     opts = OptionParser.new do |opts|
       opts.banner = <<BANNER
@@ -228,7 +228,7 @@ BANNER
       opts.on( '-L', '--overwrite-logfile', 'Overwrite logfile (Default: Do not overwrite if logfile exists)' ) do
         options.overwrite_logfile = true
       end
-      opts.on( '-v', '--verbosity cutout', Array, "Use quiet, errors, hints, info, debug or cpl. Specify multiple cutouts like '-v errors,info' (Default: debug)" ) do |p|
+      opts.on( '-v', '--verbosity cutout', Array, "Use quiet, errors, hints, siginfo, info, debug or cpl. Specify multiple cutouts like '-v errors,siginfo,info' (Default: debug which includes everything)" ) do |p|
         options.verbosity = [] # option was given so reset
         p.each do |e|
           if options.verbosity_choices.include?( e )
@@ -259,23 +259,24 @@ end # Options
 
 # * lib/logger.rb
 class DLogger
-  attr_reader :is_quiet, :prints_dev, :prints_errors, :prints_hints, :prints_info, :prints_debug, :prints_cr, :prints_cpl, :writes_logfile, :logfile, :writes_autolog
+  attr_reader :is_quiet, :prints_dev, :prints_errors, :prints_hints, :prints_siginfo, :prints_info, :prints_debug, :prints_cr, :prints_cpl, :writes_logfile, :logfile, :writes_autolog
   def initialize( prefix, options )
     @prefix = prefix
     @full_log = ( options.logfile || options.logfile_autolog || options.logfile_append ? Array.new : nil )
 
-    @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ false, false, false, false, false, false, false ]
+    @dev, @errors, @hints, @siginfo, @info, @debug, @cr, @cpl = [ false, false, false, false, false, false, false, false ]
     options.verbosity.each do |cutout|
       case cutout
-      when 'quiet'  then @is_quiet = true; break
-      when 'debug'  then @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ false, true, true, true, true, true, true ]; @is_quiet = false; break
-      when 'dev'    then @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ true, true, true, true, true, true, true ]; @is_quiet = false; break
-      when 'errors' then @errors = true
-      when 'hints'  then @hints = true
-      when 'info'   then @info = true
-      when 'cpl'    then @cpl = true
+      when 'quiet'   then @is_quiet = true; break
+      when 'debug'   then @dev, @errors, @hints, @siginfo, @info, @debug, @cr, @cpl = [ false, true, true, true, true, true, true, true ]; @is_quiet = false; break
+      when 'dev'     then @dev, @errors, @hints, @siginfo, @info, @debug, @cr, @cpl = [ true, true, true, true, true, true, true, true ]; @is_quiet = false; break
+      when 'errors'  then @errors = true
+      when 'hints'   then @hints = true
+      when 'siginfo' then @siginfo = true
+      when 'info'    then @info = true
+      when 'cpl'     then @cpl = true
       when 'trace_func'
-        @dev, @errors, @hints, @info, @debug, @cr, @cpl = [ true, false, false, false, false, false, false ]; @is_quiet = false
+        @dev, @errors, @hints, @siginfo, @info, @debug, @cr, @cpl = [ true, false, false, false, false, false, false, false ]; @is_quiet = false
         set_trace_func proc { |event, file, line, id, binding, classname|
           printf "%8s %s:%-2d %10s %8s\n", event, file, line, id, classname
         }
@@ -285,7 +286,7 @@ class DLogger
     @writes_logfile = true if options.logfile
     @writes_autolog = true if options.logfile_autolog
     @logfile = options.logfile
-    @prints_dev, @prints_errors, @prints_hints, @prints_info, @prints_debug, @prints_cr, @prints_cpl = @dev, @errors, @hints, @info, @debug, @cr, @cpl
+    @prints_dev, @prints_errors, @prints_hints, @prints_siginfo, @prints_info, @prints_debug, @prints_cr, @prints_cpl = @dev, @errors, @hints, @siginfo, @info, @debug, @cr, @cpl
     @color = Hash.new
     @color[ :dev ] = '32' # green
   end
@@ -297,6 +298,9 @@ class DLogger
   end
   def hints( text )
     if @hints then outbound( text ) end
+  end
+  def siginfo( text )
+    if @siginfo then outbound( text ) end
   end
   def info( text )
     if @info then outbound( text ) end
@@ -792,6 +796,7 @@ end
 def print_inspection_messages( inspection )
   inspection[ :errors ].map { |e| @logger.errors [ 'Error', e ].join( ': ' ) }
   inspection[ :hints ].map { |e| @logger.hints [ 'Hint', e ].join( ': ' ) }
+  inspection[ :siginfo ].map { |e| @logger.siginfo [ 'Siginfo', e ].join( ': ' ) }
   inspection[ :info ].map { |e| @logger.info [ 'Info', e ].join( ': ' ) }
 end
 
@@ -1193,7 +1198,7 @@ end
 
 
 class DC_Signer_Crypto_Compliance
-  attr_reader :context, :errors, :crypto_context_valid, :type
+  attr_reader :context, :errors, :hints, :siginfo, :crypto_context_valid, :type
   def initialize( certs )
     crypto_context( certs )
   end
@@ -1201,9 +1206,10 @@ class DC_Signer_Crypto_Compliance
   def crypto_context( certs )
     @errors = Hash.new
     @hints = Hash.new
+    @siginfo = Hash.new
     @context, @errors[ :pre_context ] = find_crypto_context( certs )
     if @errors[ :pre_context ].empty?
-      @errors[ :context ], @hints[ :context ], @types_seen = check_compliance()
+      @errors[ :context ], @hints[ :context ], @siginfo[ :context ], @types_seen = check_compliance()
       if @errors[ :pre_context ].empty? and @errors[ :context ].values.flatten.empty? and @chain_verified == true
         if @types_seen.uniq.size == 1
           @type = @types_seen.first
@@ -1242,7 +1248,7 @@ class DC_Signer_Crypto_Compliance
     end
     msgs << "Chain signatures #{ @chain_verified == true ? 'verified' : 'verification failed ❌' }"
     if total_errors == 0
-      msgs << "Compliant certificate chain found: #{ @type } (#{ context.to_a.sizmsgs } certificates, 0 errors)"
+      msgs << "Compliant certificate chain found: #{ @type } (#{ context.to_a.size } certificates, 0 errors)"
     else
       msgs << "Not a compliant certificate chain ❌: #{ context.to_a.size } certificate#{ context.to_a.size != 1 ? 's' : '' } with #{ total_errors } error#{ total_errors != 1 ? 's' : '' }"
     end
@@ -1316,12 +1322,14 @@ class DC_Signer_Crypto_Compliance
   def check_compliance()
     context_errors = Hash.new
     context_hints = Hash.new
+    context_siginfo = Hash.new
     types_seen = Array.new
     @context.each_with_index do |member, index|
       cert = member
       type = nil
       errors = Array.new
       hints = Array.new
+      siginfo = Array.new
 
       errors << 'Not a X509 certificate ❌' unless cert.is_a?( OpenSSL::X509::Certificate )
       # ctp sections:
@@ -1332,6 +1340,26 @@ class DC_Signer_Crypto_Compliance
       # 2.1.1 Issuer and subject present
       errors << 'Issuer missing ❌' unless cert.issuer.is_a?( OpenSSL::X509::Name )
       errors << 'Subject missing ❌' unless cert.subject.is_a?( OpenSSL::X509::Name )
+
+      #
+      # Pick up CN and DNQ content, make a moniker
+      # to use for better identification in messages
+      # This was ad-hoc-triggered by the CS expiry events around 2023-12-31
+      # FIXME actually use it everywhere
+      # FIXME See 2.1.11 for the proper dnQualifier checks
+      # FIXME which include the crucial mismatch check for calc/field values
+      # FIXME Move 2.1.11 to here to do it right
+      #
+      cert_cn = ''
+      cert_dnq = ''
+      begin
+        cert_cn = find_field( 'CN', cert.subject )[0][1]
+        cert_dnq = find_field( 'dnQualifier', cert.subject )[0][1]
+      rescue
+        errors << "Fields missing ❌: Could not pick CN and dnQualifier from #{ cert.subject }"
+      end
+      cert_moniker = [ cert_cn, cert_dnq ].join ' '
+
 
       # * 2.1.2 Signature algorithm
       case cert.signature_algorithm
@@ -1347,13 +1375,14 @@ class DC_Signer_Crypto_Compliance
       # Implicitly checked above
 
       # * 2.1.4 Serial number field non-negative integer less or equal to 64 or 160 bits respectively
+      #
       case type
       when :smpte
         errors << 'Serial number not in valid range ❌' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 64
-        hints << "Serial number #{ cert.serial.to_i } exceeds Dolby DSS220 upper limit of 2**32-1 for cert serial numbers (lowest known erroneous upper limit in the field)" unless cert.serial.to_i < 2 ** 32
+        hints << "Certificate #{ cert_moniker.inspect } serial number #{ cert.serial.to_i } exceeds Dolby DSS220 upper limit of 2**32-1 (lowest known erroneous upper limit in the field)" unless cert.serial.to_i < 2 ** 32
       when :interop
         errors << 'Serial number not in valid range ❌' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 160
-        hints << "Serial number #{ cert.serial.to_i } exceeds Dolby DSS220 upper limit of 2**32-1 for cert serial numbers (lowest known erroneous upper limit in the field)" unless cert.serial.to_i < 2 ** 32
+        hints << "Certificate #{ cert_moniker.inspect } serial number #{ cert.serial.to_i } exceeds Dolby DSS220 upper limit of 2**32-1 (lowest known erroneous upper limit in the field)" unless cert.serial.to_i < 2 ** 32
       else
         errors << 'Serial number not checked (Certificate type has not been established) ❌'
       end
@@ -1490,7 +1519,7 @@ class DC_Signer_Crypto_Compliance
       field_ou_issuer = find_field( 'OU', cert.issuer )
       field_ou_subject = find_field( 'OU', cert.subject )
       if field_ou_issuer.empty?
-        errors << 'OrganizationUnit field missing in issuer name❌'
+        errors << 'OrganizationUnit field missing in issuer name ❌'
       elsif field_ou_issuer.size > 1
         errors << 'More than 1 OrganizationUnit fields present in issuer name ❌'
       else
@@ -1571,10 +1600,10 @@ class DC_Signer_Crypto_Compliance
         cert_not_after_dt = time_to_datetime(cert.not_after)
         if cert_not_after_dt < now_dt
           # puts "Cert #{field_cn_subject} expired #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } ago"
-          errors << "Certificate #{ field_cn_subject[0][1].inspect } expired #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } ago (#{ datetime_friendly_mmmddyyyy cert_not_before_dt }-#{ datetime_friendly_mmmddyyyy cert_not_after_dt })"
+          errors << "Certificate #{ cert_moniker.inspect } expired #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } ago (#{ datetime_friendly_mmmddyyyy cert_not_before_dt }-#{ datetime_friendly_mmmddyyyy cert_not_after_dt })"
         else
           # puts "Cert #{cert.subject.to_s} will expire in #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) }"
-          hints << "Certificate #{ field_cn_subject[0][1].inspect } will expire in #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } (#{ datetime_friendly_mmmddyyyy cert_not_before_dt }-#{ datetime_friendly_mmmddyyyy cert_not_after_dt })"
+          siginfo << "Certificate #{ cert_moniker.inspect } will expire in #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } (#{ datetime_friendly_mmmddyyyy cert_not_before_dt }-#{ datetime_friendly_mmmddyyyy cert_not_after_dt })"
         end
       rescue Exception => e
         errors << e.message
@@ -1582,6 +1611,7 @@ class DC_Signer_Crypto_Compliance
 
       context_errors[ cert.subject.to_s ] = errors
       context_hints[ cert.subject.to_s ] = hints
+      context_siginfo[ cert.subject.to_s ] = siginfo
 
       types_seen << type
     end # @context.each
@@ -1601,7 +1631,7 @@ class DC_Signer_Crypto_Compliance
         context_errors[ cert.subject.to_s ] << "Internal error: Skip DC_Signer_Crypto_Compliance Section 2.1.17 Chain completeness: RUBY_VERSION #{ RUBY_VERSION } on 32 bit systems broken for UTC times > Jan 19th 2038. Inspect certificate manually ❌" if e.class == ArgumentError
       end
     end
-    return context_errors, context_hints, types_seen
+    return context_errors, context_hints, context_siginfo, types_seen
   end # check_compliance
 
   # Verify a sorted certificate chain
@@ -2211,25 +2241,45 @@ def check_signature( xml )
   signature_result = DC_Signature_Verification.new( xml )
 end
 
-def errors_signature_verification( errors, error_status, signature_result, id, file, type_indicator )
-  if signature_result.signature_node.empty?
-    return errors, error_status
-  end
-  if signature_result.verified?
-    # While the signature might verify there could be problems
-    # with dc specific certificate properties. Report those.
-    if ! signature_result.crypto.errors[ :context ].values.flatten.empty?
-      signature_result.crypto.errors[ :context ].each do |sigerr|
-        next if sigerr[1].empty?
-        errors << "#{ type_indicator } #{ id }: Signature ❌: #{ sigerr[1].join( ', ' ) }"
+def signature_verification_errors( errors, error_status, signature_result, id, file, type_indicator )
+  if signature_result.crypto.errors[ :context ].values.flatten.any?
+    signature_result.crypto.errors[ :context ].each do |sigerr|
+      next if sigerr[1].empty?
+      sigerr[1].each do |err|
+        errors << "#{ type_indicator } #{ id }: Signature ❌: #{ err }"
       end
-      error_status = true
     end
-  else
+    error_status = true
+  end
+  if ! signature_result.verified?
     errors << "#{ type_indicator } #{ id }: Signature verification failure ❌:\n\t#{ signature_result.messages.join( "\n\t" ) }"
     error_status = true
   end
   return errors, error_status
+end
+
+def signature_verification_hints( hints, signature_result, id, file, type_indicator )
+  if signature_result.crypto.hints[ :context ].values.flatten.any?
+    signature_result.crypto.hints[ :context ].each do |sighint|
+      next if sighint[1].empty?
+      sighint[1].each do |hint|
+        hints << "#{ type_indicator } #{ id }: Signature: #{ hint }"
+      end
+    end
+  end
+  return hints
+end
+
+def signature_verification_siginfo( siginfo, signature_result, id, file, type_indicator )
+  if signature_result.crypto.siginfo[ :context ].values.flatten.any?
+    signature_result.crypto.siginfo[ :context ].each do |info|
+      next if info[1].empty?
+      info[1].each do |infoblob|
+        siginfo << "#{ type_indicator } #{ id }: Signature: #{ infoblob }"
+      end
+    end
+  end
+  return siginfo
 end
 
 # FIXME
@@ -2396,15 +2446,15 @@ end
 
 
 # FIXME ad-hoc 02.01.2024
-def build_signer_issuer_short_report( xml, signature_result, sig_info )
+def build_signer_issuer_short_report( xml, signature_result, sig_info, type_moniker )
   report = Array.new
   if signature_result.crypto.context.size >= 2
     signer_not_before_dt = time_to_datetime( signature_result.crypto.context[0].not_before )
     signer_not_after_dt = time_to_datetime( signature_result.crypto.context[0].not_after )
     issuer_not_before_dt = time_to_datetime( signature_result.crypto.context[1].not_before )
     issuer_not_after_dt = time_to_datetime( signature_result.crypto.context[1].not_after )
-    report << "Signer:           (#{ datetime_friendly_mmmddyyyy signer_not_before_dt }-#{ datetime_friendly_mmmddyyyy signer_not_after_dt }) #{ sig_info[ :signer_name ] }" if sig_info[ :signer_name ]
-    report << "Signer issuer:    (#{ datetime_friendly_mmmddyyyy issuer_not_before_dt }-#{ datetime_friendly_mmmddyyyy issuer_not_after_dt }) #{ sig_info[ :signer_issuer_name ] }" if sig_info[ :signer_issuer_name ]
+    report << "#{ type_moniker } Signer:        (#{ datetime_friendly_mmmddyyyy signer_not_before_dt }-#{ datetime_friendly_mmmddyyyy signer_not_after_dt }) #{ sig_info[ :signer_name ] }" if sig_info[ :signer_name ]
+    report << "#{ type_moniker } Signer Issuer: (#{ datetime_friendly_mmmddyyyy issuer_not_before_dt }-#{ datetime_friendly_mmmddyyyy issuer_not_after_dt }) #{ sig_info[ :signer_issuer_name ] }" if sig_info[ :signer_issuer_name ]
   else # should not happen
     report = []
   end
@@ -2413,7 +2463,7 @@ end
 
 
 # lib/cpl.rb
-def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries, errors, hints, info, options )
+def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries, errors, hints, siginfo, info, options )
   cpl_errors = false
   report = Array.new
   reels_report = Array.new
@@ -2462,7 +2512,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     if signature_result.verified? and signature_result.crypto.errors[ :context ].values.flatten.empty?
       @signed_cpls_verified_count += 1
     end
-    errors, cpl_errors = errors_signature_verification( errors, cpl_errors, signature_result, cpl_id, cpl_file, 'CPL' )
+    unless signature_result.signature_node.empty?
+      errors, cpl_errors = signature_verification_errors( errors, cpl_errors, signature_result, cpl_id, cpl_file, 'CPL' )
+      hints = signature_verification_hints( hints, signature_result, cpl_id, cpl_file, 'CPL' )
+      siginfo = signature_verification_siginfo( siginfo, signature_result, cpl_id, cpl_file, 'CPL' )
+    end
     report << "CPL #{ cpl_id }: #{ signature_result.messages.last }"
   else
     signature_result = nil
@@ -2472,7 +2526,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     @signed_cpls_count += 1
     # FIXME why are we doing sig_info instead of just using signature_result.*?
     sig_info = signer_info( xml, signature_result )
-    short_report = build_signer_issuer_short_report( xml, signature_result, sig_info )
+    short_report = build_signer_issuer_short_report( xml, signature_result, sig_info, 'CPL' )
     unless short_report.empty?
       report << short_report[ 0 ]
       report << short_report[ 1 ]
@@ -2485,12 +2539,12 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     # See e.g. dcp_2/V174* for a serial mismatch
     if ! signature_result.signer_node.empty? and sig_info[ :x509serialnumber ] and sig_info[ :cert_serial ]
       if sig_info[ :x509serialnumber ] != sig_info[ :cert_serial ]
-        report << "Signer serial mismatch ❌: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
+        report << "CPL Signer serial mismatch ❌: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
         errors << "CPL #{ cpl_id }: Signer serial mismatch ❌: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
         cpl_errors = true
       end
     else
-      report << 'Signer info :x509serialnumber or :cert_serial could not be retrieved ❌'
+      report << 'CPL Signer info :x509serialnumber or :cert_serial could not be retrieved ❌'
       errors << "CPL #{ cpl_id }: Signer info :x509serialnumber or :cert_serial could not be retrieved ❌"
       cpl_errors = true
     end
@@ -3842,7 +3896,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     report << "There were errors ❌. See CPL #{ cpl_id } errors #{ error_output }"
   end
 
-  return composition_summary, report, errors, hints, info
+  return composition_summary, report, errors, hints, siginfo, info
 end # cpl_inspect_xml
 
 
@@ -3861,9 +3915,10 @@ end
 def dcp_inspect( options, arg )
   errors = Array.new
   hints = Array.new
-  hints << 'Schema checks were skipped' unless options.validate
+  siginfo = Array.new
   info = Array.new
   composition_summaries = Array.new
+  hints << 'Schema checks were skipped' unless options.validate
 
   #
   # collect all files dangling below arg
@@ -3884,7 +3939,7 @@ def dcp_inspect( options, arg )
     end
   end
 
-  # Check XML for Assetmap content
+  # Check for Assetmap content
   unless am_candidates.empty?
     am_candidates_tmp = am_candidates.dup
     am_candidates.each do |am_candidate|
@@ -4151,7 +4206,6 @@ def dcp_inspect( options, arg )
   #
   if options.as_asset_store
     dict_tmp = Array.new << Hash.new
-    # dict.map { |d| dict_tmp.first.merge!( d ) { |k, v1, v2| hints << "Experimental option --as-asset-store: Duplicate key: #{ k } => #{ v1 == v2 ? 'v1 == v2' : "\n\t\tv1: #{ v1 || 'nil' }\n\t\tv2: #{ v2 || 'nil' }" }"; v1 || v2 } }
     dict.map { |d| dict_tmp.first.merge!( d ) { |k, v1, v2| v1 || v2 } }
     dict = dict_tmp 
     pkls = Array.new << pkls.flatten
@@ -4163,7 +4217,6 @@ def dcp_inspect( options, arg )
     am_pkls.each do |pkl_id|
       if dict[ index ][ pkl_id ]
         pkl_file = package dict[ index ][ pkl_id ]
-        #@logger.debug "PKL file#{ File.exist?( pkl_file ) ? '' : ' not' } present:"
         if File.exist?( pkl_file )
           @logger.debug "PKL file present ✅: #{ [ pkl_id, pkl_file ].join( ': ' ) }"
         else
@@ -4207,12 +4260,16 @@ def dcp_inspect( options, arg )
           if signature_result.verified? and signature_result.crypto.errors[ :context ].values.flatten.empty?
             @signed_pkls_verified_count += 1
           end
-          errors, pkl_errors = errors_signature_verification( errors, pkl_errors, signature_result, pkl_id, pkl_file, 'PKL' )
+          unless signature_result.signature_node.empty?
+            errors, pkl_errors = signature_verification_errors( errors, pkl_errors, signature_result, pkl_id, pkl_file, 'PKL' )
+            hints = signature_verification_hints( hints, signature_result, pkl_id, pkl_file, 'PKL' )
+            siginfo = signature_verification_siginfo( siginfo, signature_result, pkl_id, pkl_file, 'PKL' )
+          end
           @logger.debug "PKL #{ pkl_id }: #{ signature_result.messages.last }"
           if signature_result and ! signature_result.signature_node.empty?
             @signed_pkls_count += 1
             sig_info = signer_info( xml, signature_result )
-            short_report = build_signer_issuer_short_report( xml, signature_result, sig_info )
+            short_report = build_signer_issuer_short_report( xml, signature_result, sig_info, 'PKL' )
             unless short_report.empty?
               @logger.debug short_report[ 0 ]
               @logger.debug short_report[ 1 ]
@@ -4420,7 +4477,7 @@ def dcp_inspect( options, arg )
           xml = xml?( cpl_file )
           if xml
 
-            composition_summary, report, errors, hints, info = cpl_inspect_xml( xml, dictionary, audio_stats, @package_dir, composition_summaries, errors, hints, info, options )
+            composition_summary, report, errors, hints, siginfo, info = cpl_inspect_xml( xml, dictionary, audio_stats, @package_dir, composition_summaries, errors, hints, siginfo, info, options )
           else
             errors << "PKL listed CPL is not XML ❌: #{ cpl_file }: #{ cpl_id }"
           end
@@ -4441,7 +4498,9 @@ def dcp_inspect( options, arg )
   execution_time = Timecode.new( execution_time_seconds.round, 60 ).to_s
   total_size = "#{ packages_size_actual == packages_size_listed ? packages_size_actual.to_k : packages_size_actual.to_k + ' (Listed total: ' + packages_size_listed.to_k + ')' }"
   pkls_signature_info = "#{ @signed_pkls_count } signed#{ @signed_pkls_count > 0 ? '/' + @signed_pkls_verified_count.to_s + ' verified' : '' }"
+  pkls_signature_info += ' ❌' unless @signed_pkls_verified_count == @signed_pkls_count
   cpls_signature_info = "#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' }"
+  cpls_signature_info += ' ❌' unless @signed_cpls_verified_count == @signed_cpls_count
   cpls_encryption_info = "#{ cpls.size - @encrypted_compositions > 0 ? ( cpls.size - @encrypted_compositions ).to_s + ' plaintext/' : '' }#{ amount( 'KDM', @encrypted_compositions ) } required)"
 
   # Info summary block
@@ -4459,7 +4518,7 @@ def dcp_inspect( options, arg )
   info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls ) } (#{ pkls_signature_info }), #{ amount( 'Composition', cpls ) } (#{ cpls_signature_info }, #{ cpls_encryption_info }"
   info << "#{ amount( 'Error', errors ) }#{ errors.size == 0 ? ' ✅' : ' ❌' }, #{ amount( 'Hint', hints ) }"
 
-  return { :errors => errors, :hints => hints, :info => info, :am_files => am_files, :pkls => pkls, :cpls => cpls, :pkls_missing => pkls_missing, :cpls_missing => cpls_missing }
+  return { :errors => errors, :hints => hints, :siginfo => siginfo, :info => info, :am_files => am_files, :pkls => pkls, :cpls => cpls, :pkls_missing => pkls_missing, :cpls_missing => cpls_missing }
 end # dcp_inspect
 
 
