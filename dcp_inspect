@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2024.01.04.siginfo'
+AppVersion = 'v1.2024.01.05.siginfo'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -761,6 +761,7 @@ def bytes_from_nice_bytes( nice_bytes )
   end
 end
 
+
 # plural helper english
 def amount( item, count )
   if count.is_a? Array or count.is_a? Hash
@@ -1209,7 +1210,7 @@ class DC_Signer_Crypto_Compliance
     @siginfo = Hash.new
     @context, @errors[ :pre_context ] = find_crypto_context( certs )
     if @errors[ :pre_context ].empty?
-      @errors[ :context ], @hints[ :context ], @siginfo[ :context ], @types_seen = check_compliance()
+      @errors[ :context ], @hints[ :context ], @siginfo[ :context ], @siginfo[ :expired_certs ], @types_seen = check_compliance()
       if @errors[ :pre_context ].empty? and @errors[ :context ].values.flatten.empty? and @chain_verified == true
         if @types_seen.uniq.size == 1
           @type = @types_seen.first
@@ -1228,6 +1229,10 @@ class DC_Signer_Crypto_Compliance
 
   def valid?
     @crypto_context_valid
+  end
+
+  def expired_certs?
+    @siginfo[ :expired_certs ].any?
   end
 
   def messages
@@ -1323,6 +1328,7 @@ class DC_Signer_Crypto_Compliance
     context_errors = Hash.new
     context_hints = Hash.new
     context_siginfo = Hash.new
+    context_siginfo_expired_certs = Array.new
     types_seen = Array.new
     @context.each_with_index do |member, index|
       cert = member
@@ -1330,6 +1336,7 @@ class DC_Signer_Crypto_Compliance
       errors = Array.new
       hints = Array.new
       siginfo = Array.new
+      siginfo_expired_cert = false
 
       errors << 'Not a X509 certificate ❌' unless cert.is_a?( OpenSSL::X509::Certificate )
       # ctp sections:
@@ -1352,13 +1359,15 @@ class DC_Signer_Crypto_Compliance
       #
       cert_cn = ''
       cert_dnq = ''
+      issuer_dnq = ''
       begin
         cert_cn = find_field( 'CN', cert.subject )[0][1]
         cert_dnq = find_field( 'dnQualifier', cert.subject )[0][1]
+        issuer_dnq = find_field( 'dnQualifier', cert.issuer )[0][1]
       rescue
         errors << "Fields missing ❌: Could not pick CN and dnQualifier from #{ cert.subject }"
       end
-      cert_moniker = [ cert_cn, cert_dnq ].join ' '
+      cert_moniker = "(#{ cert_dnq[0..5] }.. < #{ issuer_dnq[0..5] }..) #{ cert_cn }"
 
 
       # * 2.1.2 Signature algorithm
@@ -1379,10 +1388,10 @@ class DC_Signer_Crypto_Compliance
       case type
       when :smpte
         errors << 'Serial number not in valid range ❌' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 64
-        hints << "Certificate #{ cert_moniker.inspect } serial number #{ cert.serial.to_i } exceeds Dolby DSS220 upper limit of 2**32-1 (lowest known erroneous upper limit in the field)" unless cert.serial.to_i < 2 ** 32
+        hints << "Certificate #{ cert_moniker.inspect } serial number #{ cert.serial.to_i } exceeds Dolby DSS220 erroneous upper limit of 2**32-1" unless cert.serial.to_i < 2 ** 32
       when :interop
         errors << 'Serial number not in valid range ❌' unless 0 <= cert.serial.to_i and cert.serial.to_i <= 2 ** 160
-        hints << "Certificate #{ cert_moniker.inspect } serial number #{ cert.serial.to_i } exceeds Dolby DSS220 upper limit of 2**32-1 (lowest known erroneous upper limit in the field)" unless cert.serial.to_i < 2 ** 32
+        hints << "Certificate #{ cert_moniker.inspect } serial number #{ cert.serial.to_i } exceeds Dolby DSS220 erroneous upper limit of 2**32-1" unless cert.serial.to_i < 2 ** 32
       else
         errors << 'Serial number not checked (Certificate type has not been established) ❌'
       end
@@ -1587,11 +1596,12 @@ class DC_Signer_Crypto_Compliance
       #
       # CTP section 2.2 Certificate Decoder Behavior
       #
+      # 2.2.6 Validity Date Check
+      #
       # FIXME See https://github.com/wolfgangw/backports/issues/104
       # FIXME Pulling in 2.2.6 Validity Date Check
       # FIXME This is and will be biting a couple of outfits
-      # FIXME
-      # FIXME 2.2.6 Validity Date Check
+      # FIXME Update 05.01.2024 affected systems: some Sonys, some GDCs, some pre-09.2023 Christies
       # FIXME This needs a lot of refinement but gets it done now
       #
       begin
@@ -1599,10 +1609,9 @@ class DC_Signer_Crypto_Compliance
         cert_not_before_dt = time_to_datetime(cert.not_before)
         cert_not_after_dt = time_to_datetime(cert.not_after)
         if cert_not_after_dt < now_dt
-          # puts "Cert #{field_cn_subject} expired #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } ago"
-          errors << "Certificate #{ cert_moniker.inspect } expired #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } ago (#{ datetime_friendly_mmmddyyyy cert_not_before_dt }-#{ datetime_friendly_mmmddyyyy cert_not_after_dt })"
+          siginfo << "Certificate #{ cert_moniker.inspect } expired #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } ago (#{ datetime_friendly_mmmddyyyy cert_not_before_dt }-#{ datetime_friendly_mmmddyyyy cert_not_after_dt })"
+          siginfo_expired_cert = cert
         else
-          # puts "Cert #{cert.subject.to_s} will expire in #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) }"
           siginfo << "Certificate #{ cert_moniker.inspect } will expire in #{ distance_of_time_in_words( cert_not_after_dt, now_dt ) } (#{ datetime_friendly_mmmddyyyy cert_not_before_dt }-#{ datetime_friendly_mmmddyyyy cert_not_after_dt })"
         end
       rescue Exception => e
@@ -1612,6 +1621,7 @@ class DC_Signer_Crypto_Compliance
       context_errors[ cert.subject.to_s ] = errors
       context_hints[ cert.subject.to_s ] = hints
       context_siginfo[ cert.subject.to_s ] = siginfo
+      context_siginfo_expired_certs << siginfo_expired_cert if siginfo_expired_cert
 
       types_seen << type
     end # @context.each
@@ -1631,7 +1641,7 @@ class DC_Signer_Crypto_Compliance
         context_errors[ cert.subject.to_s ] << "Internal error: Skip DC_Signer_Crypto_Compliance Section 2.1.17 Chain completeness: RUBY_VERSION #{ RUBY_VERSION } on 32 bit systems broken for UTC times > Jan 19th 2038. Inspect certificate manually ❌" if e.class == ArgumentError
       end
     end
-    return context_errors, context_hints, context_siginfo, types_seen
+    return context_errors, context_hints, context_siginfo, context_siginfo_expired_certs, types_seen
   end # check_compliance
 
   # Verify a sorted certificate chain
@@ -2270,14 +2280,18 @@ def signature_verification_hints( hints, signature_result, id, file, type_indica
   return hints
 end
 
-def signature_verification_siginfo( siginfo, signature_result, id, file, type_indicator )
+def signature_verification_siginfo( siginfo, signature_result, id, file, type )
   if signature_result.crypto.siginfo[ :context ].values.flatten.any?
     signature_result.crypto.siginfo[ :context ].each do |info|
       next if info[1].empty?
       info[1].each do |infoblob|
-        siginfo << "#{ type_indicator } #{ id }: Signature: #{ infoblob }"
+        siginfo << "#{ type } #{ id }: Signature: #{ infoblob }"
       end
     end
+  end
+  if signature_result.crypto.siginfo[ :expired_certs ].any?
+    amount_expired = signature_result.crypto.siginfo[ :expired_certs ].size
+    siginfo << "#{ type } #{ id }: Signature: #{ type } has #{ amount_expired } expired #{ plural( 'certificate', amount_expired ) }. On overzealous systems this may result in playback failure".bold
   end
   return siginfo
 end
