@@ -790,8 +790,7 @@ end
 
 # package path helper
 def package( relative_path )
-  # File.join( @package_dir, relative_path )
-  relative_path
+  File.join( @package_dir, relative_path )
 end
 
 def print_inspection_messages( inspection )
@@ -2488,7 +2487,6 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   cpl_reels_references_complete = Array.new
 
   ns = xml.collect_all_namespaces_href_keys
-  @logger.dev "CPL all namespaces href keys: #{ ns }"
   cpl_ns = xml.root.namespace.href
   cpl_ns_prefix = namespace_prefix( xml, cpl_ns )
   cpl_id = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:Id" ).text.split( ':' ).last
@@ -2698,15 +2696,12 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   # Metadata // CMA
   # FIXME: For now this is merely a printout. We don't check against actual asset metadata
   #
-  @logger.dev "CPL ns keys: #{ ns.keys }"
   if ( ns.keys & MStr::Composition_metadata_href ).any?
     cma_href_match = ( ns.keys & MStr::Composition_metadata_href ).first
-    @logger.dev "CPL We have CompositionMetadataAsset: #{ cma_href_match }"
     cma = xml.xpath( '//meta:CompositionMetadataAsset/meta:*', 'meta' => cma_href_match )
     if cma
       report << 'CompositionMetadataAsset:'
       cma.each do |e|
-        @logger.dev "                  #{ e.node_name }: #{ e.text.strip.gsub( /\n\s*/, ' ' ) }"
         report << "                  #{ e.node_name }: #{ e.text.strip.gsub( /\n\s*/, ' ' ) }"
       end
     end
@@ -3556,7 +3551,6 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
             markers.each do |marker|
               label = marker.xpath( "#{ cpl_ns_prefix }:Label" ).text
             end
-            @logger.dev "CPL We have MainMarkers"
             meta_report = "We have MainMarkers"
           else
 
@@ -3595,7 +3589,6 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
       end
 
       if meta
-        @logger.dev "#{ asset.node_name }: #{ asset_file } #{ asset.namespaces }"
         case asset.node_name
         when 'MainStereoscopicPicture'
           unless meta[ 'EssenceType' ] == MStr::Stereoscopic_pictures
@@ -3938,7 +3931,7 @@ end # cpl_inspect_xml
 def find_assetmap_candidates( package_dir )
   am_candidates = Array.new
   begin
-    IO.popen( "#{ @fdfind } -t f -H -I '^ASSETMAP$|^ASSETMAP.xml$' '#{ package_dir }' 2> /dev/null" ) do |io|
+    IO.popen( "#{ @fdfind } -t f -H -I --base-directory '#{ package_dir }' '^ASSETMAP$|^ASSETMAP.xml$' 2> /dev/null" ) do |io|
       while ( am_candidate = io.gets ) do
         am_candidates << am_candidate.chomp
         @logger.debug am_candidate.chomp
@@ -3960,11 +3953,7 @@ def dcp_inspect( options, arg )
   info = Array.new
   composition_summaries = Array.new
 
-  #
-  # collect all files dangling below arg
-  #
   @package_dir = arg
-
   #
   # Find files called what Assetmap(s) would be called.
   # Don't assume they're actually Assetmaps before checking.
@@ -4029,6 +4018,7 @@ def dcp_inspect( options, arg )
     pkls << Array.new
     pkls_missing << Array.new
     am_base = File.dirname am_file
+    # FIXME doing XML again after candidate checking did that already
     xml = xml?( package am_file )
     if xml.root.namespace
       am_ns = xml.root.namespace.href
@@ -4036,6 +4026,7 @@ def dcp_inspect( options, arg )
 
     # FIXME
     xml.remove_namespaces!
+    # FIXME and get_asset_uuid() is doing XML yet again
     am_id = get_asset_uuid( package am_file )
 
     if am_id
@@ -4167,11 +4158,11 @@ def dcp_inspect( options, arg )
           end
           # Check asset filename for length
           if am_ns == MStr::Smpte_am and path.codepoints.size > 100
-            errors << "AM SMPTE #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } longer than 100 characters: #{ path.codepoints.size } characters"
+            errors << "AM SMPTE #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } longer than 100 characters (#{ path.codepoints.size })"
             am_errors = true
           end
           if am_ns == MStr::Interop_am and path.codepoints.size > 255
-            errors << "AM Interop #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } longer than 255 characters: #{ path.codepoints.size } characters"
+            errors << "AM Interop #{ am_id }: Asset #{ listed_id }: Filename #{ path.inspect } longer than 255 characters (#{ path.codepoints.size })"
             am_errors = true
           end
 
@@ -4210,6 +4201,40 @@ def dcp_inspect( options, arg )
 
       end # assets.each
 
+      # Check for files outside of AM's scope
+      # FIXME Consider unmapped files which are valid DC XML (ASSETMAP~)
+      # FIXME and may cause trouble when agnostic Dolbys pick them up
+      am_base_absolute = File.expand_path( am_base, @package_dir )
+
+      dcp_files = dict[ index ].values
+      dcp_files << am_file
+      # In the words of the immortal Noel Gallagher:
+      # "Exactly noone gives a hoot about VOLINDEX."
+      [ 'VOLINDEX', 'VOLINDEX.xml' ].each do |v|
+        if File.exist?( File.join( am_base_absolute, v ) )
+          dcp_files << File.join( am_base_absolute, v )
+        end
+      end
+      dcp_files = dcp_files.map { |path| File.expand_path( path, @package_dir ) }
+      dcp_files.sort_by!( &:downcase )
+
+      files_in_am_base = Array.new
+      IO.popen( "#{ @fdfind } -t f -H -I '' '#{ am_base_absolute }' 2> /dev/null" ) do |io|
+        while ( file = io.gets ) do
+          files_in_am_base << file.chomp
+        end
+      end
+      files_in_am_base.sort_by!( &:downcase )
+
+      outsider_files = files_in_am_base - dcp_files
+      outsider_files = outsider_files.map { |path| path.split( am_base_absolute + '/' )[1] }
+
+      if outsider_files.any?
+        hints << "AM #{ am_id }: Found #{ amount( 'file', outsider_files ) } outside of AM (#{ File.basename am_base }): #{ outsider_files.map { |path| path.inspect }.join( ', ' ) }"
+        @logger.debug hints.last
+      end
+
+
     else
       ams << nil
       errors << "Assetmap '#{ am_file }' has no Id"
@@ -4217,7 +4242,7 @@ def dcp_inspect( options, arg )
     end
 
     # List this Assetmap's PKLs
-    @logger.debug "Assetmap #{ am_id } lists #{ amount( 'PKL', pkls[ index ] ) }:"
+    @logger.debug "AM #{ am_id } lists #{ amount( 'PKL', pkls[ index ] ) }:"
     pkls[ index ].map { |pkl_id|
       pkl_file = package dict[ index ][ pkl_id ]
       if File.exist?( pkl_file )
@@ -4420,8 +4445,8 @@ def dcp_inspect( options, arg )
                         end
                       else
                         @check_hashes_limit_hits += 1
-                        @logger.debug "#{ id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit: Path: #{ asset_file }, Expected hash: #{ hash_listed }"
                         hints << "PKL #{ pkl_id }: Hash check skipped: File size #{ size_asset.to_k } > #{ bytes_from_nice_bytes( options.check_hashes_limit ).to_k } limit: Asset #{ id }, Path #{ asset_file }, Expected hash: #{ hash_listed }"
+                        @logger.debug hints.last
                       end
                     else
                       @logger.debug "#{ id }: Hash check skipped: Path: #{ asset_file }, Expected hash: #{ hash_listed }"
@@ -4587,7 +4612,7 @@ def dcp_inspect_crashed_get_in_touch
   @logger.info ''
   @logger.info "Sorry, #{ AppName } #{ AppVersion } crashed"
   @logger.info "Please get in touch to help fix it"
-  @logger.info "See https://github.com/wolfgangw"
+  @logger.info "See https://github.com/wolfgangw/backports/issues"
   @logger.info "Your feedback is much appreciated. Thanks in advance"
   @logger.info ''
 end
