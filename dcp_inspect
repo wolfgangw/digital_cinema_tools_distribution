@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2024.01.05.siginfo'
+AppVersion = 'v1.2024.01.07'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -533,8 +533,8 @@ module MStr
 
   Tkr_attr = 'x-TKR'
 
-  AssetTypeInterop      = 'Interop'
   AssetTypeSmpte        = 'SMPTE'
+  AssetTypeInterop      = 'Interop'
   AssetTypeUnknown      = 'Unknown'
   AssetTypeMixed        = 'Mixed'
   AssetTypeUndetermined = 'Undetermined'
@@ -2496,11 +2496,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
 
   case cpl_ns
   when MStr::Smpte_cpl
-    cpl_type = 'SMPTE'
+    cpl_type = MStr::AssetTypeSmpte
   when MStr::Interop_cpl
-    cpl_type = 'Interop'
+    cpl_type = MStr::AssetTypeInterop
   else
-    cpl_type = 'Unknown'
+    cpl_type = MStr::AssetTypeUnknown
     errors << "CPL #{ cpl_id }: Default namespace unknown ❌: #{ cpl_ns }: #{ cpl_file }"
     errors << "CPL #{ cpl_id }: Default namespace unknown ❌: This might be a dcp_inspect bug. If you think it is ..."
     errors << "CPL #{ cpl_id }: Default namespace unknown ❌: ... please file an issue at https://github.com/wolfgangw/backports/issues/new"
@@ -2720,7 +2720,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   #
   # A composition can be "incomplete" in different ways:
   #   - referenced assets can exist outside of a given package (ok case)
-  #   - referenced assets can be invalid/damaged/missing (fail case)
+  #   - referenced assets can be invalid/damaged/empty/missing (fail case)
   # Collecting fail case id's in broken_assets to later on figure out
   # which case we're looking at.
   #
@@ -3162,7 +3162,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                   if reelnumber_el.children.size == 1
                     if reelnumber_el.children.first.class == Nokogiri::XML::Text
                       reelnumber_el_content = reelnumber_el.children.first.content
-                      if reelnumber_el_content =~ /\s*?\d+\s*?/
+                      if reelnumber_el_content.strip =~ /\d+/
                         if reelnumber_el_content.to_i != reel_no
                           hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber '#{ reelnumber_el_content.to_i }' does not match its CPL reel number '#{ reel_no }'"
                           report << hints.last
@@ -3415,6 +3415,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                     if load_font_el.empty?
                       hints << "#{ cpl_reel }: DCSubtitle: No LoadFont element found. Playback will use a default font"
                     else
+                      # FIXME 1 LoadFont element
                       load_font_uri = load_font_el.first.attributes[ 'URI' ].value
                       font_asset = File.join( asset_id, File.basename( load_font_uri ) )
                       font_path = nil
@@ -3620,6 +3621,12 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
             errors << "#{ cpl_reel }: " + reels_report.last
             cpl_errors = true
           end
+        when 'ClosedCaption'
+          unless meta[ 'EssenceType' ] == MStr::Timed_text
+            reels_report << "Essence type mismatch ❌: Expected ClosedCaption, got #{ meta[ 'EssenceType' ] || '[nil]' }"
+            errors << "#{ cpl_reel }: " + reels_report.last
+            cpl_errors = true
+          end
         end
       end
 
@@ -3690,18 +3697,33 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
 
   # Composition type SMPTE/Interop/Undetermined?
   assets_status_list = cpl_referenced_assets.map { |e| e.values }.flatten
-  if cpl_referenced_assets_types.uniq.size == 1 and assets_status_list.uniq.size == 1 and assets_status_list.uniq.first == true
+  if cpl_referenced_assets_types.uniq.size == 1 and assets_status_list.uniq.size == 1 and assets_status_list.first == true
     composition_type = cpl_referenced_assets_types.uniq.first
     composition_summary[ :type ] = composition_type
   else
     # FIXME Composition type Mixed error or hint?
-    composition_type = ( cpl_referenced_assets_types.include?( MStr::AssetTypeUnknown ) ? MStr::AssetTypeUndetermined : assets_status_list.include?( false ) ? MStr::AssetTypeUndetermined : MStr::AssetTypeMixed )
+    if cpl_referenced_assets_types.include?( MStr::AssetTypeUnknown )
+      composition_type = MStr::AssetTypeUndetermined
+    else
+      if assets_status_list.include?( false )
+        composition_type = MStr::AssetTypeUndetermined
+      else
+        composition_type = MStr::AssetTypeMixed
+      end
+    end
+
     composition_summary[ :type ] = composition_type
-    if broken_assets.size != 0
+    if broken_assets.size > 0
       errors << "CPL #{ cpl_id }: Composition type ❌: #{ composition_type }"
       cpl_errors = true
     else
-      hints << "CPL #{ cpl_id }: Composition type: #{ composition_type }: Supplemental/VF/External"
+      case cpl_type
+      when MStr::AssetTypeSmpte
+        errors << "CPL #{ cpl_id }: Composition type ❌: #{ composition_type }"
+        cpl_errors = true
+      when MStr::AssetTypeInterop
+        hints << "CPL #{ cpl_id }: Composition type: #{ composition_type }"
+      end
     end
   end
 
@@ -3827,7 +3849,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     cpl_errors = true
   else
     unless composition_sound_channel_formats.size == 0 # Supplemental/VF/External
-      errors << "CPL #{ cpl_id }: Found inconsistent sound ChannelFormat values across the composition (#{ composition_sound_channel_formats.each_with_index.map { |v, index| 'Reel ' + ( index + 1 ).to_s + ': ' + v.to_s }.join( ', ' ) }). Playback will fail completely"
+      errors << "CPL #{ cpl_id }: Found inconsistent sound ChannelFormat values across the composition (#{ composition_sound_channel_formats.each_with_index.map { |v, index| 'Reel ' + ( index + 1 ).to_s + ': ' + v.to_s }.join( ', ' ) }). Playback may fail"
       cpl_errors = true
     end
   end
@@ -3890,7 +3912,6 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
       report << "Composition incomplete: Supplemental/VF/External"
       hints << "CPL #{ cpl_id }: #{ cpl_file }: Composition incomplete: Supplemental/VF/External"
     end
-    # FIXME cpl_reels_references_complete.size == reels.size (and thus > 0) only in all-SMPTE CPLs
   elsif cpl_reels_references_complete.include?( false )
     incomplete_reels = Array.new
     cpl_reels_references_complete.each_with_index do |e, i| incomplete_reels << ( i + 1 ).to_s if e == false end
@@ -3915,9 +3936,15 @@ end # cpl_inspect_xml
 
 
 def find_assetmap_candidates( package_dir )
+  am_candidates = Array.new
   begin
-    am_candidates, err, status = Open3.capture3( "#{ @fdfind } ASSETMAP '#{ package_dir }'" )
-    am_candidates = am_candidates.split( "\n" )
+    IO.popen( "#{ @fdfind } -t f -H -I '^ASSETMAP$|^ASSETMAP.xml$' '#{ package_dir }' 2> /dev/null" ) do |io|
+      while ( am_candidate = io.gets ) do
+        am_candidates << am_candidate.chomp
+        @logger.debug am_candidate.chomp
+      end
+    end
+    am_candidates.sort_by!( &:downcase )
   rescue Exception => e
     @logger.info e.message
     exit FILE_ACCESS_ERROR
@@ -3932,7 +3959,6 @@ def dcp_inspect( options, arg )
   siginfo = Array.new
   info = Array.new
   composition_summaries = Array.new
-  hints << 'Schema checks were skipped' unless options.validate
 
   #
   # collect all files dangling below arg
@@ -3944,18 +3970,17 @@ def dcp_inspect( options, arg )
   # Don't assume they're actually Assetmaps before checking.
   #
   am_candidates = find_assetmap_candidates( @package_dir )
+  am_candidates_rejects = Array.new
   if am_candidates.empty?
     info << 'No Assetmap candidates found'
   else
     @logger.debug "Found #{ amount( 'Assetmap candidate', am_candidates ) } ✅:"
-    am_candidates.each do |am_candidate|
-      @logger.debug am_candidate
-    end
   end
 
   # Check for Assetmap content
   unless am_candidates.empty?
     am_candidates_tmp = am_candidates.dup
+
     am_candidates.each do |am_candidate|
       am_file = package am_candidate
       error_status = false
@@ -3977,7 +4002,14 @@ def dcp_inspect( options, arg )
 
       else
         @logger.debug "Assetmap candidate: #{ am_file }: Not XML"
+        am_candidates_rejects << am_candidate
         am_candidates_tmp.delete( am_candidate )
+      end
+    end
+
+    if am_candidates_rejects.any?
+      am_candidates_rejects.each do |am_candidates_reject|
+        @logger.debug "Not AM: #{ am_candidates_reject }"
       end
     end
     am_candidates = am_candidates_tmp.dup
@@ -4239,7 +4271,7 @@ def dcp_inspect( options, arg )
       end
     end
   end
-  @logger.debug ''
+  @logger.debug '' unless pkls.empty?
 
   # Process all PackingLists
   cpls = Array.new
@@ -4476,7 +4508,7 @@ def dcp_inspect( options, arg )
       end
     end
   else
-    @logger.info 'Found no compositions'
+    @logger.info 'Found 0 Compositions'
   end
   @logger.debug ''
 
@@ -4516,20 +4548,27 @@ def dcp_inspect( options, arg )
   cpls_signature_info = "#{ @signed_cpls_count } signed#{ @signed_cpls_count > 0 ? '/' + @signed_cpls_verified_count.to_s + ' verified' : '' }"
   cpls_signature_info += ' ❌' unless @signed_cpls_verified_count == @signed_cpls_count
   cpls_encryption_info = "#{ cpls.size - @encrypted_compositions > 0 ? ( cpls.size - @encrypted_compositions ).to_s + ' plaintext/' : '' }#{ amount( 'KDM', @encrypted_compositions ) } required)"
+  am_info =  "#{ amount( 'Assetmap', am_files ) }#{ am_candidates_rejects.any? ? ' (' + amount( 'candidate', am_files.size + am_candidates_rejects.size ) + '/' + amount( 'reject', am_candidates_rejects ) + ')' : '' }"
+  pkl_info =  "#{ amount( 'Package', pkls ) } (#{ pkls_signature_info })"
+  cpl_info =  "#{ amount( 'Composition', cpls ) } (#{ cpls_signature_info }, #{ cpls_encryption_info }"
 
   # Info summary block
   composition_summaries.each do |composition_summary|
     info << composition_summary_oneliner( composition_summary )
   end
   info << "#{ AppName } #{ AppVersion } (asdcplib #{ ASDCPVersion }, #{ RubyVersionPlatform }) on #{ RunDatetime_friendly } (#{ execution_time })"
-  info << "Inspected: #{ Pathname( arg ).realpath }"
+  info << "Inspected #{ Pathname( arg ).realpath }"
   info << "Found #{ amount( 'Package', pkls ) } with total size #{ total_size }"
-  info << 'Hash checks skipped' if options.check_hashes == false
+  info << 'Hash checks skipped' if ( options.check_hashes == false && pkls.size > 0 )
   info << "Hash checks skipped for assets bigger than #{ @check_hashes_limit_nice }" if @check_hashes_limit_nice
   info << "Hash checks skipped for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits } total" if @check_hashes_limit_nice
-  info << 'Schema checks skipped' unless options.validate
-  info << 'Audio analysis skipped' unless options.audio_analysis
-  info << "Found #{ amount( 'Assetmap', am_files ) }, #{ amount( 'Package', pkls ) } (#{ pkls_signature_info }), #{ amount( 'Composition', cpls ) } (#{ cpls_signature_info }, #{ cpls_encryption_info }"
+  if options.validate == false
+    info << 'Schema checks skipped' unless am_files.empty?
+  end
+  if options.audio_analysis == false
+    info << 'Audio analysis skipped' unless cpls.empty?
+  end
+  info << 'Found ' + [ am_info, pkl_info, cpl_info ].join( ', ' )
   info << "#{ amount( 'Error', errors ) }#{ errors.size == 0 ? ' ✅' : ' ❌' }, #{ amount( 'Hint', hints ) }"
 
   return { :errors => errors, :hints => hints, :siginfo => siginfo, :info => info, :am_files => am_files, :pkls => pkls, :cpls => cpls, :pkls_missing => pkls_missing, :cpls_missing => cpls_missing }
