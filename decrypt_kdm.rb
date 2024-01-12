@@ -1,8 +1,8 @@
 #!/usr/bin/env ruby
 #
-# kdm_decrypt decrypts Interop/SMPTE KDM
+# decrypt_kdm.rb decrypts Interop/SMPTE KDM
 #
-# Wolfgang Woehl 2011-2023
+# Wolfgang Woehl 2011-2024
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( __FILE__ )
-AppVersion = 'v0.2023.11.26'
+AppVersion = 'v0.2024.01.12'
 #
 if RUBY_VERSION <= '1.9'
   begin

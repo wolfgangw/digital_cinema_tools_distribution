@@ -22,7 +22,7 @@ setup_version='v1.2023.12.27'
 #
 #   * db_adjust_for_dolby_fader_ref.rb: Calculate adjustments for Dolby CP650/750 7.0 setting
 #   * dc_crypto_context.rb:             Check certificate chains for digital cinema compliance
-#   * kdm-decrypt.rb:                   Decrypt Interop/SMPTE KDMs
+#   * decrypt_kdm.rb:                   Decrypt Interop/SMPTE KDMs
 #   * make-dc-certificate-chain.rb:     Generate an example digital cinema compliant certificate chain
 #   * public_key_thumbprint.rb:         Compute dnQualifier/public key thumbprint of a X.509 certificate
 #   * signature_check.rb:               Check XML signatures of DCP infrastructure documents

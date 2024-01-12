@@ -2,7 +2,7 @@ certificate_thumbprint.rb
 db_adjust_for_dolby_fader_ref.rb
 dc_crypto_context.rb
 dcp_inspect
-kdm-decrypt.rb
+decrypt_kdm.rb
 make-dc-certificate-chain.rb
 public_key_thumbprint.rb
 signature_check.rb
