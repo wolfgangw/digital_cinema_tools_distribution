@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2024.01.07'
+AppVersion = 'v1.2024.03.02'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -117,6 +117,7 @@ GRACEFUL_SHUTDOWN = 22
 LIB_LOAD_ERROR = 23
 RUBY_NAME_ERROR = 24
 RUBY_ARGUMENT_ERROR = 25
+REQUIRED_COMMAND_FDFIND_VERSION_TOO_OLD = 26
 
 # Constants
 PictureBitrateMaxDCI = 250.0 # Mb/s
@@ -183,7 +184,7 @@ class Options
     options.check_hashes_limit = :no_limit
     options.image_analysis = false # not yet implemented
     options.audio_analysis = true
-    options.validate = true
+    options.schema_validate = true
     options.as_asset_store = false
     options.verbosity = [ 'debug', 'dev' ]
     options.logfile = nil
@@ -191,6 +192,7 @@ class Options
     options.logfile_autolog = nil
     options.overwrite_logfile = false
     options.verbosity_choices = [ 'quiet', 'errors', 'hints', 'siginfo', 'info', 'cpl', 'debug', 'dev', 'trace_func' ]
+    options.debug = false
 
     opts = OptionParser.new do |opts|
       opts.banner = <<BANNER
@@ -211,7 +213,7 @@ BANNER
         options.audio_analysis = false
       end
       opts.on( '--no-schema', 'Skip schema checks' ) do
-        options.validate = false
+        options.schema_validate = false
       end
       opts.on( '-s', '--as-asset-store', 'Simulate asset store by merging all collected AM dictionaries' ) do
         options.as_asset_store = true
@@ -237,6 +239,15 @@ BANNER
         end
         if options.verbosity.empty?
           options.verbosity = [ 'debug' ]
+        end
+      end
+      opts.on( '-d', '--debug', 'Run in debugger (requires gem \'debug\')' ) do
+        options.debug = true
+        begin
+          require 'debug'
+        rescue Exception => e
+          puts e.message
+          exit GEM_LOAD_ERROR
         end
       end
       opts.on_tail( '-h', '--help', 'Display this screen' ) do
@@ -1401,7 +1412,7 @@ class DC_Signer_Crypto_Compliance
 
       # 2.1.6 Deleted (in CTP 1.1) section
 
-      # 2.1.7 Validity present (not before, not after)
+      # 2.1.7 Validity field (not before, not after)
       #
       # Note on Ruby version 1.8.7:
       #
@@ -2196,7 +2207,7 @@ def namespace_prefix( doc, ns )
   end
 end
 
-def validate_xml( xml, file )
+def schema_validate_xml( xml, file )
   errors = Array.new
   asdcp_type = xml.root.node_name
   # find schema match
@@ -2235,8 +2246,8 @@ def validate_xml( xml, file )
   end
 end
 
-def validation( errors, error_status, xml, source_file, id, type_indicator )
-  valid, validation_errors = validate_xml( xml, source_file )
+def schema_validation( errors, error_status, xml, source_file, id, type_indicator )
+  valid, validation_errors = schema_validate_xml( xml, source_file )
   if valid == false
     validation_errors.each do |e|
       errors << "#{ type_indicator } #{ id }: #{ e }"
@@ -2507,9 +2518,9 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   cpl_referenced_assets_types << cpl_type
 
   # Check schema
-  if options.validate
+  if options.schema_validate
     begin
-      valid, errors, cpl_errors = validation( errors, cpl_errors, xml, cpl_file, cpl_id, 'CPL' )
+      valid, errors, cpl_errors = schema_validation( errors, cpl_errors, xml, cpl_file, cpl_id, 'CPL' )
       report << "CPL #{ cpl_id }: Schema check: #{ valid ? 'OK ✅' : "Errors ❌ (See #{ error_output })" }"
     rescue Exception => e
       errors << "CPL #{ cpl_id }: Exception in Schema check ❌: #{ e.message }"
@@ -3139,9 +3150,9 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                 #
                 # DCSubtitle Schema validation
                 #
-                if options.validate
+                if options.schema_validate
                   begin
-                    valid, errors, cpl_errors = validation( errors, cpl_errors, xml, asset_file, asset_id, 'DCSubtitle' )
+                    valid, errors, cpl_errors = schema_validation( errors, cpl_errors, xml, asset_file, asset_id, 'DCSubtitle' )
                     report << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Schema check: #{ valid ? 'OK ✅' : "Errors ❌ (See #{ error_output })" }"
                   rescue Exception => e
                     errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Exception in Schema check ❌: #{ e.message }"
@@ -3931,7 +3942,7 @@ end # cpl_inspect_xml
 def find_assetmap_candidates( package_dir )
   am_candidates = Array.new
   begin
-    IO.popen( "#{ @fdfind } -t f -H -I --base-directory '#{ package_dir }' '^ASSETMAP$|^ASSETMAP.xml$' 2> /dev/null" ) do |io|
+    IO.popen( "#{ @fdfind } -t f -H -I --base-directory #{ Shellwords.shellescape package_dir } '^ASSETMAP$|^ASSETMAP.xml$' 2> /dev/null" ) do |io|
       while ( am_candidate = io.gets ) do
         am_candidates << am_candidate.chomp
         @logger.debug am_candidate.chomp
@@ -3958,6 +3969,9 @@ def dcp_inspect( options, arg )
   # Find files called what Assetmap(s) would be called.
   # Don't assume they're actually Assetmaps before checking.
   #
+  # Searching at
+  @logger.info "Searching Assetmaps at #{ @package_dir }"
+
   am_candidates = find_assetmap_candidates( @package_dir )
   am_candidates_rejects = Array.new
   if am_candidates.empty?
@@ -3978,10 +3992,10 @@ def dcp_inspect( options, arg )
 
         # Schema validation
         am_id = get_asset_uuid( am_file )
-        if options.validate
+        if options.schema_validate
           begin
-            valid, errors, error_status = validation( errors, true, xml, am_file, am_id, 'AM' )
-            @logger.debug "AM #{ am_id.nil? ? am_id.inspect : am_id }: Schema check: #{ valid ? 'OK ✅' : "Errors ❌ (See #{ error_output })" }: #{ am_file }"
+            valid, errors, error_status = schema_validation( errors, true, xml, am_file, am_id, 'AM' )
+            @logger.debug "AM candidate #{ am_id.nil? ? am_id.inspect : am_id }: Schema check: #{ valid ? 'OK ✅' : "Errors ❌ (See #{ error_output })" }: #{ am_file }"
           rescue Exception => e
             errors << "AM #{ am_id.nil? ? am_id.inspect : am_id }: Exception in Schema check ❌: #{ e.message }"
             error_status = true
@@ -3990,7 +4004,7 @@ def dcp_inspect( options, arg )
         end
 
       else
-        @logger.debug "Assetmap candidate: #{ am_file }: Not XML"
+        @logger.debug "AM candidate #{ am_file.inspect }: Not XML"
         am_candidates_rejects << am_candidate
         am_candidates_tmp.delete( am_candidate )
       end
@@ -4219,7 +4233,7 @@ def dcp_inspect( options, arg )
       dcp_files.sort_by!( &:downcase )
 
       files_in_am_base = Array.new
-      IO.popen( "#{ @fdfind } -t f -H -I '' '#{ am_base_absolute }' 2> /dev/null" ) do |io|
+      IO.popen( "#{ @fdfind } -t f -H -I '' #{ Shellwords.shellescape am_base_absolute } 2> /dev/null" ) do |io|
         while ( file = io.gets ) do
           files_in_am_base << file.chomp
         end
@@ -4315,9 +4329,9 @@ def dcp_inspect( options, arg )
 
         @logger.debug "PKL #{ pkl_id }: #{ pkl_file }"
 
-        if options.validate
+        if options.schema_validate
           begin
-            valid, errors, pkl_errors = validation( errors, pkl_errors, xml, pkl_file, pkl_id, 'PKL' )
+            valid, errors, pkl_errors = schema_validation( errors, pkl_errors, xml, pkl_file, pkl_id, 'PKL' )
             @logger.debug "PKL #{ pkl_id }: Schema check: #{ valid ? 'OK ✅' : "Errors ❌ (See #{ error_output })" }"
           rescue Exception => e
             errors << "PKL #{ pkl_id }: Exception in Schema check ❌: #{ e.message }"
@@ -4587,7 +4601,7 @@ def dcp_inspect( options, arg )
   info << 'Hash checks skipped' if ( options.check_hashes == false && pkls.size > 0 )
   info << "Hash checks skipped for assets bigger than #{ @check_hashes_limit_nice }" if @check_hashes_limit_nice
   info << "Hash checks skipped for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits } total" if @check_hashes_limit_nice
-  if options.validate == false
+  if options.schema_validate == false
     info << 'Schema checks skipped' unless am_files.empty?
   end
   if options.audio_analysis == false
@@ -4670,6 +4684,8 @@ end
 begin
 
   options = Options.parse( ARGV )
+  binding.irb if options.debug
+
   args = ARGV
   if ENV[ 'DCP_INSPECT_AUTOLOG' ]
     options.logfile_autolog = true
@@ -4702,6 +4718,14 @@ begin
   end
   if required_command_not_found
     exit REQUIRED_COMMAND_NOT_FOUND
+  end
+  # Check fdfind version (required option --base-directory in >= 7.5)
+  required_commands_fdfind_version_minimum = "7.5.0"
+  out, status = Open3.capture2( "#{ @fdfind } --version" )
+  fdfind_version = out.chomp.split( ' ' ).last
+  if fdfind_version < required_commands_fdfind_version_minimum
+    @logger.info "#{ @fdfind } version >= #{ required_commands_fdfind_version_minimum } required (your version is #{ fdfind_version })"
+    exit REQUIRED_COMMAND_FDFIND_VERSION_TOO_OLD
   end
 
 
@@ -4808,9 +4832,6 @@ begin
         exit LOGFILE_WRITE_ERROR
       end
     end
-
-    # Searching at
-    @logger.info "Searching Assetmaps at #{ args[ 0 ] }"
 
     # Inspection
     inspection = dcp_inspect( options, args[ 0 ] )
