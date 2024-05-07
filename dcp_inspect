@@ -4723,7 +4723,7 @@ begin
   required_commands_fdfind_version_minimum = "7.5.0"
   out, status = Open3.capture2( "#{ @fdfind } --version" )
   fdfind_version = out.chomp.split( ' ' ).last
-  if fdfind_version < required_commands_fdfind_version_minimum
+  if Gem::Version.new(fdfind_version) < Gem::Version.new(required_commands_fdfind_version_minimum)
     @logger.info "#{ @fdfind } version >= #{ required_commands_fdfind_version_minimum } required (your version is #{ fdfind_version })"
     exit REQUIRED_COMMAND_FDFIND_VERSION_TOO_OLD
   end
