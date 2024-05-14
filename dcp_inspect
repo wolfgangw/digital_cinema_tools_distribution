@@ -3,7 +3,7 @@
 #
 # dcp_inspect checks and validates DCPs (Digital Cinema Packages)
 #
-# 2011-2023 Wolfgang Woehl
+# 2011-2024 Wolfgang Woehl
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2024.03.02'
+AppVersion = 'v1.2024.05.14'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
