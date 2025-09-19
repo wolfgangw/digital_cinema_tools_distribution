@@ -4,7 +4,7 @@
 # specified in ST 430-2 Digital Certificate
 # (section 5.4 Certificate and Public Key Thumbprint)
 #
-# Wolfgang Woehl 2012
+# Wolfgang Woehl 2012-2025
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -44,7 +44,7 @@ end
 
 dc_thumbprints = Hash.new
 ARGV.each do |arg|
-  if File.exists? arg
+  if File.exist? arg
     begin
       raw = File.read arg
     rescue Exception => e
