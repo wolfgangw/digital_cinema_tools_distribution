@@ -19,7 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 AppName = File.basename( $0 )
-AppVersion = 'v1.2024.05.14'
+AppVersion = 'v1.2025.10.28'
 AppStartSeconds = Time.now
 #
 # dcp_inspect is a tool for deep inspection and validation of digital
@@ -4703,10 +4703,12 @@ begin
 
   # Check required tools
   required_command_not_found = false
-  if RubyVersionPlatform =~ /linux/
+  if command_exists? 'fdfind'
     @fdfind = 'fdfind'
-  elsif RubyVersionPlatform =~ /darwin/
+  elsif command_exists? 'fd'
     @fdfind = 'fd'
+  else
+    @fdfind = 'fd-or-fdfind'
   end
   required_commands = [ 'asdcp-info', 'asdcp-unwrap', 'kmuuidgen', @fdfind ]
   required_commands << 'sox' if options.audio_analysis
