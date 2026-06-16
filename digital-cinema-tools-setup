@@ -68,8 +68,8 @@ gemrc=$HOME/.gemrc
 
 # Handle SMPTE and Interop trackfiles: AS-DCP Lib
 asdcplib_url="https://github.com/cinecert/asdcplib.git"
-asdcplib_version='2.12.3'
-asdcplib_version_tag='rel_2_12_3'
+asdcplib_version='2.13.2'
+asdcplib_version_tag='rel_2_13_2'
 asdcplib_dir=$libdir/asdcplib
 asdcplib_build_dir="$asdcplib_dir/build"
 asdcplib_install_dir=$bindir/asdcplib
@@ -228,7 +228,7 @@ case $os_dist in
     packager='apt-get'
     packager_params='-y install'
     # build-essential odd ..
-    packages_required=( autoconf patch build-essential rustc libssl-dev libyaml-dev libreadline-dev zlib1g-dev libgmp-dev libncurses5-dev libffi-dev libgdbm6 libgdbm-dev libdb-dev uuid-dev cmake curl libxerces-c-dev xmlsec1 libreadline-dev libssl-dev sox git libffi-dev fd-find )
+    packages_required=( autoconf patch build-essential rustc libssl-dev libyaml-dev libreadline-dev zlib1g-dev libgmp-dev libncurses-dev libffi-dev libgdbm6t64 libgdbm-dev libdb-dev uuid-dev cmake curl libxerces-c-dev xmlsec1 libreadline-dev libssl-dev sox git libffi-dev fd-find )
     packager_prep="$packager update"
     ;;
   redhat)
@@ -555,12 +555,14 @@ else
     mkdir $asdcplib_build_dir && cd $asdcplib_build_dir
     case $os_dist in
       ubuntu)
+        echo "asdcplib ($os_dist): FIXME patching CMakeLists.txt"
+        sed -i 's/cmake_minimum_required(VERSION 3.0)/cmake_minimum_required(VERSION 3.5)/' ../CMakeLists.txt
         export LDFLAGS="-L/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)" ;;
       redhat)
         export LDFLAGS='' ;;
       macos)
         echo "asdcplib ($os_dist): FIXME patching CMakeLists.txt"
-        sed -i '' -e 's/cmake_minimum_required(VERSION 2.8.12)/cmake_minimum_required(VERSION 3.0)/' ../CMakeLists.txt
+        sed -i '' -e 's/cmake_minimum_required(VERSION 3.0)/cmake_minimum_required(VERSION 3.5)/' ../CMakeLists.txt
     esac
     if cmake -DCMAKE_INSTALL_PREFIX=$asdcplib_install_dir .. && make -j4 && make install
     then
