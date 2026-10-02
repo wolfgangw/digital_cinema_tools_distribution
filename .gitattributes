@@ -1,0 +1,2 @@
+# Release checksums cover exact source bytes, including schema line endings.
+vendor/dcp_inspect/** -text
