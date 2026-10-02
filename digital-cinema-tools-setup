@@ -92,8 +92,120 @@ dct_write_ruby_launcher() {
   mv -f "$temporary" "$destination"
 }
 
+dct_add_path() {
+  local config=$1 command_dir=$2 entry
+  DCT_PATH_ADDED=false
+  entry=$(printf 'export PATH=%q:"$PATH"' "$command_dir")
+  if [[ -f $config ]] && { grep -Fqx "$entry" "$config" || grep -Fqx "export PATH=$command_dir:\$PATH" "$config"; }
+  then
+    return 0
+  fi
+  printf '\n%s\n%s\n%s\n' '# >>> digital-cinema-tools PATH >>>' "$entry" '# <<< digital-cinema-tools PATH <<<' >> "$config" || return 1
+  DCT_PATH_ADDED=true
+}
+
+# Remove only complete, recognizable installer entries. User-modified entries
+# and unrelated configuration are retained, including symlinked dotfiles.
+dct_clean_config() {
+  local config=$1 install_dir=$2 kind=$3 target=$1 link hops=0 temporary line expected
+  local -a lines=() kept=()
+  local i=0 removed=0
+  [[ -e $config ]] || return 0
+  [[ -f $config ]] || { echo "Not a regular config file: $config" >&2; return 1; }
+  while IFS= read -r line || [[ -n $line ]]; do lines+=("$line"); done < "$config"
+  expected=$(printf 'export PATH=%q:"$PATH"' "$install_dir/.bin")
+  while (( i < ${#lines[@]} )); do
+    line=${lines[i]}
+    if [[ $kind == bashrc ]]
+    then
+      if [[ $line == '# >>> digital-cinema-tools PATH >>>' && ${lines[i+1]:-} == "$expected" && ${lines[i+2]:-} == '# <<< digital-cinema-tools PATH <<<' ]]
+      then
+        i=$((i + 3)); removed=1; continue
+      fi
+      if [[ $line == '# '*": Add $install_dir/.bin to PATH" && ${lines[i+1]:-} == "export PATH=$install_dir/.bin:\$PATH" ]]
+      then
+        i=$((i + 2)); removed=1; continue
+      fi
+      if [[ $line == '# '*': rbenv environment' && ${lines[i+1]:-} == "export RBENV_ROOT=$install_dir/.lib/.rbenv" && ${lines[i+2]:-} == "export PATH=$install_dir/.lib/.rbenv/bin:\$PATH" && ${lines[i+3]:-} == 'eval "$(rbenv init -)"' ]]
+      then
+        i=$((i + 4)); removed=1; continue
+      fi
+    elif [[ $kind == inputrc && $line == '# '*': This will make completions show up after 1 TAB hit' && ${lines[i+1]:-} == 'set show-all-if-ambiguous on' ]]
+    then
+      i=$((i + 2)); removed=1; continue
+    fi
+    kept+=("$line")
+    i=$((i + 1))
+  done
+  [[ $removed == 1 ]] || return 0
+  while [[ -L $target ]]; do
+    hops=$((hops + 1))
+    (( hops <= 40 )) || return 1
+    link=$(readlink "$target") || return 1
+    case $link in
+      /*) target=$link ;;
+      *) target="$(dirname "$target")/$link" ;;
+    esac
+  done
+  if [[ $kind == inputrc && ${#kept[@]} == 0 && ! -L $config ]]
+  then
+    rm -f -- "$config" || return 1
+  else
+    temporary=$(mktemp "${target}.dct-clean.XXXXXX") || return 1
+    if ! cp -p "$target" "$temporary"
+    then
+      rm -f -- "$temporary"
+      return 1
+    fi
+    if ! { if (( ${#kept[@]} > 0 )); then printf '%s\n' "${kept[@]}"; fi; } > "$temporary"
+    then
+      rm -f -- "$temporary"
+      return 1
+    fi
+    mv -f "$temporary" "$target" || { rm -f -- "$temporary"; return 1; }
+  fi
+  echo "Removed setup entries from $config"
+}
+
+dct_uninstall() {
+  local user_dir=${1%/} install_dir reply
+  [[ $user_dir == /* && $user_dir != / && -n $user_dir && -d $user_dir ]] || { echo 'Cannot determine a safe home directory' >&2; return 1; }
+  install_dir="$user_dir/.digital_cinema_tools"
+  echo "This removes $install_dir (including any files you saved there) and recognized setup entries from your shell configuration."
+  if ! read -r -p 'Uninstall Digital Cinema Tools? [y/N] ' reply
+  then
+    echo 'Uninstall cancelled.'
+    return 0
+  fi
+  case $reply in
+    y|Y|yes|YES|Yes) ;;
+    *) echo 'Uninstall cancelled.'; return 0 ;;
+  esac
+  dct_clean_config "$user_dir/.bashrc" "$install_dir" bashrc || return 1
+  dct_clean_config "$user_dir/.inputrc" "$install_dir" inputrc || return 1
+  # Leave the installation tree before removing it, even when setup itself
+  # was launched from the installed checkout.
+  cd "$user_dir" || return 1
+  rm -rf -- "$install_dir" || return 1
+  echo 'Digital Cinema Tools uninstalled. Open a new shell to refresh PATH.'
+  echo 'Shared system packages, mise runtimes, unmarked .gemrc settings, and user-edited shell entries were left in place.'
+}
+
 # Sourcing this file exposes functions without running the installer.
 if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
+
+case ${1:-} in
+  uninstall)
+    [[ $# == 1 ]] || { echo 'Usage: digital-cinema-tools-setup [uninstall]' >&2; exit 2; }
+    dct_uninstall "$HOME"
+    exit $? ;;
+  -h|--help)
+    echo 'Usage: digital-cinema-tools-setup [uninstall]'
+    echo 'No arguments: install/update. uninstall: confirm removal of the tools and their shell entries.'
+    exit 0 ;;
+  '') ;;
+  *) echo 'Usage: digital-cinema-tools-setup [uninstall]' >&2; exit 2 ;;
+esac
 
 setup_version='v1.2026.10.02'
 #
@@ -107,6 +219,8 @@ setup_version='v1.2026.10.02'
 #   * For updates or re-runs run
 #       digital-cinema-tools-setup
 #     in a terminal
+#
+#   * To uninstall run digital-cinema-tools-setup uninstall
 #
 # This setup script will install everything required (batteries included) to run
 #
@@ -142,7 +256,6 @@ setup_fullpath="$setup_dirname/$setup_basename"
 echo "$setup_basename $setup_version"
 
 bashrc=$HOME/.bashrc
-inputrc=$HOME/.inputrc
 script_runner=$(whoami)
 
 basedir=$HOME/.digital_cinema_tools
@@ -159,7 +272,6 @@ rbenv_plugins_dir=$rbenv_dir/plugins
 rubybuild_url="https://github.com/sstephenson/ruby-build.git"
 rubybuild_dir=$rbenv_plugins_dir/ruby-build
 ruby_version='3.4.6'
-gemrc=$HOME/.gemrc
 
 # Handle SMPTE and Interop trackfiles: AS-DCP Lib
 asdcplib_url="https://github.com/cinecert/asdcplib.git"
@@ -423,22 +535,13 @@ if ! location_exists $libdir ; then mkdir $libdir ; fi
 if ! location_exists $bindir ; then mkdir $bindir ; fi
 
 
-# Check for $bindir and inclusion in PATH
-if string_includes $PATH "$bindir"
+# Add one recognizable, reversible PATH entry.
+if ! dct_add_path "$bashrc" "$bindir"
 then
-  echo "PATH: $bindir available in PATH"
+  echo "Could not add the command directory to $bashrc" >&2
+  exit 1
 fi
-if grep "export PATH=$bindir:" $bashrc
-then
-  echo "bashrc: $bindir already included. OK"
-else
-  echo "bashrc: Adding $bindir to PATH"
-  echo '' >> $bashrc
-  echo "# $setup_basename: Add $bindir to PATH" >> $bashrc
-  echo "export PATH=$bindir:"'$PATH' >> $bashrc
-  exec_shell_required=true
-fi
-
+if [[ $DCT_PATH_ADDED == true ]]; then exec_shell_required=true; fi
 
 export PATH="$bindir:$PATH"
 
@@ -451,6 +554,7 @@ then
     echo 'Could not prepare the mise Ruby runtime' >&2
     exit 1
   fi
+  export GEM_SPEC_CACHE="$libdir/gem-spec-cache"
   export GEM_HOME="$libdir/gems/ruby-$ruby_version"
   export GEM_PATH="$GEM_HOME"
   mkdir -p "$GEM_HOME"
@@ -513,20 +617,6 @@ else
       exit 1
     fi
   fi
-fi
-
-
-# gems: ri/rdoc switches
-if [ -e $gemrc ]
-then
-  if grep '^gem: --no-ri --no-rdoc' $gemrc
-  then
-    echo 'gemrc: OK'
-  else
-    echo 'gemrc: Keeping changed gemrc (--no-ri/rdoc switches will not be added)'
-  fi
-else
-  echo 'gem: --no-document' > $gemrc
 fi
 
 
@@ -601,7 +691,7 @@ then
     echo 'Nokogiri: Found installed gem'
   else
     # Install Nokogiri gem
-    if ! gem install nokogiri
+    if ! gem install nokogiri --no-document
     then
       errors+=("Nokogiri: Failed to install required gem nokogiri") && echo_last errors[@]
     else
@@ -770,26 +860,6 @@ then
   errors+=("dcp_inspect: Release or runtime dependency setup failed") && echo_last errors[@]
 fi
 # Done: Digital Cinemas Tools Distribution
-
-
-# Fastpath for tab-completion
-if [ -e $inputrc ]
-then
-  # Leave any existing setting untouched
-  if grep "^set show-all-if-ambiguous on$" $inputrc
-  then
-    echo 'Tab completion: Fastpath set to on. Leaving untouched. OK'
-  elif grep "^set show-all-if-ambiguous off$" $inputrc
-  then
-    echo 'Tab completion: Fastpath set to off. Leaving untouched. OK'
-  fi
-else
-  touch $inputrc
-  echo 'Tab completion: Setting fastpath to on'
-  echo "# $setup_basename: This will make completions show up after 1 TAB hit" >> $inputrc
-  echo 'set show-all-if-ambiguous on' >> $inputrc
-  exec_shell_required=true
-fi
 
 
 # Setup done

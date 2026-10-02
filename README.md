@@ -11,6 +11,16 @@ Run `digital-cinema-tools-setup` again for updates. When upgrading an installati
 
 On Omarchy/Arch, setup reuses Ruby 3.4.6 from mise or requests a prebuilt download. It does not change mise configuration or fall back to compiling Ruby. Tool-specific gems live under `~/.digital_cinema_tools`; system Ruby and shared gem installations are untouched.
 
+## Uninstall
+
+```sh
+digital-cinema-tools-setup uninstall
+```
+
+After confirmation, setup removes `~/.digital_cinema_tools` and its recognized PATH/rbenv entries in `~/.bashrc`, plus any unchanged, marked completion setting it owns in `~/.inputrc`. Open a new shell afterwards. Files saved inside the installation directory are removed too.
+
+Shared system packages and mise-managed Rubies remain available to other applications. User-edited shell entries and unmarked `.gemrc` settings are preserved. Uninstall works without Ruby, network access, or sudo. You can also run `bash digital-cinema-tools-setup uninstall` from a downloaded copy.
+
 ## dcp_inspect layout
 
 `dcp_inspect` is a launcher for the complete release in `vendor/dcp_inspect/`. That bundle contains the executable, `lib/`, `VERSION`, and its own `xsd/` store. Keep the bundle and launcher together. The distribution's root `xsd/` serves the other tools independently. `toollist` lists command entry points, not their support files; it needs no changes for inspector releases.
@@ -43,6 +53,7 @@ ruby scripts/verify-dcp-inspect.rb            # release integrity and CLI startu
 ruby scripts/verify-dcp-inspect.rb --runtime  # also gems, commands, FFmpeg filters
 ruby test/dcp_inspect_distribution_test.rb    # requires minitest and inspector gems
 ruby test/setup_platform_test.rb             # platform, package-manager, launcher tests
+ruby test/setup_uninstall_test.rb            # confirmed removal and shell cleanup
 ```
 
 Tests use temporary directories and mock dependency installation; they do not install system packages or alter the user's shell configuration. Full setup still needs platform testing on Linux and macOS.
