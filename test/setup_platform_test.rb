@@ -40,7 +40,7 @@ class SetupPlatformTest < Minitest::Test
   def test_native_arch_dependency_names
     output, _, status = shell('dct_arch_packages')
     assert status.success?
-    %w[base-devel ruby-build xerces-c xmlsec fd ffmpeg util-linux].each { |name| assert_includes output.split, name }
+    %w[base-devel mise xerces-c xmlsec fd ffmpeg util-linux].each { |name| assert_includes output.split, name }
     refute output.split.any? { |name| name.end_with?('-dev', '-devel') && name != 'base-devel' }
   end
 
@@ -81,32 +81,55 @@ class SetupPlatformTest < Minitest::Test
       code = "require 'json'; puts JSON.generate([RUBY_VERSION, ARGV, ENV.values_at('GEM_HOME', 'GEM_PATH', 'RUBYOPT', 'RUBYLIB')])\n"
       File.write(program, code)
       File.symlink(program, command)
-      _, error, status = shell('dct_write_ruby_launcher "$1" "$2" "$3"', RbConfig.ruby, program, command)
+      gems = File.join(directory, 'tool gems')
+      FileUtils.mkdir_p(gems)
+      _, error, status = shell('dct_write_ruby_launcher "$1" "$2" "$3" "$4"', RbConfig.ruby, program, command, gems)
       assert status.success?, error
       output, error, status = Open3.capture3({'GEM_HOME' => '/missing', 'GEM_PATH' => '/missing', 'RUBYOPT' => '-rmissing', 'RUBYLIB' => '/missing'}, command, 'with spaces', '$(literal)', '')
       assert status.success?, error
-      assert_equal [RUBY_VERSION, ['with spaces', '$(literal)', ''], [nil, nil, nil, nil]], JSON.parse(output)
+      assert_equal [RUBY_VERSION, ['with spaces', '$(literal)', ''], [gems, gems, nil, nil]], JSON.parse(output)
       assert_equal code, File.read(program)
-      _, _, status = shell('dct_write_ruby_launcher "$1" "$2" "$3"', RbConfig.ruby, program, command)
+      _, _, status = shell('dct_write_ruby_launcher "$1" "$2" "$3" "$4"', RbConfig.ruby, program, command, gems)
       assert status.success?, 'Managed launchers must be updatable'
       File.write(command, 'user owned file')
-      _, _, status = shell('dct_write_ruby_launcher "$1" "$2" "$3"', RbConfig.ruby, program, command)
+      _, _, status = shell('dct_write_ruby_launcher "$1" "$2" "$3" "$4"', RbConfig.ruby, program, command, gems)
       refute status.success?
       assert_equal 'user owned file', File.read(command)
     end
   end
 
-  def test_private_ruby_reuses_working_runtime_without_invoking_rbenv_or_mise
+  def test_mise_ruby_reuses_installed_runtime_without_install_or_global_changes
     prefix = File.dirname(File.dirname(RbConfig.ruby))
-    code = 'ruby-build() { return 99; }; rbenv() { return 99; }; mise() { return 99; }; dct_prepare_private_ruby "$1" "$2"'
-    _, error, status = shell(code, RUBY_VERSION, prefix)
+    code = 'mise() { [[ $1 == where ]] || return 99; printf "%s\n" "$DCT_TEST_RUBY"; }; dct_prepare_mise_ruby "$1"'
+    output, error, status = shell(code, RUBY_VERSION, environment: {'DCT_TEST_RUBY' => prefix})
     assert status.success?, error
+    assert_equal prefix, output.strip
   end
 
-  def test_private_ruby_build_failure_propagates
+  def test_mise_download_requests_prebuilt_only_and_does_not_activate_ruby
     Dir.mktmpdir do |directory|
-      _, _, status = shell('ruby-build() { return 1; }; dct_prepare_private_ruby 3.4.6 "$1"', File.join(directory, 'ruby'))
-      refute status.success?
+      marker = File.join(directory, 'installed')
+      prefix = File.dirname(File.dirname(RbConfig.ruby))
+      code = <<~'SH'
+        mise() {
+          case "$1" in
+            where) [[ -f "$DCT_TEST_MARKER" ]] || return 1; printf '%s\n' "$DCT_TEST_RUBY" ;;
+            install) [[ $MISE_RUBY_COMPILE == false ]] || return 99; touch "$DCT_TEST_MARKER" ;;
+            *) return 99 ;;
+          esac
+        }
+        dct_prepare_mise_ruby "$1"
+      SH
+      output, error, status = shell(code, RUBY_VERSION, environment: {'DCT_TEST_MARKER' => marker, 'DCT_TEST_RUBY' => prefix})
+      assert status.success?, error
+      assert_equal prefix, output.strip
+      assert File.file?(marker)
     end
+  end
+
+  def test_mise_install_failure_does_not_trigger_source_build
+    _, error, status = shell('mise() { return 1; }; ruby-build() { echo unexpected-build; }; dct_prepare_mise_ruby 3.4.6')
+    refute status.success?
+    assert_includes error, 'setup will not compile a private Ruby'
   end
 end

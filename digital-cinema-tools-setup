@@ -24,7 +24,7 @@ dct_detect_linux() {
 }
 
 dct_arch_packages() {
-  echo base-devel ruby-build rust cmake git curl ca-certificates openssl libyaml readline zlib gmp libffi gdbm util-linux xerces-c xmlsec sox fd ffmpeg
+  echo base-devel mise cmake git curl ca-certificates openssl util-linux xerces-c xmlsec sox fd ffmpeg
 }
 
 dct_install_arch_packages() {
@@ -44,20 +44,36 @@ dct_install_arch_packages() {
   done
 }
 
-dct_prepare_private_ruby() {
-  local version=$1 prefix=$2
-  if ! "$prefix/bin/ruby" -ropenssl -rpsych -e 'exit(RUBY_VERSION == ARGV[0] ? 0 : 1)' "$version" >/dev/null 2>&1
+dct_prepare_mise_ruby() {
+  local version=$1 prefix
+  if ! command -v mise >/dev/null 2>&1
   then
-    echo "Ruby: Building private Ruby $version (no changes to mise or global Ruby selection)"
-    RUBY_CONFIGURE_OPTS='--disable-install-doc' MAKE_OPTS='-j4' ruby-build "$version" "$prefix" || return 1
+    echo 'Ruby: mise is required on Omarchy/Arch' >&2
+    return 1
   fi
-  "$prefix/bin/ruby" -ropenssl -rpsych -e 'exit(RUBY_VERSION == ARGV[0] ? 0 : 1)' "$version"
+  prefix=$(mise where "ruby@$version" 2>/dev/null) || prefix=''
+  if [[ -z $prefix || ! -x $prefix/bin/ruby ]]
+  then
+    echo "Ruby: Downloading Ruby $version with mise" >&2
+    if ! MISE_RUBY_COMPILE=false mise install "ruby@$version" >&2
+    then
+      echo 'Ruby: mise could not install a prebuilt Ruby. See its error above; setup will not compile a private Ruby.' >&2
+      return 1
+    fi
+    prefix=$(mise where "ruby@$version") || return 1
+  fi
+  if ! "$prefix/bin/ruby" -ropenssl -rpsych -e 'exit(RUBY_VERSION == ARGV[0] ? 0 : 1)' "$version"
+  then
+    echo "Ruby: mise's Ruby $version could not start. Repair that runtime with mise and retry." >&2
+    return 1
+  fi
+  printf '%s\n' "$prefix"
 }
 
 dct_write_ruby_launcher() {
-  local ruby_bin=$1 source=$2 destination=$3 temporary
+  local ruby_bin=$1 source=$2 destination=$3 gem_dir=$4 temporary
   [[ ! -d $destination ]] || { echo "Command destination is a directory: $destination" >&2; return 1; }
-  if [[ -e $destination && ! -L $destination ]] && ! grep -q '^# Digital Cinema Tools private Ruby launcher$' "$destination"
+  if [[ -e $destination && ! -L $destination ]] && ! grep -Eq '^# Digital Cinema Tools (private Ruby|mise Ruby) launcher$' "$destination"
   then
     echo "Refusing to replace unmanaged command: $destination" >&2
     return 1
@@ -65,8 +81,10 @@ dct_write_ruby_launcher() {
   temporary=$(mktemp "${destination}.XXXXXX") || return 1
   {
     echo '#!/usr/bin/env bash'
-    echo '# Digital Cinema Tools private Ruby launcher'
+    echo '# Digital Cinema Tools mise Ruby launcher'
     echo 'unset GEM_HOME GEM_PATH RUBYOPT RUBYLIB'
+    printf 'export GEM_HOME=%q\n' "$gem_dir"
+    echo 'export GEM_PATH="$GEM_HOME"'
     printf 'export PATH=%q:"$PATH"\n' "$(dirname "$ruby_bin")"
     printf 'exec %q %q "$@"\n' "$ruby_bin" "$source"
   } > "$temporary"
@@ -424,17 +442,19 @@ fi
 
 export PATH="$bindir:$PATH"
 
-# On Arch, keep Ruby private to these tools instead of competing with mise.
+# On Omarchy/Arch, reuse mise Ruby without changing its active/global selection.
 if [[ $os_dist == omarchy || $os_dist == arch ]]
 then
   unset GEM_HOME GEM_PATH RUBYOPT RUBYLIB
-  private_ruby_dir="$libdir/ruby-$ruby_version"
-  if ! dct_prepare_private_ruby "$ruby_version" "$private_ruby_dir"
+  if ! ruby_runtime_dir=$(dct_prepare_mise_ruby "$ruby_version")
   then
-    echo 'Could not prepare the private Ruby runtime' >&2
+    echo 'Could not prepare the mise Ruby runtime' >&2
     exit 1
   fi
-  export PATH="$private_ruby_dir/bin:$bindir:$PATH"
+  export GEM_HOME="$libdir/gems/ruby-$ruby_version"
+  export GEM_PATH="$GEM_HOME"
+  mkdir -p "$GEM_HOME"
+  export PATH="$ruby_runtime_dir/bin:$bindir:$PATH"
   export DCT_RUBY_MANAGER=direct
 else
 export DCT_RUBY_MANAGER=rbenv
@@ -570,7 +590,7 @@ else
 fi
 
 
-fi # Arch private Ruby / rbenv
+fi # Arch mise Ruby / rbenv
 
 # Nokogiri (with c14n)
 nokogiri_c14n=false
@@ -717,9 +737,9 @@ then
   do
     if [[ $os_dist == omarchy || $os_dist == arch ]] && [[ $tool == *.rb || $tool == dcp_inspect ]]
     then
-      if ! dct_write_ruby_launcher "$private_ruby_dir/bin/ruby" "$dist_dir/$tool" "$bindir/$tool"
+      if ! dct_write_ruby_launcher "$ruby_runtime_dir/bin/ruby" "$dist_dir/$tool" "$bindir/$tool" "$GEM_HOME"
       then
-        errors+=("Could not install private Ruby launcher for $tool") && echo_last errors[@]
+        errors+=("Could not install mise Ruby launcher for $tool") && echo_last errors[@]
       fi
       continue
     fi

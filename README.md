@@ -9,6 +9,8 @@ bash digital-cinema-tools-setup
 
 Run `digital-cinema-tools-setup` again for updates. When upgrading an installation whose setup script predates this release, run it twice: the first run fetches the new setup script; the second installs its additional dependencies. Setup reports a failure if the inspector bundle, Ruby gems, required commands, or audio filters are missing.
 
+On Omarchy/Arch, setup reuses Ruby 3.4.6 from mise or requests a prebuilt download. It does not change mise configuration or fall back to compiling Ruby. Tool-specific gems live under `~/.digital_cinema_tools`; system Ruby and shared gem installations are untouched.
+
 ## dcp_inspect layout
 
 `dcp_inspect` is a launcher for the complete release in `vendor/dcp_inspect/`. That bundle contains the executable, `lib/`, `VERSION`, and its own `xsd/` store. Keep the bundle and launcher together. The distribution's root `xsd/` serves the other tools independently. `toollist` lists command entry points, not their support files; it needs no changes for inspector releases.
