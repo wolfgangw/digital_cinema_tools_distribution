@@ -4,6 +4,7 @@ Minimize intrusion. These tools should be easy to install alongside the user's e
 
 - Install only missing dependencies needed for the requested tools; reuse compatible installations where practical.
 - Reuse mise-managed Ruby on Omarchy/Arch without changing its active/global selection. Keep tool-owned gems and files under `~/.digital_cinema_tools`.
+- On macOS, use explicit tool-owned Ruby launchers and isolated gems; do not initialize rbenv or change global Ruby selection. Respect `$SHELL` and exported `$ZDOTDIR`; record PATH edits for uninstall.
 - Preserve the user's Ruby/version-manager configuration and shell customizations. Keep necessary PATH additions small and explicit.
 - Do not require or perform full system upgrades as part of setup.
 - Report package-manager failures clearly; do not automatically repair the system, force package overwrites, or weaken signature checks.

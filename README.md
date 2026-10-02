@@ -13,13 +13,15 @@ To upgrade an older installer that lacks these options, download setup once usin
 
 On Omarchy/Arch, setup reuses Ruby 3.4.6 from mise or requests a prebuilt download. It does not change mise configuration or fall back to compiling Ruby. Tool-specific gems live under `~/.digital_cinema_tools`; system Ruby and shared gem installations are untouched.
 
+On macOS, setup runs in Bash while the tools work from your configured zsh or Bash shell. Setup adds a marked PATH entry to that shell’s startup files and records them for uninstall. Export a custom `ZDOTDIR` before setup. Ruby launchers use the tool-owned runtime and isolated gems without initializing or changing your Ruby manager. An existing tool-owned Ruby is reused; otherwise setup builds it. Open a new terminal afterwards.
+
 ## Uninstall
 
 ```sh
 digital-cinema-tools-setup --uninstall
 ```
 
-After confirmation, setup removes `~/.digital_cinema_tools` and its recognized PATH/rbenv entries in `~/.bashrc`, plus any unchanged, marked completion setting it owns in `~/.inputrc`. Open a new shell afterwards. Files saved inside the installation directory are removed too.
+After confirmation, setup removes `~/.digital_cinema_tools` and its recognized PATH entries in recorded shell startup files and legacy PATH/rbenv entries in `~/.bashrc`, plus any unchanged, marked completion setting it owns in `~/.inputrc`. Open a new shell afterwards. Files saved inside the installation directory are removed too.
 
 Shared system packages and mise-managed Rubies remain available to other applications. User-edited shell entries and unmarked `.gemrc` settings are preserved. Uninstall works without Ruby, network access, or sudo. You can also run `bash digital-cinema-tools-setup --uninstall` from a downloaded copy.
 

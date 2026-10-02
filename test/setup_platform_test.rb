@@ -13,6 +13,76 @@ class SetupPlatformTest < Minitest::Test
     Open3.capture3(environment, 'bash', '-c', 'source "$1"; shift; ' + code, 'test', SETUP, *arguments)
   end
 
+  def test_shell_path_respects_zsh_and_records_custom_config_for_uninstall
+    Dir.mktmpdir do |dir|
+      config_dir = File.join(dir, 'custom zsh')
+      FileUtils.mkdir_p(config_dir)
+      config = File.join(config_dir, '.zshrc')
+      File.write(config, "# keep my settings\n")
+      2.times do
+        _, error, status = shell('dct_setup_shell_path "$1" macos /bin/zsh "$2"', dir, config_dir)
+        assert status.success?, error
+      end
+      assert_equal 1, File.read(config).scan('# >>> digital-cinema-tools PATH >>>').length
+      refute File.exist?(File.join(dir, '.bashrc'))
+      assert_equal "#{config}\n", File.read(File.join(dir, '.digital_cinema_tools/shell-configs'))
+      _, error, status = shell('dct_uninstall "$1" <<< y', dir)
+      assert status.success?, error
+      assert_equal "# keep my settings\n\n", File.read(config)
+    end
+  end
+
+  def test_macos_bash_respects_existing_login_profile
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, '.profile'), '# existing')
+      output, error, status = shell('dct_shell_configs "$1" macos /bin/bash', dir)
+      assert status.success?, error
+      assert_equal ["#{dir}/.bashrc", "#{dir}/.profile"], output.lines.map(&:strip)
+      File.write(File.join(dir, '.bash_profile'), '# preferred')
+      output, _, status = shell('dct_shell_configs "$1" macos /bin/bash', dir)
+      assert status.success?
+      assert_equal ["#{dir}/.bashrc", "#{dir}/.bash_profile"], output.lines.map(&:strip)
+    end
+  end
+
+  def test_unknown_shell_does_not_write_bash_configuration
+    Dir.mktmpdir do |dir|
+      _, error, status = shell('dct_setup_shell_path "$1" macos /bin/fish', dir)
+      assert status.success?, error
+      assert_includes error, 'add the tools'
+      refute File.exist?(File.join(dir, '.bashrc'))
+    end
+  end
+
+  def test_macos_reuses_tool_ruby_without_rbenv_or_network
+    Dir.mktmpdir do |dir|
+      version = RUBY_VERSION
+      runtime = File.join(dir, '.rbenv/versions', version)
+      FileUtils.mkdir_p(File.join(runtime, 'bin'))
+      File.symlink(RbConfig.ruby, File.join(runtime, 'bin/ruby'))
+      output, error, status = shell('git() { return 99; }; rbenv() { return 99; }; dct_prepare_macos_ruby "$1" "$2"', version, dir)
+      assert status.success?, error
+      assert_equal runtime, output.strip
+      refute File.exist?(File.join(dir, '.rbenv/version'))
+    end
+  end
+
+  def test_zsh_can_find_and_run_ruby_launcher
+    skip 'zsh unavailable on this host; exercised by macOS CI' unless system('command -v zsh >/dev/null', exception: false)
+    Dir.mktmpdir('dct shell ') do |dir|
+      bin = File.join(dir, '.digital_cinema_tools/.bin')
+      FileUtils.mkdir_p(bin)
+      source = File.join(dir, 'tool.rb')
+      File.write(source, 'puts ARGV.fetch(0)')
+      _, error, status = shell('dct_setup_shell_path "$1" macos /bin/zsh; dct_write_ruby_launcher "$2" "$3" "$4" "$5"',
+        dir, RbConfig.ruby, source, File.join(bin, 'dct-test'), File.join(dir, 'gems'))
+      assert status.success?, error
+      output, error, status = Open3.capture3('zsh', '-f', '-c', 'source "$1"; dct-test "argument with spaces"', 'test', File.join(dir, '.zshrc'))
+      assert status.success?, error
+      assert_equal "argument with spaces\n", output
+    end
+  end
+
   def test_os_release_detection
     {'omarchy' => ['arch', 'omarchy'], 'arch' => ['', 'arch'],
      'arch-derivative' => ['arch linux', 'arch'], 'ubuntu' => ['debian', 'ubuntu'],

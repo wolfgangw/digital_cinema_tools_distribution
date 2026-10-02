@@ -70,10 +70,57 @@ dct_prepare_mise_ruby() {
   printf '%s\n' "$prefix"
 }
 
+# macOS needs no rbenv shell integration: ruby-build is only a build tool.
+dct_prepare_macos_ruby() {
+  local version=$1 library=$2 runtime="$2/.rbenv/versions/$1" builder="$2/.rbenv/plugins/ruby-build"
+  if [[ ! -x $runtime/bin/ruby ]]; then
+    mkdir -p "$(dirname "$builder")" || return 1
+    if [[ -d $builder/.git ]]; then
+      git -C "$builder" pull --ff-only origin master >&2 || return 1
+    else
+      git clone https://github.com/rbenv/ruby-build.git "$builder" >&2 || return 1
+    fi
+    RUBY_CONFIGURE_OPTS=--disable-install-doc "$builder/bin/ruby-build" "$version" "$runtime" >&2 || return 1
+  fi
+  "$runtime/bin/ruby" -ropenssl -rpsych -e 'exit(RUBY_VERSION == ARGV[0] ? 0 : 1)' "$version" || return 1
+  printf '%s\n' "$runtime"
+}
+
+# SHELL describes the user's configured shell, not this installer's interpreter.
+dct_shell_configs() {
+  local user_dir=$1 platform=$2 configured_shell=$3 zdotdir=${4:-$1} profile
+  case ${configured_shell##*/} in
+    zsh) printf '%s\n' "$zdotdir/.zshrc" ;;
+    bash)
+      printf '%s\n' "$user_dir/.bashrc"
+      if [[ $platform == macos ]]; then
+        profile="$user_dir/.bash_profile"
+        if [[ ! -e $profile && -e $user_dir/.bash_login ]]; then profile="$user_dir/.bash_login"
+        elif [[ ! -e $profile && -e $user_dir/.profile ]]; then profile="$user_dir/.profile"; fi
+        printf '%s\n' "$profile"
+      fi ;;
+    *) echo "Shell ${configured_shell:-unknown}: add the tools' .bin directory to PATH using your shell configuration." >&2 ;;
+  esac
+}
+
+dct_setup_shell_path() {
+  local user_dir=$1 platform=$2 configured_shell=$3 zdotdir=${4:-$1} config
+  local installation="$1/.digital_cinema_tools"
+  mkdir -p "$installation" || return 1
+  while IFS= read -r config; do
+    [[ -n $config ]] || continue
+    [[ $config == /* && $config != *$'\n'* ]] || return 1
+    dct_add_path "$config" "$installation/.bin" || return 1
+    if ! grep -Fqx "$config" "$installation/shell-configs" 2>/dev/null; then
+      printf '%s\n' "$config" >> "$installation/shell-configs" || return 1
+    fi
+  done < <(dct_shell_configs "$user_dir" "$platform" "$configured_shell" "$zdotdir")
+}
+
 dct_write_ruby_launcher() {
   local ruby_bin=$1 source=$2 destination=$3 gem_dir=$4 temporary
   [[ ! -d $destination ]] || { echo "Command destination is a directory: $destination" >&2; return 1; }
-  if [[ -e $destination && ! -L $destination ]] && ! grep -Eq '^# Digital Cinema Tools (private Ruby|mise Ruby) launcher$' "$destination"
+  if [[ -e $destination && ! -L $destination ]] && ! grep -Eq '^# Digital Cinema Tools (private Ruby|mise Ruby|Ruby) launcher$' "$destination"
   then
     echo "Refusing to replace unmanaged command: $destination" >&2
     return 1
@@ -81,7 +128,7 @@ dct_write_ruby_launcher() {
   temporary=$(mktemp "${destination}.XXXXXX") || return 1
   {
     echo '#!/usr/bin/env bash'
-    echo '# Digital Cinema Tools mise Ruby launcher'
+    echo '# Digital Cinema Tools Ruby launcher'
     echo 'unset GEM_HOME GEM_PATH RUBYOPT RUBYLIB'
     printf 'export GEM_HOME=%q\n' "$gem_dir"
     echo 'export GEM_PATH="$GEM_HOME"'
@@ -168,7 +215,7 @@ dct_clean_config() {
 }
 
 dct_uninstall() {
-  local user_dir=${1%/} install_dir reply
+  local user_dir=${1%/} install_dir reply config
   [[ $user_dir == /* && $user_dir != / && -n $user_dir && -d $user_dir ]] || { echo 'Cannot determine a safe home directory' >&2; return 1; }
   install_dir="$user_dir/.digital_cinema_tools"
   echo "This removes $install_dir (including any files you saved there) and recognized setup entries from your shell configuration."
@@ -181,6 +228,13 @@ dct_uninstall() {
     y|Y|yes|YES|Yes) ;;
     *) echo 'Uninstall cancelled.'; return 0 ;;
   esac
+  if [[ -f $install_dir/shell-configs ]]; then
+    while IFS= read -r config; do
+      [[ $config == /* ]] || continue
+      dct_clean_config "$config" "$install_dir" bashrc || return 1
+    done < "$install_dir/shell-configs"
+  fi
+  dct_clean_config "$user_dir/.zshrc" "$install_dir" bashrc || return 1
   dct_clean_config "$user_dir/.bashrc" "$install_dir" bashrc || return 1
   dct_clean_config "$user_dir/.inputrc" "$install_dir" inputrc || return 1
   # Leave the installation tree before removing it, even when setup itself
@@ -599,24 +653,24 @@ if ! location_exists $libdir ; then mkdir $libdir ; fi
 if ! location_exists $bindir ; then mkdir $bindir ; fi
 
 
-# Add one recognizable, reversible PATH entry.
-if ! dct_add_path "$bashrc" "$bindir"
+# Record only the small PATH addition; never initialize a Ruby manager in the user's shell.
+if ! dct_setup_shell_path "$HOME" "$os_dist" "${SHELL:-}" "${ZDOTDIR:-$HOME}"
 then
-  echo "Could not add the command directory to $bashrc" >&2
+  echo 'Could not add the tools to the shell PATH.' >&2
   exit 1
 fi
-if [[ $DCT_PATH_ADDED == true ]]; then exec_shell_required=true; fi
+exec_shell_required=true
 
 export PATH="$bindir:$PATH"
 
 # On Omarchy/Arch, reuse mise Ruby without changing its active/global selection.
-if [[ $os_dist == omarchy || $os_dist == arch ]]
+if [[ $os_dist == omarchy || $os_dist == arch || $os_dist == macos ]]
 then
   unset GEM_HOME GEM_PATH RUBYOPT RUBYLIB
-  if ! ruby_runtime_dir=$(dct_prepare_mise_ruby "$ruby_version")
-  then
-    echo 'Could not prepare the mise Ruby runtime' >&2
-    exit 1
+  if [[ $os_dist == macos ]]; then
+    ruby_runtime_dir=$(dct_prepare_macos_ruby "$ruby_version" "$libdir") || exit 1
+  else
+    ruby_runtime_dir=$(dct_prepare_mise_ruby "$ruby_version") || exit 1
   fi
   export GEM_SPEC_CACHE="$libdir/gem-spec-cache"
   export GEM_HOME="$libdir/gems/ruby-$ruby_version"
@@ -893,7 +947,7 @@ then
   cd $bindir
   for tool in ${tools[@]}
   do
-    if [[ $os_dist == omarchy || $os_dist == arch ]] && [[ $tool == *.rb || $tool == dcp_inspect ]]
+    if [[ ${DCT_RUBY_MANAGER:-} == direct ]] && [[ $tool == *.rb || $tool == dcp_inspect ]]
     then
       if ! dct_write_ruby_launcher "$ruby_runtime_dir/bin/ruby" "$dist_dir/$tool" "$bindir/$tool" "$GEM_HOME"
       then
@@ -945,25 +999,8 @@ then
 fi
 
 
-# FIXME On re-runs in already working environments this is mis-leading
-if $exec_shell_required
-then
-  echo '  ---------------------------------------------------'
-  echo ' |                                                   |'
-  echo ' |  To finish the installation run                   |'
-  echo ' |                                                   |'
-  case $os_dist in
-    omarchy|arch|debian|ubuntu|redhat)
-      echo ' |    exec $SHELL                                    |'
-      echo ' |                                                   |'
-      echo ' |  in this terminal now (mind the "$" in "$SHELL")  |'
-      ;;
-    macos)
-      echo ' |    exec /bin/bash                                 |'
-  esac
-  echo ' |                                                   |'
-  echo '  ---------------------------------------------------'
-  echo
+if $exec_shell_required; then
+  echo 'Open a new terminal to use the tools with your configured shell.'
 fi
 
 echo "$setup_basename ($setup_version): Done"
