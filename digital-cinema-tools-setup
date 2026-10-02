@@ -698,7 +698,7 @@ cd $rbenv_plugins_dir
 if location_is_git_repo $rubybuild_dir
 then
   cd $rubybuild_dir
-  if ! git fetch origin "${DCT_SETUP_REVISION:-master}" || ! git merge --ff-only FETCH_HEAD
+  if ! git pull --ff-only origin master
   then
     errors+=("ruby-build: Failed to pull updates. Try again later") && echo_last errors[@]
   else

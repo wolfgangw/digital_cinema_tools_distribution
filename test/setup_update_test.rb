@@ -31,6 +31,47 @@ class SetupUpdateTest < Minitest::Test
     end
   end
 
+  def test_ruby_build_updates_its_own_master_with_distribution_revision_set
+    Dir.mktmpdir('dct-ruby-build-test') do |dir|
+      upstream = File.join(dir, 'upstream')
+      plugins = File.join(dir, 'plugins')
+      checkout = File.join(plugins, 'ruby-build')
+      FileUtils.mkdir_p(plugins)
+      git = lambda do |*args|
+        output, error, status = Open3.capture3('git', *args)
+        assert status.success?, "#{output}#{error}"
+        output.strip
+      end
+      git.call('init', '-b', 'master', upstream)
+      git.call('-C', upstream, 'config', 'user.name', 'Test')
+      git.call('-C', upstream, 'config', 'user.email', 'test@example.invalid')
+      git.call('-C', upstream, 'commit', '--allow-empty', '-m', 'Initial')
+      git.call('clone', upstream, checkout)
+      git.call('-C', upstream, 'commit', '--allow-empty', '-m', 'Update')
+      expected = git.call('-C', upstream, 'rev-parse', 'HEAD')
+
+      # Exercise the actual setup section, without running package installation.
+      section = File.read(SETUP).split("# ruby-build (as rbenv plugin)\n", 2).last
+                          .split('# Try to install a ruby version', 2).first
+      script = <<~BASH
+        set -e
+        rbenv_dir="$1"
+        rbenv_plugins_dir="$2"
+        rubybuild_dir="$3"
+        errors=()
+        location_exists() { [[ -e $1 ]]; }
+        location_is_git_repo() { [[ -d $1/.git ]]; }
+        echo_last() { printf '%s\\n' "${errors[@]}"; }
+        #{section}
+        [[ ${#errors[@]} == 0 ]]
+      BASH
+      output, error, status = Open3.capture3({'DCT_SETUP_REVISION' => REV},
+        'bash', '-c', script, 'test', dir, plugins, checkout)
+      assert status.success?, "#{output}#{error}"
+      assert_equal expected, git.call('-C', checkout, 'rev-parse', 'HEAD')
+    end
+  end
+
   def test_current_installation
     out, err, status = run_update('check', body: '#!/bin/bash', git: "echo #{REV}")
     assert status.success?, err
