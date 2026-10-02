@@ -11,11 +11,11 @@ Run `digital-cinema-tools-setup` again for updates. When upgrading an installati
 
 ## Omarchy / Arch Linux
 
-On Omarchy, run `omarchy update` first (and reboot if requested), then use the setup command above. Plain Arch users should run `sudo pacman -Syu` first.
+On Omarchy and Arch Linux, use the setup command above as your normal user. Setup installs any missing dependencies.
 
-Setup detects `ID=omarchy`, `ID=arch`, and Arch-derived `ID_LIKE` entries. Dependencies come from repository packages: `base-devel`, `ruby-build`, `rust`, `cmake`, `git`, `curl`, `ca-certificates`, `openssl`, `libyaml`, `readline`, `zlib`, `gmp`, `libffi`, `gdbm`, `util-linux`, `xerces-c`, `xmlsec`, `sox`, `fd`, and `ffmpeg`. No AUR packages are needed. It installs missing packages through `omarchy pkg add` on Omarchy or `sudo pacman -S --needed` on Arch, without refreshing databases or upgrading the system itself.
+Setup detects `ID=omarchy`, `ID=arch`, and Arch-derived `ID_LIKE` entries. Dependencies come from repository packages: `base-devel`, `ruby-build`, `rust`, `cmake`, `git`, `curl`, `ca-certificates`, `openssl`, `libyaml`, `readline`, `zlib`, `gmp`, `libffi`, `gdbm`, `util-linux`, `xerces-c`, `xmlsec`, `sox`, `fd`, and `ffmpeg`. No AUR packages are needed. It installs missing packages through `omarchy pkg add` on Omarchy or `sudo pacman -S --needed` on Arch.
 
-Arch's rolling updates must be completed before installing dependencies; setup does not attempt partial upgrades, disable package signatures, or resolve package conflicts. Resolve mirror/keyring/lock/conflict errors through the normal updater and retry. `base-devel` supplies build tools; Arch libraries include their development headers, so Debian `-dev` package names do not apply.
+`base-devel` supplies build tools; Arch libraries include their development headers, so Debian `-dev` package names do not apply.
 
 On these platforms, `ruby-build` installs Ruby 3.4.6 privately in `~/.digital_cinema_tools/.lib/ruby-3.4.6`. Generated Ruby command launchers select it explicitly and isolate Ruby gem environment variables. mise and the user's global Ruby selection are untouched. Setup adds only the cinema command directory to Bash's path; other shells need that path added manually. The asdcplib build passes the compatibility policy needed by CMake 4. Rerun setup if a later system-library update breaks a locally built runtime.
 

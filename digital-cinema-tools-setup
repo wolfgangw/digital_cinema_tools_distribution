@@ -30,7 +30,6 @@ dct_arch_packages() {
 dct_install_arch_packages() {
   local platform=$1
   shift
-  echo 'Arch packages require a fully updated system. Run omarchy update (Omarchy) or sudo pacman -Syu (Arch) before setup.'
   if [[ $platform == omarchy ]] && command -v omarchy >/dev/null 2>&1
   then
     omarchy pkg add "$@" || return 1
@@ -350,7 +349,7 @@ then
       omarchy|arch)
         if ! dct_install_arch_packages "$os_dist" "${packages_missing[@]}"
         then
-          echo 'Arch dependency installation failed. Complete your normal system update, resolve pacman errors, and rerun setup.' >&2
+          echo 'Could not install required packages. See the package-manager error above, resolve it, and rerun setup.' >&2
           exit 1
         fi
         ;;
