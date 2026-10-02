@@ -1,5 +1,83 @@
 #!/usr/bin/env bash
 set -e
+
+# These functions are also sourced by the platform regression tests.
+dct_detect_linux() {
+  local ID='' ID_LIKE=''
+  [[ -r $1 ]] || return 1
+  . "$1"
+  case "$ID" in
+    omarchy) echo omarchy ;;
+    arch) echo arch ;;
+    debian) echo debian ;;
+    ubuntu|linuxmint|pop) echo ubuntu ;;
+    fedora|rhel|centos|rocky|almalinux) echo redhat ;;
+    *)
+      case " $ID_LIKE " in
+        *' arch '*) echo arch ;;
+        *' ubuntu '*) echo ubuntu ;;
+        *' debian '*) echo debian ;;
+        *' fedora '*|*' rhel '*) echo redhat ;;
+        *) return 1 ;;
+      esac ;;
+  esac
+}
+
+dct_arch_packages() {
+  echo base-devel ruby-build rust cmake git curl ca-certificates openssl libyaml readline zlib gmp libffi gdbm util-linux xerces-c xmlsec sox fd ffmpeg
+}
+
+dct_install_arch_packages() {
+  local platform=$1
+  shift
+  echo 'Arch packages require a fully updated system. Run omarchy update (Omarchy) or sudo pacman -Syu (Arch) before setup.'
+  if [[ $platform == omarchy ]] && command -v omarchy >/dev/null 2>&1
+  then
+    omarchy pkg add "$@" || return 1
+  else
+    sudo pacman -S --needed "$@" || return 1
+  fi
+  # Check installed state, including package-manager helpers that return success
+  # without installing every requested package.
+  local package
+  for package in "$@"; do
+    pacman -Q "$package" >/dev/null 2>&1 || return 1
+  done
+}
+
+dct_prepare_private_ruby() {
+  local version=$1 prefix=$2
+  if ! "$prefix/bin/ruby" -ropenssl -rpsych -e 'exit(RUBY_VERSION == ARGV[0] ? 0 : 1)' "$version" >/dev/null 2>&1
+  then
+    echo "Ruby: Building private Ruby $version (no changes to mise or global Ruby selection)"
+    RUBY_CONFIGURE_OPTS='--disable-install-doc' MAKE_OPTS='-j4' ruby-build "$version" "$prefix" || return 1
+  fi
+  "$prefix/bin/ruby" -ropenssl -rpsych -e 'exit(RUBY_VERSION == ARGV[0] ? 0 : 1)' "$version"
+}
+
+dct_write_ruby_launcher() {
+  local ruby_bin=$1 source=$2 destination=$3 temporary
+  [[ ! -d $destination ]] || { echo "Command destination is a directory: $destination" >&2; return 1; }
+  if [[ -e $destination && ! -L $destination ]] && ! grep -q '^# Digital Cinema Tools private Ruby launcher$' "$destination"
+  then
+    echo "Refusing to replace unmanaged command: $destination" >&2
+    return 1
+  fi
+  temporary=$(mktemp "${destination}.XXXXXX") || return 1
+  {
+    echo '#!/usr/bin/env bash'
+    echo '# Digital Cinema Tools private Ruby launcher'
+    echo 'unset GEM_HOME GEM_PATH RUBYOPT RUBYLIB'
+    printf 'export PATH=%q:"$PATH"\n' "$(dirname "$ruby_bin")"
+    printf 'exec %q %q "$@"\n' "$ruby_bin" "$source"
+  } > "$temporary"
+  chmod 755 "$temporary"
+  mv -f "$temporary" "$destination"
+}
+
+# Sourcing this file exposes functions without running the installer.
+if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
+
 setup_version='v1.2026.10.02'
 #
 # Usage:
@@ -30,7 +108,7 @@ setup_version='v1.2026.10.02'
 #   * x509_inspect.rb:                  Inspect X.509 certificates
 #   * xsd-check.rb:                     Validate XML documents against Schema definitions
 #
-# This installer supports Debian / Ubuntu / Fedora / MacOS
+# This installer supports Omarchy / Arch / Debian / Ubuntu / Fedora / macOS
 # Needs a working network connection
 #
 # It tries hard not to break anything and to respect the existing environment.
@@ -145,38 +223,10 @@ fi
 #
 # Which OS distribution are we on?
 #
-if [ -f /etc/os-release ] && grep 'Debian' /etc/os-release &> /dev/null
+os_dist=$(dct_detect_linux /etc/os-release) || os_dist=''
+if [[ -z $os_dist ]] && command_exists sw_vers
 then
-  os_dist=debian
-elif [ -f /etc/fedora-release ]
-then
-  os_dist=redhat
-elif [ -f /etc/redhat-release ]
-then
-  os_dist=redhat
-elif [ -f /etc/lsb-release ] && grep 'Ubuntu' /etc/lsb-release &> /dev/null
-then
-  os_dist=ubuntu
-elif [ -f /etc/lsb-release ] && grep 'LinuxMint' /etc/lsb-release &> /dev/null
-then
-  os_dist=ubuntu
-elif [ -f /etc/lsb-release ] && grep 'Pop!_OS' /etc/lsb-release &> /dev/null
-then
-  os_dist=ubuntu
-elif command_exists lsb_release
-then
-  # do the debian thing here lsb_release -a, -i, -r ...
-  if [[ "$(lsb_release --id)" =~ Debian ]]
-  then
-    os_dist=debian
-  fi
-elif command_exists sw_vers
-then
-  # do the mac thing
-  if [[ "$(sw_vers)" =~ macOS ]]
-  then
-    os_dist=macos
-  fi
+  os_dist=macos
 fi
 
 # Bail out if non-supported OS distribution
@@ -222,6 +272,14 @@ fi
 # Depending on which OS we're on set the required packager and switches
 # to install a basic set of packages from distribution sources
 case $os_dist in
+  omarchy|arch)
+    query='pacman'
+    query_params='-Q'
+    packager='pacman'
+    packager_params='-S --needed'
+    packages_required=( $(dct_arch_packages) )
+    packager_prep=''
+    ;;
   debian|ubuntu)
     query='dpkg-query'
     query_params='-s'
@@ -255,6 +313,7 @@ if ! command_exists ffmpeg
 then
   case $os_dist in
     redhat) packages_required+=( ffmpeg-free ) ;;
+    omarchy|arch) ;; # Already included in the Arch package list.
     *) packages_required+=( ffmpeg ) ;;
   esac
 fi
@@ -288,6 +347,13 @@ then
 
     # Install packages
     case $os_dist in
+      omarchy|arch)
+        if ! dct_install_arch_packages "$os_dist" "${packages_missing[@]}"
+        then
+          echo 'Arch dependency installation failed. Complete your normal system update, resolve pacman errors, and rerun setup.' >&2
+          exit 1
+        fi
+        ;;
       debian|ubuntu|redhat)
         if ! [ -z "$packager_prep" ]
         then
@@ -353,11 +419,26 @@ else
   echo '' >> $bashrc
   echo "# $setup_basename: Add $bindir to PATH" >> $bashrc
   echo "export PATH=$bindir:"'$PATH' >> $bashrc
-  source $bashrc
   exec_shell_required=true
 fi
 
 
+export PATH="$bindir:$PATH"
+
+# On Arch, keep Ruby private to these tools instead of competing with mise.
+if [[ $os_dist == omarchy || $os_dist == arch ]]
+then
+  unset GEM_HOME GEM_PATH RUBYOPT RUBYLIB
+  private_ruby_dir="$libdir/ruby-$ruby_version"
+  if ! dct_prepare_private_ruby "$ruby_version" "$private_ruby_dir"
+  then
+    echo 'Could not prepare the private Ruby runtime' >&2
+    exit 1
+  fi
+  export PATH="$private_ruby_dir/bin:$bindir:$PATH"
+  export DCT_RUBY_MANAGER=direct
+else
+export DCT_RUBY_MANAGER=rbenv
 # rbenv
 if command_exists rvm
 then
@@ -490,7 +571,10 @@ else
 fi
 
 
+fi # Arch private Ruby / rbenv
+
 # Nokogiri (with c14n)
+nokogiri_c14n=false
 if command_exists gem
 then
   if gem list -i nokogiri &> /dev/null
@@ -502,7 +586,7 @@ then
     then
       errors+=("Nokogiri: Failed to install required gem nokogiri") && echo_last errors[@]
     else
-      rbenv rehash
+      if [[ ${DCT_RUBY_MANAGER:-rbenv} == rbenv ]]; then rbenv rehash; fi
       echo 'Nokogiri: Installed gem nokogiri'
     fi
   fi
@@ -510,10 +594,9 @@ then
   # Check for C14N support
   if gem list -i nokogiri &> /dev/null
   then
-    if [[ `rbenv version` =~ $ruby_version ]] && command_exists ruby
+    if command_exists ruby && ruby -e 'exit(RUBY_VERSION == ARGV[0] ? 0 : 1)' "$ruby_version"
     then
-      ruby -e "require 'rubygems'; require 'nokogiri'; if Nokogiri::XML::Document.new.respond_to?( 'canonicalize' ) then exit 0 else exit 1 ; end"
-      if [ $? == 0 ]
+      if ruby -e "require 'rubygems'; require 'nokogiri'; exit(Nokogiri::XML::Document.new.respond_to?(:canonicalize) ? 0 : 1)"
       then
         nokogiri_c14n=true
         echo 'Nokogiri: C14N support present'
@@ -539,7 +622,7 @@ fi # Nokogiri
 
 # asdcplib
 cd $libdir
-if command_exists asdcp-info && command_exists asdcp-unwrap && command_exists kmuuidgen && [[ `asdcp-info -V` =~ $asdcplib_version ]]
+if command_exists asdcp-info && command_exists asdcp-unwrap && command_exists kmuuidgen && [[ "$(asdcp-info -V 2>&1)" == *"$asdcplib_version"* ]]
 then
   echo "asdcplib: OK ($asdcplib_version)"
   if location_exists $asdcplib_dir && location_is_git_repo $asdcplib_dir
@@ -563,7 +646,10 @@ else
   else
     git checkout $asdcplib_version_tag
     mkdir $asdcplib_build_dir && cd $asdcplib_build_dir
+    cmake_options=()
     case $os_dist in
+      omarchy|arch)
+        cmake_options+=( -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ) ;;
       ubuntu)
         echo "asdcplib ($os_dist): FIXME patching CMakeLists.txt"
         sed -i 's/cmake_minimum_required(VERSION 3.0)/cmake_minimum_required(VERSION 3.5)/' ../CMakeLists.txt
@@ -574,7 +660,7 @@ else
         echo "asdcplib ($os_dist): FIXME patching CMakeLists.txt"
         sed -i '' -e 's/cmake_minimum_required(VERSION 3.0)/cmake_minimum_required(VERSION 3.5)/' ../CMakeLists.txt
     esac
-    if cmake -DCMAKE_INSTALL_PREFIX=$asdcplib_install_dir .. && make -j4 && make install
+    if cmake "${cmake_options[@]}" -DCMAKE_INSTALL_PREFIX="$asdcplib_install_dir" .. && make -j4 && make install
     then
       asdcplib_build=ok
     else
@@ -630,6 +716,14 @@ then
   cd $bindir
   for tool in ${tools[@]}
   do
+    if [[ $os_dist == omarchy || $os_dist == arch ]] && [[ $tool == *.rb || $tool == dcp_inspect ]]
+    then
+      if ! dct_write_ruby_launcher "$private_ruby_dir/bin/ruby" "$dist_dir/$tool" "$bindir/$tool"
+      then
+        errors+=("Could not install private Ruby launcher for $tool") && echo_last errors[@]
+      fi
+      continue
+    fi
     if [ -e $bindir/$tool ] && command_exists $tool
     then
       # Special case: setup might be hanging around here from a previous run:
@@ -702,7 +796,7 @@ then
   echo ' |  To finish the installation run                   |'
   echo ' |                                                   |'
   case $os_dist in
-    debian|ubuntu|redhat)
+    omarchy|arch|debian|ubuntu|redhat)
       echo ' |    exec $SHELL                                    |'
       echo ' |                                                   |'
       echo ' |  in this terminal now (mind the "$" in "$SHELL")  |'

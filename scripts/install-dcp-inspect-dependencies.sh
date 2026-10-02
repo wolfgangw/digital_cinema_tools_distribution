@@ -12,5 +12,5 @@ for required_gem in nokogiri ttfunk base64
     echo "dcp_inspect: Installed gem $required_gem"
   fi
 done
-rbenv rehash
+if [[ ${DCT_RUBY_MANAGER:-rbenv} == rbenv ]]; then rbenv rehash; fi
 ruby "$script_dir/verify-dcp-inspect.rb" --runtime
