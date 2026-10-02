@@ -9,16 +9,6 @@ bash digital-cinema-tools-setup
 
 Run `digital-cinema-tools-setup` again for updates. When upgrading an installation whose setup script predates this release, run it twice: the first run fetches the new setup script; the second installs its additional dependencies. Setup reports a failure if the inspector bundle, Ruby gems, required commands, or audio filters are missing.
 
-## Omarchy / Arch Linux
-
-On Omarchy and Arch Linux, use the setup command above as your normal user. Setup installs any missing dependencies.
-
-Setup detects `ID=omarchy`, `ID=arch`, and Arch-derived `ID_LIKE` entries. Dependencies come from repository packages: `base-devel`, `ruby-build`, `rust`, `cmake`, `git`, `curl`, `ca-certificates`, `openssl`, `libyaml`, `readline`, `zlib`, `gmp`, `libffi`, `gdbm`, `util-linux`, `xerces-c`, `xmlsec`, `sox`, `fd`, and `ffmpeg`. No AUR packages are needed. It installs missing packages through `omarchy pkg add` on Omarchy or `sudo pacman -S --needed` on Arch.
-
-`base-devel` supplies build tools; Arch libraries include their development headers, so Debian `-dev` package names do not apply.
-
-On these platforms, `ruby-build` installs Ruby 3.4.6 privately in `~/.digital_cinema_tools/.lib/ruby-3.4.6`. Generated Ruby command launchers select it explicitly and isolate Ruby gem environment variables. mise and the user's global Ruby selection are untouched. Setup adds only the cinema command directory to Bash's path; other shells need that path added manually. The asdcplib build passes the compatibility policy needed by CMake 4. Rerun setup if a later system-library update breaks a locally built runtime.
-
 ## dcp_inspect layout
 
 `dcp_inspect` is a launcher for the complete release in `vendor/dcp_inspect/`. That bundle contains the executable, `lib/`, `VERSION`, and its own `xsd/` store. Keep the bundle and launcher together. The distribution's root `xsd/` serves the other tools independently. `toollist` lists command entry points, not their support files; it needs no changes for inspector releases.
