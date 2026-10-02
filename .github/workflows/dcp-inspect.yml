@@ -1,0 +1,16 @@
+name: dcp_inspect release
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4.6'
+      - run: gem install nokogiri ttfunk base64 minitest --no-document
+      - run: bash -n digital-cinema-tools-setup && bash -n scripts/install-dcp-inspect-dependencies.sh
+      - run: ruby scripts/verify-dcp-inspect.rb
+      - run: ruby test/dcp_inspect_distribution_test.rb

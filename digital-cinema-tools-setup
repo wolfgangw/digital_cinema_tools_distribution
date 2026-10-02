@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-setup_version='v1.2026.06.16'
+setup_version='v1.2026.10.02'
 #
 # Usage:
 #
@@ -63,7 +63,7 @@ rbenv_plugins_dir=$rbenv_dir/plugins
 # Ruby build system: ruby-build
 rubybuild_url="https://github.com/sstephenson/ruby-build.git"
 rubybuild_dir=$rbenv_plugins_dir/ruby-build
-ruby_version='3.2.2'
+ruby_version='3.4.6'
 gemrc=$HOME/.gemrc
 
 # Handle SMPTE and Interop trackfiles: AS-DCP Lib
@@ -249,6 +249,16 @@ case $os_dist in
 esac
 
 
+# Audio analysis needs FFmpeg. Keep an existing installation and verify its
+# filters after installing the inspector's Ruby dependencies.
+if ! command_exists ffmpeg
+then
+  case $os_dist in
+    redhat) packages_required+=( ffmpeg-free ) ;;
+    *) packages_required+=( ffmpeg ) ;;
+  esac
+fi
+
 # Check for the presence of required basic distribution packages
 if command_exists $query && command_exists $packager
 then
@@ -416,7 +426,7 @@ then
     echo 'gemrc: Keeping changed gemrc (--no-ri/rdoc switches will not be added)'
   fi
 else
-  echo 'gem: --no-ri --no-rdoc' > $gemrc
+  echo 'gem: --no-document' > $gemrc
 fi
 
 
@@ -434,7 +444,7 @@ cd $rbenv_plugins_dir
 if location_is_git_repo $rubybuild_dir
 then
   cd $rubybuild_dir
-  if ! git pull origin master
+  if ! git pull --ff-only origin master
   then
     errors+=("ruby-build: Failed to pull updates. Try again later") && echo_last errors[@]
   else
@@ -599,7 +609,7 @@ if location_is_git_repo $dist_dir
 then
   cd $dist_dir
   echo "Digital cinema tools distribution: Pulling updates ..."
-  if ! git pull origin master
+  if ! git pull --ff-only origin master
   then
     errors+=("Digital cinema tools distribution: Failed to pull updates. Try again later") && echo_last errors[@]
   fi
@@ -641,20 +651,10 @@ then
 else
   errors+=("Digital cinema tools distribution: Failed to update $bindir. Repository missing") && echo_last errors[@]
 fi
-# dcp_inspect: gem ttfunk
-if command_exists gem
+# dcp_inspect: runtime gems and complete release validation
+if ! bash "$dist_dir/scripts/install-dcp-inspect-dependencies.sh"
 then
-  if gem list -i ttfunk &> /dev/null
-  then
-    echo 'dcp_inspect: gem ttfunk OK'
-  else
-    if ! gem install ttfunk && rbenv rehash
-    then
-      echo 'dcp_inspect: Failed to install gem ttfunk'
-    else
-      echo 'dcp_inspect: gem ttfunk OK'
-    fi
-  fi
+  errors+=("dcp_inspect: Release or runtime dependency setup failed") && echo_last errors[@]
 fi
 # Done: Digital Cinemas Tools Distribution
 
