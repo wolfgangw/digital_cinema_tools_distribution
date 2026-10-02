@@ -3,11 +3,13 @@
 Install or update the tools using the [Setup instructions](https://github.com/wolfgangw/digital_cinema_tools_distribution/wiki/Setup). The setup script installs into `~/.digital_cinema_tools`, prepares Ruby 3.4.6, asdcplib, FFmpeg, and required Ruby gems, and links the commands into its `.bin` directory.
 
 ```sh
-curl -fLO https://raw.githubusercontent.com/wolfgangw/digital_cinema_tools_distribution/master/digital-cinema-tools-setup
+curl -fL https://git.io/digital-cinema-tools-setup -o digital-cinema-tools-setup
 bash digital-cinema-tools-setup
 ```
 
-Run `digital-cinema-tools-setup` again for updates. When upgrading an installation whose setup script predates this release, run it twice: the first run fetches the new setup script; the second installs its additional dependencies. Setup reports a failure if the inspector bundle, Ruby gems, required commands, or audio filters are missing.
+Run `digital-cinema-tools-setup --check-update` to check for updates without installing. Run `digital-cinema-tools-setup` to install/update: it downloads and runs the latest setup automatically, then installs the matching distribution revision in the same run. Checks use HTTPS and require curl or wget; network failures stop before installation. There is no background polling.
+
+To upgrade an older installer that lacks these options, download setup once using the command above. Developers can use `--no-self-update` to run their local script without replacing it with the published version. Setup reports a failure if required dependencies or the inspector bundle are missing.
 
 On Omarchy/Arch, setup reuses Ruby 3.4.6 from mise or requests a prebuilt download. It does not change mise configuration or fall back to compiling Ruby. Tool-specific gems live under `~/.digital_cinema_tools`; system Ruby and shared gem installations are untouched.
 
@@ -54,6 +56,7 @@ ruby scripts/verify-dcp-inspect.rb --runtime  # also gems, commands, FFmpeg filt
 ruby test/dcp_inspect_distribution_test.rb    # requires minitest and inspector gems
 ruby test/setup_platform_test.rb             # platform, package-manager, launcher tests
 ruby test/setup_uninstall_test.rb            # confirmed removal and shell cleanup
+ruby test/setup_update_test.rb               # update checks and installer handoff
 ```
 
 Tests use temporary directories and mock dependency installation; they do not install system packages or alter the user's shell configuration. Full setup still needs platform testing on Linux and macOS.

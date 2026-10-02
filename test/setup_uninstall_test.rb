@@ -149,6 +149,8 @@ class SetupUninstallTest < Minitest::Test
     output, _, status = Open3.capture3({'PATH' => '/nonexistent'}, '/bin/bash', SETUP, '--help')
     assert status.success?
     assert_includes output, '--uninstall'
+    _, _, status = Open3.capture3({'PATH' => '/nonexistent'}, '/bin/bash', SETUP, '--uninstall', 'extra')
+    assert_equal 2, status.exitstatus
     _, _, status = Open3.capture3({'PATH' => '/nonexistent'}, '/bin/bash', SETUP, 'unknown')
     assert_equal 2, status.exitstatus
   end

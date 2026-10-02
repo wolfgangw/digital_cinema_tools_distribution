@@ -16,3 +16,4 @@ jobs:
       - run: ruby test/dcp_inspect_distribution_test.rb
       - run: ruby test/setup_platform_test.rb
       - run: ruby test/setup_uninstall_test.rb
+      - run: ruby test/setup_update_test.rb

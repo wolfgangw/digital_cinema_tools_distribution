@@ -191,21 +191,85 @@ dct_uninstall() {
   echo 'Shared system packages, mise runtimes, unmarked .gemrc settings, and user-edited shell entries were left in place.'
 }
 
+# Fetch only from the distribution's HTTPS publication endpoints.
+dct_download() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --connect-timeout 10 --max-time 60 "$1" -o "$2"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --timeout=30 --tries=1 -O "$2" "$1"
+  else
+    echo 'Update check needs curl or wget.' >&2
+    return 1
+  fi
+}
+
+# Run in a subshell so temporary downloads are removed on success and failure.
+dct_update() (
+  local mode=$1 source=$2 installed=$3 scratch revision current status
+  scratch=$(mktemp -d "${TMPDIR:-/tmp}/dct-update.XXXXXXXX") || exit 1
+  trap 'rm -rf -- "$scratch"' EXIT
+  dct_download 'https://api.github.com/repos/wolfgangw/digital_cinema_tools_distribution/commits/master' "$scratch/revision" || {
+    echo 'Cannot check for updates. Try again later, or use --no-self-update to run this copy.' >&2
+    exit 1
+  }
+  revision=$(sed -n 's/^  "sha": "\([0-9a-f]*\)",$/\1/p' "$scratch/revision" | head -n 1)
+  [[ $revision =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid update revision.' >&2; exit 1; }
+  dct_download "https://raw.githubusercontent.com/wolfgangw/digital_cinema_tools_distribution/$revision/digital-cinema-tools-setup" "$scratch/digital-cinema-tools-setup" || exit 1
+  bash -n "$scratch/digital-cinema-tools-setup" || exit 1
+  current=$(git -C "$installed" rev-parse HEAD 2>/dev/null) || current=''
+  if [[ $mode == check ]]; then
+    if [[ $current == "$revision" ]] && cmp -s "$source" "$scratch/digital-cinema-tools-setup"; then
+      echo 'Digital Cinema Tools is up to date.'
+    elif [[ -n $current ]]; then
+      echo 'An update is available (or your local copy differs). Run digital-cinema-tools-setup to update.'
+    elif cmp -s "$source" "$scratch/digital-cinema-tools-setup"; then
+      echo 'Setup is up to date; no installed distribution was found.'
+    else
+      echo 'A newer published setup is available. Run this script without arguments to install/update.'
+    fi
+    exit 0
+  fi
+  if [[ -n $current ]]; then
+    if [[ -n $(git -C "$installed" status --porcelain) ]] ||
+       ! git -C "$installed" fetch origin "$revision" ||
+       ! git -C "$installed" merge-base --is-ancestor HEAD "$revision"; then
+      echo 'Installed checkout has local changes, unpublished commits, or could not be checked. Resolve this before updating.' >&2
+      exit 1
+    fi
+  fi
+  if ! cmp -s "$source" "$scratch/digital-cinema-tools-setup"; then
+    echo 'Using the latest published setup for this run.'
+  fi
+  # The snapshot survives changes to the installed checkout during installation.
+  DCT_SETUP_REVISION="$revision" bash "$scratch/digital-cinema-tools-setup" --no-self-update
+)
+
 # Sourcing this file exposes functions without running the installer.
 if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
 
 case ${1:-} in
   --uninstall)
-    [[ $# == 1 ]] || { echo 'Usage: digital-cinema-tools-setup [--uninstall]' >&2; exit 2; }
+    [[ $# == 1 ]] || { echo 'Usage: digital-cinema-tools-setup [--check-update|--uninstall|--no-self-update]' >&2; exit 2; }
     dct_uninstall "$HOME"
     exit $? ;;
+  --check-update)
+    [[ $# == 1 ]] || exit 2
+    dct_update check "${BASH_SOURCE[0]}" "$HOME/.digital_cinema_tools/.lib/digital_cinema_tools_distribution"
+    exit $? ;;
+  --no-self-update) [[ $# == 1 ]] || exit 2 ;;
   -h|--help)
-    echo 'Usage: digital-cinema-tools-setup [--uninstall]'
+    echo 'Usage: digital-cinema-tools-setup [--check-update|--uninstall|--no-self-update]'
     echo 'No arguments: install/update. --uninstall: confirm removal of the tools and their shell entries.'
+    echo '--check-update: report updates without installing. --no-self-update: run this local copy.'
     exit 0 ;;
   '') ;;
-  *) echo 'Usage: digital-cinema-tools-setup [--uninstall]' >&2; exit 2 ;;
+  *) echo 'Usage: digital-cinema-tools-setup [--check-update|--uninstall|--no-self-update]' >&2; exit 2 ;;
 esac
+
+if [[ ${1:-} != --no-self-update ]]; then
+  dct_update install "${BASH_SOURCE[0]}" "$HOME/.digital_cinema_tools/.lib/digital_cinema_tools_distribution"
+  exit $?
+fi
 
 setup_version='v1.2026.10.02'
 #
@@ -634,7 +698,7 @@ cd $rbenv_plugins_dir
 if location_is_git_repo $rubybuild_dir
 then
   cd $rubybuild_dir
-  if ! git pull --ff-only origin master
+  if ! git fetch origin "${DCT_SETUP_REVISION:-master}" || ! git merge --ff-only FETCH_HEAD
   then
     errors+=("ruby-build: Failed to pull updates. Try again later") && echo_last errors[@]
   else
@@ -804,15 +868,19 @@ if location_is_git_repo $dist_dir
 then
   cd $dist_dir
   echo "Digital cinema tools distribution: Pulling updates ..."
-  if ! git pull --ff-only origin master
+  if ! git fetch origin "${DCT_SETUP_REVISION:-master}" || ! git merge --ff-only FETCH_HEAD
   then
-    errors+=("Digital cinema tools distribution: Failed to pull updates. Try again later") && echo_last errors[@]
+    echo "Digital cinema tools distribution: Could not update checkout; installation stopped." >&2
+    exit 1
   fi
 else
   remove_if_exists $dist_dir
-  if ! git clone $dist_url
+  if ! git clone --no-checkout "$dist_url" "$dist_dir" ||
+     ! git -C "$dist_dir" fetch origin "${DCT_SETUP_REVISION:-master}" ||
+     ! git -C "$dist_dir" checkout -B master FETCH_HEAD
   then
-    errors+=("Digital cinema tools distribution: Failed to clone repository. Try again later") && echo_last errors[@]
+    echo "Digital cinema tools distribution: Could not download release; installation stopped." >&2
+    exit 1
   else
     echo 'Digital cinema tools distribution: Repository OK'
   fi
