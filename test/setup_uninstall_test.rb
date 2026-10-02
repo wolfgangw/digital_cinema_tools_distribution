@@ -148,7 +148,7 @@ class SetupUninstallTest < Minitest::Test
   def test_help_and_unknown_argument_do_not_require_dependencies
     output, _, status = Open3.capture3({'PATH' => '/nonexistent'}, '/bin/bash', SETUP, '--help')
     assert status.success?
-    assert_includes output, 'uninstall'
+    assert_includes output, '--uninstall'
     _, _, status = Open3.capture3({'PATH' => '/nonexistent'}, '/bin/bash', SETUP, 'unknown')
     assert_equal 2, status.exitstatus
   end

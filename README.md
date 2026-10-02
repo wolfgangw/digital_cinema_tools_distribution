@@ -14,12 +14,12 @@ On Omarchy/Arch, setup reuses Ruby 3.4.6 from mise or requests a prebuilt downlo
 ## Uninstall
 
 ```sh
-digital-cinema-tools-setup uninstall
+digital-cinema-tools-setup --uninstall
 ```
 
 After confirmation, setup removes `~/.digital_cinema_tools` and its recognized PATH/rbenv entries in `~/.bashrc`, plus any unchanged, marked completion setting it owns in `~/.inputrc`. Open a new shell afterwards. Files saved inside the installation directory are removed too.
 
-Shared system packages and mise-managed Rubies remain available to other applications. User-edited shell entries and unmarked `.gemrc` settings are preserved. Uninstall works without Ruby, network access, or sudo. You can also run `bash digital-cinema-tools-setup uninstall` from a downloaded copy.
+Shared system packages and mise-managed Rubies remain available to other applications. User-edited shell entries and unmarked `.gemrc` settings are preserved. Uninstall works without Ruby, network access, or sudo. You can also run `bash digital-cinema-tools-setup --uninstall` from a downloaded copy.
 
 ## dcp_inspect layout
 

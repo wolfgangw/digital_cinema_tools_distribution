@@ -195,16 +195,16 @@ dct_uninstall() {
 if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
 
 case ${1:-} in
-  uninstall)
-    [[ $# == 1 ]] || { echo 'Usage: digital-cinema-tools-setup [uninstall]' >&2; exit 2; }
+  --uninstall)
+    [[ $# == 1 ]] || { echo 'Usage: digital-cinema-tools-setup [--uninstall]' >&2; exit 2; }
     dct_uninstall "$HOME"
     exit $? ;;
   -h|--help)
-    echo 'Usage: digital-cinema-tools-setup [uninstall]'
-    echo 'No arguments: install/update. uninstall: confirm removal of the tools and their shell entries.'
+    echo 'Usage: digital-cinema-tools-setup [--uninstall]'
+    echo 'No arguments: install/update. --uninstall: confirm removal of the tools and their shell entries.'
     exit 0 ;;
   '') ;;
-  *) echo 'Usage: digital-cinema-tools-setup [uninstall]' >&2; exit 2 ;;
+  *) echo 'Usage: digital-cinema-tools-setup [--uninstall]' >&2; exit 2 ;;
 esac
 
 setup_version='v1.2026.10.02'
@@ -220,7 +220,7 @@ setup_version='v1.2026.10.02'
 #       digital-cinema-tools-setup
 #     in a terminal
 #
-#   * To uninstall run digital-cinema-tools-setup uninstall
+#   * To uninstall run digital-cinema-tools-setup --uninstall
 #
 # This setup script will install everything required (batteries included) to run
 #
