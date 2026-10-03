@@ -158,6 +158,10 @@ module DcpInspect
             #
             # collect all asset nodes
             assets = xml.xpath( '//Asset' )
+            MetadataChecks.duplicate_ids(assets.xpath('Id')).each do |id|
+              errors << "AM #{am_id}: Duplicate Asset Id #{id} ❌"
+              am_errors = true
+            end
             assetmap_model.asset_count = assets.size
 
             @logger.debug "AM #{ am_id }: #{ am_file }"
@@ -282,7 +286,27 @@ module DcpInspect
               end # path.nil?
 
               # PackingList?
-              unless asset.xpath( 'PackingList' ).empty?
+              packing_list = asset.at_xpath( 'PackingList' )
+              is_packing_list = false
+              if packing_list
+                case am_ns
+                when MStr::Interop_am
+                  is_packing_list = true
+                when MStr::Smpte_am
+                  # xs:boolean permits true/false and 1/0, with whitespace
+                  # collapsed. Presence alone does not identify a PKL.
+                  case packing_list.text.strip
+                  when 'true', '1'
+                    is_packing_list = true
+                  when 'false', '0'
+                    is_packing_list = false
+                  else
+                    errors << "AM #{ am_id }: Asset #{ listed_id }: Invalid SMPTE PackingList boolean #{ packing_list.text.inspect }; expected true, false, 1 or 0"
+                    am_errors = true
+                  end
+                end
+              end
+              if is_packing_list
                 if path
                   inspection_run.packing_list(
                     listed_id,
@@ -291,18 +315,7 @@ module DcpInspect
                     :absolute_path => package( dict[ index ][ listed_id ] ),
                     :present => File.exist?( package( dict[ index ][ listed_id ] ) )
                   )
-                  case am_ns
-                  when MStr::Interop_am
-                    pkls[ index ] << listed_id
-                  when MStr::Smpte_am
-                    if asset.xpath( 'PackingList' ).text == 'true'
-                      pkls[ index ] << listed_id
-                    else
-                      errors << "AM #{ am_id }: SMPTE AM requires a PackingList element to contain the value 'true' (value is missing). Continuing anyway"
-                      am_errors = true
-                      pkls[ index ] << listed_id
-                    end
-                  end
+                  pkls[ index ] << listed_id
                 else
                   errors << "AM #{ am_id }: Found alleged PackingList asset #{ listed_id } but Path element is empty. Not adding to dictionary ❌"
                   am_errors = true
@@ -423,6 +436,7 @@ module DcpInspect
         cpls = Array.new
         cpl_contexts = Array.new
         cpls_missing = Array.new
+        store_hashes = Hash.new { |hash, id| hash[id] = [] }
         packages_size_listed = 0
         packages_size_actual = 0
 
@@ -444,6 +458,7 @@ module DcpInspect
             if xml
 
               @logger.debug "PKL #{ pkl_id }: #{ pkl_file }"
+              pkl_namespace = xml.root.namespace&.href
 
               if options.schema_validate
                 begin
@@ -462,7 +477,7 @@ module DcpInspect
 
               if @c14n_available
                 signature_result = check_signature( xml )
-                if signature_result.verified? and signature_result.crypto.errors[ :context ].values.flatten.empty?
+                if signature_result.check_status == :ok
                   @signed_pkls_verified_count += 1
                 end
                 unless signature_result.signature_node.empty?
@@ -471,7 +486,7 @@ module DcpInspect
                   siginfo = signature_verification_siginfo( siginfo, signature_result, pkl_id, pkl_file, 'PKL' )
                 end
                 pkl_model.signature_status = signature_result.messages.last
-                inspection_run.add_check( pkl_model, :signature, signature_result.check_status, signature_result.messages.last )
+                inspection_run.add_check( pkl_model, :signature, signature_result.check_status, signature_result.messages.last, signature_result.verification_details )
                 @logger.debug "PKL #{ pkl_id }: #{ signature_result.messages.last }"
                 if signature_result and ! signature_result.signature_node.empty?
                   @signed_pkls_count += 1
@@ -481,29 +496,14 @@ module DcpInspect
                     @logger.debug short_report[ 0 ]
                     @logger.debug short_report[ 1 ]
                   end
-
-                  # Todo: Compare names in Signer and certificate
-                  #
-
-                  # Check Signer.X509Data.X509IssuerSerial info vs signer certificate
-                  # See e.g. dcp_2/V174* for a serial mismatch
-                  if ! signature_result.signer_node.empty? and sig_info[ :x509serialnumber ] and sig_info[ :cert_serial ]
-                    if sig_info[ :x509serialnumber ] != sig_info[ :cert_serial ]
-                      errors << "PKL #{ pkl_id }: Signer serial mismatch ❌: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
-                      pkl_errors = true
-                      @logger.debug errors.last
-                    end
-                  else
-                    errors << "PKL #{ pkl_id }: Signer info :x509serialnumber or :cert_serial could not be retrieved"
-                    pkl_errors = true
-                    @logger.debug errors.last
-                  end
                 end
               else
                 signature_result = nil
               end
 
               # FIXME
+              pkl_unsigned = xml.xpath('//*[local-name()="Signature" and namespace-uri()="http://www.w3.org/2000/09/xmldsig#"]').empty?
+              pkl_encrypted_asset_ids = []
               xml.remove_namespaces!
 
               pkl_annotation_text = xml.xpath( '/PackingList/AnnotationText' ).text
@@ -520,6 +520,16 @@ module DcpInspect
               pkl_cpls = Array.new
 
               pkl_assets = xml.xpath( '//Asset' )
+              MetadataChecks.duplicate_ids(pkl_assets.xpath('Id')).each do |id|
+                errors << "PKL #{pkl_id}: Duplicate Asset Id #{id} ❌"
+                pkl_errors = true
+              end
+              pkl_hashes = options.as_asset_store ? store_hashes : Hash.new { |hash, id| hash[id] = [] }
+              pkl_assets.each do |asset|
+                id = asset.at_xpath('Id')&.text.to_s.split(':').last
+                digest = asset.at_xpath('Hash')&.text.to_s.gsub(/\s+/, '')
+                pkl_hashes[id] << { pkl_id: pkl_id, hash: digest } unless id.to_s.empty? || digest.empty?
+              end
               pkl_model.asset_count = pkl_assets.size
               @logger.debug "PKL #{ pkl_id } lists #{ amount( 'asset', pkl_assets.size ) }"
               pkl_asset_ids = pkl_assets.map { |asset| asset.xpath( 'Id' ).text.split( ':' ).last }.reject { |id| id.empty? }
@@ -595,6 +605,14 @@ module DcpInspect
                   size_listed = asset.xpath( 'Size' ).text.to_i
 
                   if File.exist?( asset_file )
+                    if pkl_namespace == MStr::Smpte_pkl && inspect_mxf(asset_file)&.fetch('EncryptedEssence', nil) == 'Yes'
+                      pkl_encrypted_asset_ids << id
+                    end
+                    inspect_pkl_asset_type(asset_file, type, pkl_namespace).each do |message|
+                      errors << "PKL #{pkl_id}: Asset #{id}: #{message} ❌"
+                      pkl_errors = true
+                      inspection_run.add_check(asset_model, :type, :error, errors.last) if asset_model
+                    end
                     size_asset = File.size( asset_file )
                     asset_model.size_actual = size_asset if asset_model
                     #
@@ -628,7 +646,15 @@ module DcpInspect
                           pkl_errors = true
                         else
                           if options.check_hashes
-                            if options.check_hashes_limit == :no_limit or bytes_from_nice_bytes( options.check_hashes_limit ) > size_asset
+                            if options.skip_png_hashes && File.binread(asset_file, 8) == "\x89PNG\r\n\x1a\n".b
+                              @check_hashes_png_hits += 1
+                              hints << "PKL #{ pkl_id }: Hash check skipped (--np): PNG asset #{ id }, Path #{ asset_file }, Expected hash: #{ hash_listed }"
+                              if asset_model
+                                asset_model.hash_status = 'skipped PNG (--np)'
+                                inspection_run.add_check( asset_model, :hash, :skipped, hints.last )
+                              end
+                              @logger.debug hints.last
+                            elsif options.check_hashes_limit == :no_limit or bytes_from_nice_bytes( options.check_hashes_limit ) > size_asset
                               @check_hashes_hits += 1
                               hash_jobs << {
                                 :priority => hash_priority_for_pkl_asset( id, type, pkl_asset_order, hash_priorities ),
@@ -735,7 +761,18 @@ module DcpInspect
                   end
                 end
               end
-              pkl_model.package_size_listed = package_size_listed
+              if pkl_namespace == MStr::Smpte_pkl && pkl_unsigned && pkl_encrypted_asset_ids.any?
+                message = "PKL #{pkl_id}: Unsigned SMPTE PKL lists observed encrypted essence. DCI DCSS 5.5.2.3 requires signing such Packing Lists for transport integrity. PKL signing does not establish CPL ContentAuthenticator compatibility or determine a KDM formulation."
+                hints << message
+                @logger.debug message
+                inspection_run.add_check(pkl_model, :unsigned_encrypted, :hint, message,
+                  { encrypted_asset_ids: pkl_encrypted_asset_ids.uniq })
+              end
+              # Include declarations for assets absent from the AssetMap too.
+              # Invalid declarations must not become plausible zero-byte totals.
+              declared_sizes = pkl_assets.map { |asset| Timing.units(asset.xpath('Size').text) }
+              package_size_listed = declared_sizes.sum if declared_sizes.all?
+              pkl_model.package_size_listed = declared_sizes.all? ? package_size_listed : nil
               pkl_model.package_size_actual = package_size_actual
               @logger.debug "PKL #{ pkl_id }: Package size: #{ package_size_actual == package_size_listed ? package_size_actual.to_k : package_size_actual.to_k + ' (Listed: ' + package_size_listed.to_k + ')' }"
               # List this PKLs CPLs
@@ -755,6 +792,9 @@ module DcpInspect
                     cpl_contexts[ index ] << {
                       :cpl_id => cpl_id,
                       :pkl_id => pkl_id,
+                      :pkl_hashes => pkl_hashes,
+                      :pkl_asset_ids => pkl_asset_ids.dup,
+                      :resource_dict => dict[index],
                       :dict => pkl_dict
                     }
                   end
@@ -810,6 +850,7 @@ module DcpInspect
         cpl_inspection_contexts = cpl_contexts.flatten
         cpl_context_counts = Hash.new( 0 )
         cpl_inspection_contexts.each { |context| cpl_context_counts[ context[ :cpl_id ] ] += 1 }
+        cpl_titles = {}
         cpl_accounting = {
           :signed_cpl_ids => {},
           :verified_cpl_ids => {},
@@ -825,9 +866,15 @@ module DcpInspect
             if File.exist?( cpl_file )
               xml = xml?( cpl_file )
               if xml
+                title_node = xml.root.element_children.find { |node| node.name == 'ContentTitleText' && node.namespace&.href == xml.root.namespace&.href }
+                cpl_titles[cpl_id] = title_node&.text.to_s
 
                 cpl_context = {
                   :accounting => cpl_accounting,
+                  :pkl_hashes => context[:pkl_hashes],
+                  :pkl_asset_ids => context[:pkl_asset_ids],
+                  :pkl_id => context[:pkl_id],
+                  :resource_dict => context[:resource_dict],
                   :dict_label => options.as_asset_store ? 'asset-store dictionary' : "PKL #{ context[ :pkl_id ] } asset dictionary"
                 }
                 if cpl_context_counts[ cpl_id ] > 1
@@ -846,6 +893,14 @@ module DcpInspect
           end
         end
 
+
+        MetadataChecks.duplicate_titles(cpl_titles).each do |duplicate|
+          message = "Identical ContentTitleText #{duplicate[:title].inspect} in distinct CPLs #{duplicate[:cpl_ids].join(', ')}; review version naming (advisory, not a specification violation)"
+          hints << message
+          duplicate[:cpl_ids].each do |id|
+            inspection_run.add_check(inspection_run.compositions[id], :duplicate_title, :hint, message, duplicate)
+          end
+        end
 
         # prep for Info summary block
         pkls = pkls.flatten
@@ -871,7 +926,8 @@ module DcpInspect
         info << "Found #{ amount( 'Package', pkls ) } with total size #{ total_size }"
         info << 'Hash checks skipped' if ( options.check_hashes == false && pkls.size > 0 )
         info << "Hash checks skipped for assets bigger than #{ @check_hashes_limit_nice }" if @check_hashes_limit_nice
-        info << "Hash checks skipped for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits } total" if @check_hashes_limit_nice
+        info << "Hash checks skipped by size for #{ amount( 'asset', @check_hashes_limit_hits ) } of #{ @check_hashes_hits + @check_hashes_limit_hits + @check_hashes_png_hits } total" if @check_hashes_limit_nice
+        info << "PNG asset hash checks skipped (--np): #{ amount( 'asset', @check_hashes_png_hits ) }" if options.skip_png_hashes && options.check_hashes
         if options.schema_validate == false
           info << 'Schema checks skipped' unless am_files.empty?
         end

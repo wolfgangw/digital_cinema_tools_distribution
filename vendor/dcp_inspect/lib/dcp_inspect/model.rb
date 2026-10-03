@@ -326,7 +326,7 @@ module DcpInspect
       attr_reader :packing_lists, :reels
       attr_accessor :path, :absolute_path, :present, :namespace, :schema_status,
                     :signature_status, :type, :title, :language, :annotation,
-                    :content_kind, :issue_date, :issuer, :creator, :summary,
+                    :content_kind, :issue_date, :issuer, :creator, :summary, :summary_details,
                     :complete
 
       def initialize( run, id )
@@ -347,6 +347,7 @@ module DcpInspect
         @issuer = attrs[ :issuer ] if attrs.key?( :issuer )
         @creator = attrs[ :creator ] if attrs.key?( :creator )
         @summary = attrs[ :summary ] if attrs.key?( :summary )
+        @summary_details = attrs[:summary_details] if attrs.key?(:summary_details)
         @complete = attrs[ :complete ] if attrs.key?( :complete )
       end
 
@@ -380,6 +381,7 @@ module DcpInspect
           :issuer => @issuer,
           :creator => @creator,
           :summary => @summary,
+          :summary_details => @summary_details,
           :complete => @complete,
           :packing_list_ids => @packing_lists.map { |pkl| pkl.id },
           :reels => @reels.map { |reel| reel.to_h },

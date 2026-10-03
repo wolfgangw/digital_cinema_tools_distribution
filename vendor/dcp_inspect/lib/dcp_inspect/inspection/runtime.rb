@@ -1,6 +1,18 @@
 # encoding: utf-8
 require_relative "orchestrator"
 require_relative "audio_analysis"
+require_relative "metadata_checks"
+require_relative "timing"
+require_relative "markers"
+require_relative "content_title"
+require_relative "subtitle_inspection"
+require_relative "media_inspection"
+require_relative "composition_audio_inspection"
+require_relative "audio_channels"
+require_relative "picture_rates"
+require_relative "screen_aspect_ratio"
+require_relative "log_writer"
+require_relative "composition_reporting"
 #
 # dcp_inspect checks and validates DCPs (Digital Cinema Packages)
 #
@@ -222,11 +234,12 @@ def initialize(options:, logger: nil, stdout: $stdout, dashboard: nil, started_a
   @schema_store = DcpInspect::XML::SchemaStore.new(XSDDir)
   @document_reader = DcpInspect::XML::DocumentReader.new(
     logger: @logger,
-    mxf_inspector: ->(file) { MxfTools.mxf_inspect(file) }
+    mxf_inspector: ->(file) { inspect_mxf(file) }
   )
   @c14n_available = Nokogiri::XML::Document.new.respond_to?('canonicalize')
   @check_hashes_hits = 0
   @check_hashes_limit_hits = 0
+  @check_hashes_png_hits = 0
   @check_hashes_limit_nice = hash_limit_label(options.check_hashes_limit)
   @signed_cpls_count = 0
   @signed_cpls_verified_count = 0
@@ -239,6 +252,9 @@ def initialize(options:, logger: nil, stdout: $stdout, dashboard: nil, started_a
 end
 
 def call(path)
+  @mxf_metadata = {}
+  @media_inspections = {}
+  @mca_headers = {}
   @dcp_inspect_temp = Pipe.new if options.audio_analysis || options.image_analysis
   inspection = dcp_inspect(options, path)
   print_inspection_messages(inspection) unless logger.is_quiet
@@ -397,23 +413,10 @@ def bars( list )
 end
 
 
-AudioLoudnessTargetLufs = -27.0
-
-def audio_loudness_state( integrated_lufs )
-  return { :status => 'UNKNOWN', :role => :warn, :delta => nil } unless integrated_lufs
-
-  delta = integrated_lufs - AudioLoudnessTargetLufs
-  distance = delta.abs
-  status = if distance <= 1.0
-             'OK'
-           elsif distance <= 3.0
-             delta.positive? ? 'WARN LOUD' : 'WARN LOW'
-           else
-             delta.positive? ? 'LOUD' : 'LOW'
-           end
-  role = distance <= 1.0 ? :ok : ( distance <= 3.0 ? :warn : :error )
-  { :status => status, :role => role, :delta => delta }
+def audio_loudness_state(integrated_lufs)
+  { status: integrated_lufs ? 'MEASURED' : 'UNKNOWN', role: :info, delta: nil }
 end
+
 
 def audio_silent?( stats )
   peak = stats.dig( :pk_lev_db, :overall )
@@ -485,8 +488,7 @@ def audio_analysis_report( stats )
 
   parts = []
   if stats[ :integrated_lufs ]
-    delta = stats[ :delta ] ? format( '%+.1f LU', stats[ :delta ] ) : nil
-    parts << "Loudness #{ format( '%.1f', stats[ :integrated_lufs ] ) } LUFS I #{ delta } [#{ stats[ :status ] }]"
+    parts << "Asset loudness #{format('%.1f', stats[:integrated_lufs])} LUFS I (all channels; not composition programme loudness)"
   end
   parts << "LRA #{ format( '%.1f', stats[ :lra_lu ] ) } LU" if stats[ :lra_lu ]
   if stats[ :pk_lev_db ] && stats[ :pk_lev_db ][ :overall ]
@@ -858,7 +860,9 @@ def digest_with_etabar( digest_algorithm, title, file, pbar_width, looks_like, o
       percentage = size.zero? ? 100 : [ ( bytes_read * 100 / size ), 100 ].min
       next unless percentage > last_percentage
 
-      ( last_percentage + 1 .. percentage ).each { |p| eta.update_terminal( p ) }
+      # Report the observed progress once, rather than replaying every integer
+      # percentage crossed by this read (100 redraws for a small asset).
+      eta.update_terminal( percentage )
       last_percentage = percentage
     end
   end
@@ -931,15 +935,19 @@ def schema_validation( errors, error_status, xml, source_file, id, type_indicato
 end
 
 def check_signature( xml )
-  DC_Signature_Verification.new( xml )
+  DC_Signature_Verification.new(xml, desired_role: %w[CompositionPlaylist PackingList].include?(xml.root.name) ? 'CS' : nil)
 end
 
 def signature_verification_errors( errors, error_status, signature_result, id, file, type_indicator )
-  if signature_result.crypto.errors[ :context ].values.flatten.any?
+  signature_result.identity_errors.each do |message|
+    errors << "#{type_indicator} #{id}: #{message}"
+    error_status = true
+  end
+  if signature_result.crypto && signature_result.crypto.errors[ :context ].values.flatten.any?
     signature_result.crypto.errors[ :context ].each do |sigerr|
       next if sigerr[1].empty?
       sigerr[1].each do |err|
-        errors << "#{ type_indicator } #{ id }: Signature ❌: #{ err }"
+        errors << "#{ type_indicator } #{ id }: Certificate validation ❌: #{ err }"
       end
     end
     error_status = true
@@ -952,7 +960,7 @@ def signature_verification_errors( errors, error_status, signature_result, id, f
 end
 
 def signature_verification_hints( hints, signature_result, id, file, type_indicator )
-  if signature_result.crypto.hints[ :context ].values.flatten.any?
+  if signature_result.crypto && signature_result.crypto.hints[ :context ].values.flatten.any?
     signature_result.crypto.hints[ :context ].each do |sighint|
       next if sighint[1].empty?
       sighint[1].each do |hint|
@@ -964,7 +972,7 @@ def signature_verification_hints( hints, signature_result, id, file, type_indica
 end
 
 def signature_verification_siginfo( siginfo, signature_result, id, file, type )
-  if signature_result.crypto.siginfo[ :context ].values.flatten.any?
+  if signature_result.crypto && signature_result.crypto.siginfo[ :context ].values.flatten.any?
     signature_result.crypto.siginfo[ :context ].each do |info|
       next if info[1].empty?
       info[1].each do |infoblob|
@@ -972,7 +980,7 @@ def signature_verification_siginfo( siginfo, signature_result, id, file, type )
       end
     end
   end
-  if signature_result.crypto.siginfo[ :expired_certs ].any?
+  if signature_result.crypto && signature_result.crypto.siginfo[ :expired_certs ].any?
     amount_expired = signature_result.crypto.siginfo[ :expired_certs ].size
     siginfo << "#{ type } #{ id }: Signature: #{ type } has #{ amount_expired } expired #{ plural( 'certificate', amount_expired ) }. This is not an error".bold
   end
@@ -997,6 +1005,40 @@ def get_asset_uuid( file )
   @document_reader.asset_uuid(file)
 end
 
+def inspect_mxf(file)
+  @mxf_metadata ||= {}
+  return @mxf_metadata[file] if @mxf_metadata.key?(file)
+
+  @mxf_metadata[file] = MxfTools.mxf_inspect(file)
+end
+
+def inspect_pkl_asset_type(file, declared, namespace)
+  format = { MStr::Interop_pkl => 'Interop', MStr::Smpte_pkl => 'SMPTE' }[namespace]
+  return [] unless format
+
+  metadata = inspect_mxf(file)
+  if metadata
+    kind = case metadata['EssenceType']
+           when MStr::Pictures, MStr::Stereoscopic_pictures, MStr::Mpeg2 then :picture
+           when MStr::Audio then :sound
+           else :mxf
+           end
+  else
+    header = File.binread(file, 12)
+    kind = if header.start_with?("\x89PNG\r\n\x1a\n".b)
+      :png
+    elsif ["\x00\x01\x00\x00".b, 'OTTO', 'true', 'typ1'].include?(header.byteslice(0, 4))
+      :font
+    else
+      document = xml?(file)
+      { 'CompositionPlaylist' => :cpl, 'DCSubtitle' => :subtitle }[document && document.root.name]
+    end
+  end
+  MetadataChecks.type_errors(format, declared, kind, mxf: !metadata.nil?)
+rescue SystemCallError, IOError => error
+  ["Could not inspect asset Type: #{error.message}"]
+end
+
 def element_text( xml, xpath_query, ns )
   text = xml.xpath( xpath_query, ns )
   if text.empty?
@@ -1010,17 +1052,12 @@ def uuid_from_urn_scheme( string )
   string.split( 'urn:uuid:' ).last
 end
 
-# Returns subject, issuer and serial (from signing certificate) and x509serialnumber (from Signer..X509SerialNumber)
+# Return signing certificate names for display; identity validation lives in Crypto.
 def signer_info( xml, sig )
   sig_info = Hash.new
   if ! sig.signature_node.empty?
     sig_info[ :signer_name ] = sig.signer_name
     sig_info[ :signer_issuer_name ] = sig.signer_issuer
-    if ! sig.signer_node.empty?
-      signer_ns_prefix = namespace_prefix( xml, MStr::Ns_Xmldsig )
-      sig_info[ :x509serialnumber ] = sig.signer_node.first.xpath( "//#{ signer_ns_prefix }:X509SerialNumber", signer_ns_prefix => MStr::Ns_Xmldsig ).first.text.to_i
-      sig_info[ :cert_serial ] = sig.crypto.context.first.serial.to_i unless sig.crypto.context.empty?
-    end
   end
   return sig_info
 end
@@ -1077,7 +1114,7 @@ end
 
 def composition_summary_oneliner( composition_summary )
   context = composition_summary[ :context ].nil? ? '' : " (#{ composition_summary[ :context ] })"
-  "CPL #{ composition_summary[ :cpl_id ] }#{ context }: Composition summary: " + [ [ :content_title_text, :type, :crypto, :spatiality, :aspect, :resolution, :picture_bitrate_avg, :duration, :edit_rate ].reject { |k| composition_summary[k].nil? }.map { |k| composition_summary[k] } ].join( ', ' )
+  "CPL #{ composition_summary[ :cpl_id ] }#{ context }: Composition summary: " + [ [ :content_title_text, :type, :crypto, :spatiality, :aspect, :resolution, :picture_bitrate_avg, :duration, :edit_rate, :kind_label, :sound_label, :package_label ].reject { |k| composition_summary[k].nil? }.map { |k| composition_summary[k] } ].join( ', ' )
 end
 
 def cpl_reel_asset_references( xml )
@@ -1090,8 +1127,7 @@ def cpl_reel_asset_references( xml )
   reels.each_with_index do |reel, index|
     reel_no = index + 1
     reel.xpath( "#{ cpl_ns_prefix }:AssetList/*" ).each do |asset|
-      next if asset.node_name == 'CompositionMetadataAsset'
-      next if asset.node_name == 'MainMarkers'
+      next if ['CompositionMetadataAsset', 'MainMarkers'].include?(asset.node_name)
 
       asset_ns = asset.namespaces
       asset_id = asset.xpath( "#{ cpl_ns_prefix }:Id", asset_ns ).text.to_s.split( ':' ).last.to_s
@@ -1100,7 +1136,10 @@ def cpl_reel_asset_references( xml )
       key_id = asset.xpath( "#{ cpl_ns_prefix }:KeyId", asset_ns ).text.to_s.split( ':' ).last.to_s
       key_id = nil if key_id.empty?
       edit_rate_text = asset.xpath( "#{ cpl_ns_prefix }:EditRate", asset_ns ).text
-      n, d = edit_rate_text.split( ' ' ).map { |num| num.to_i }
+      reference_rate = Timing.rate(edit_rate_text)
+      intrinsic = Timing.units(asset.xpath("#{cpl_ns_prefix}:IntrinsicDuration", asset_ns).text)
+      entry = Timing.units(asset.xpath("#{cpl_ns_prefix}:EntryPoint", asset_ns).text) || 0
+      duration_node = asset.at_xpath("#{cpl_ns_prefix}:Duration", asset_ns)
 
       refs << {
         :reel_no => reel_no,
@@ -1108,8 +1147,9 @@ def cpl_reel_asset_references( xml )
         :id => asset_id,
         :intrinsic_duration => asset.xpath( "#{ cpl_ns_prefix }:IntrinsicDuration", asset_ns ).text.to_i,
         :entry_point => asset.xpath( "#{ cpl_ns_prefix }:EntryPoint", asset_ns ).text.to_i,
-        :duration => asset.xpath( "#{ cpl_ns_prefix }:Duration", asset_ns ).text.to_i,
-        :edit_rate => n && d && d != 0 ? Rational( n, d ).to_f : nil,
+        :duration => duration_node ? Timing.units(duration_node.text) : (intrinsic && intrinsic - entry),
+        :edit_rate => reference_rate&.to_f,
+        :edit_rate_ratio => reference_rate&.to_s,
         :key_id => key_id
       }
     end
@@ -1207,7 +1247,7 @@ end
 # FIXME ad-hoc 02.01.2024
 def build_signer_issuer_short_report( xml, signature_result, sig_info, type_moniker )
   report = Array.new
-  if signature_result.crypto.context.size >= 2
+  if signature_result.crypto && signature_result.crypto.context.size >= 2
     signer_not_before_dt = time_to_datetime( signature_result.crypto.context[0].not_before )
     signer_not_after_dt = time_to_datetime( signature_result.crypto.context[0].not_after )
     issuer_not_before_dt = time_to_datetime( signature_result.crypto.context[1].not_before )
@@ -1240,6 +1280,8 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   cpl_file = package dict[ cpl_id ]
   context ||= {}
   dict_label = context[ :dict_label ] || 'Assetmap dictionary'
+  composition_references = cpl_reel_asset_references(xml)
+  title_references = composition_references.map { |reference| reference[:id] }.uniq
   accounting = context[ :accounting ] || {}
   report << context[ :report_context ] if context[ :report_context ]
 
@@ -1288,7 +1330,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   # Check signature
   if @c14n_available
     signature_result = check_signature( xml )
-    if signature_result.verified? and signature_result.crypto.errors[ :context ].values.flatten.empty?
+    if signature_result.check_status == :ok
       if accounting[ :verified_cpl_ids ]
         unless accounting[ :verified_cpl_ids ][ cpl_id ]
           @signed_cpls_verified_count += 1
@@ -1305,7 +1347,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     end
     if cpl_model
       cpl_model.signature_status = signature_result.messages.last
-      inspection_run.add_check( cpl_model, :signature, signature_result.check_status, signature_result.messages.last )
+      inspection_run.add_check( cpl_model, :signature, signature_result.check_status, signature_result.messages.last, signature_result.verification_details )
     end
     report << "CPL #{ cpl_id }: #{ signature_result.messages.last }"
   else
@@ -1327,23 +1369,6 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     unless short_report.empty?
       report << short_report[ 0 ]
       report << short_report[ 1 ]
-    end
-
-    # Todo: Compare names in Signer and certificate
-    #
-
-    # Check Signer.X509Data.X509IssuerSerial info vs signer certificate
-    # See e.g. dcp_2/V174* for a serial mismatch
-    if ! signature_result.signer_node.empty? and sig_info[ :x509serialnumber ] and sig_info[ :cert_serial ]
-      if sig_info[ :x509serialnumber ] != sig_info[ :cert_serial ]
-        report << "CPL Signer serial mismatch ❌: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
-        errors << "CPL #{ cpl_id }: Signer serial mismatch ❌: X509SerialNumber: #{ sig_info[ :x509serialnumber ] } Certificate: #{ sig_info[ :cert_serial ] }"
-        cpl_errors = true
-      end
-    else
-      report << 'CPL Signer info :x509serialnumber or :cert_serial could not be retrieved ❌'
-      errors << "CPL #{ cpl_id }: Signer info :x509serialnumber or :cert_serial could not be retrieved ❌"
-      cpl_errors = true
     end
   end
 
@@ -1518,7 +1543,13 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   # Reels
   reels = xml.xpath( "/#{ cpl_ns_prefix }:CompositionPlaylist/#{ cpl_ns_prefix }:ReelList/#{ cpl_ns_prefix }:Reel" )
   report << "Number of Reels:  #{ reels.size }"
+  MetadataChecks.duplicate_ids(reels.xpath("#{cpl_ns_prefix}:Id")).each do |id|
+    errors << "CPL #{cpl_id}: Duplicate Reel Id #{id} ❌"
+    cpl_errors = true
+  end
   total_duration = 0
+  total_seconds = Rational(0)
+  timing_complete = true
   composition_edit_rates = Array.new
   #
   # A composition can be "incomplete" in different ways:
@@ -1537,6 +1568,9 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   composition_picture_bitrates_avg = Array.new
   composition_sound_channel_formats = Array.new
   composition_sound_channel_counts = Array.new
+  composition_sound_tracks = []
+  composition_immersive_ids = []
+  observed_encrypted_assets = []
   supplemental_refs = { :main_picture => 0, :main_sound => 0, :main_subtitle => 0, :main_caption => 0, :aux_data => 0 }
 
   reels.each_with_index do |reel, index|
@@ -1548,6 +1582,13 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     durations = Array.new
     edit_rates = Array.new
     assets = reel.xpath( "#{ cpl_ns_prefix }:AssetList/*" )
+    picture_reference = assets.find { |node| ['MainPicture', 'MainStereoscopicPicture'].include?(node.name) }
+    picture_id = picture_reference&.at_xpath("#{cpl_ns_prefix}:Id")&.text&.split(':')&.last
+    picture_meta = dict && dict[picture_id] && inspect_mxf(package(dict[picture_id]))
+    subtitle_picture = picture_meta ? {
+      picture_width: Timing.units(picture_meta['StoredWidth']),
+      picture_height: Timing.units(picture_meta['StoredHeight'])
+    } : {}
 
     # Check uniqueness of asset kinds which need to be unique in a reel.
     # Multiple instances of ClosedCaption, MainCaption and ClosedSubtitle allowed.
@@ -1560,12 +1601,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
 
     # Check a whole bunch of other things
     assets.each do |asset|
+      meta = nil
+      asset_snippet = nil
 
       #
       # CompositionMetadataAsset is already handled
       # Defer handling of MainMarkers to later on when we know reel duration
       #
-      next if asset.node_name == 'CompositionMetadataAsset'
+      next if ['CompositionMetadataAsset', 'MainMarkers'].include?(asset.node_name)
 
       # Collect reel referenced EssenceTypes (mainly to check for SMPTE reel completeness)
       case asset.node_name
@@ -1589,23 +1632,48 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
 
       asset_ns = asset.namespaces
       asset_id = asset.xpath( "#{ cpl_ns_prefix }:Id", asset_ns ).text.split( ':' ).last
+      cpl_hash = asset.xpath("#{cpl_ns_prefix}:Hash", asset_ns).text.gsub(/\s+/, '')
+      unless cpl_hash.empty?
+        Array(context.fetch(:pkl_hashes, {})&.fetch(asset_id, nil)).each do |declaration|
+          next if cpl_hash == declaration[:hash]
+
+          errors << "#{cpl_reel}: #{asset.node_name} #{asset_id}: CPL/PKL Hash mismatch ❌: CPL: #{cpl_hash} PKL #{declaration[:pkl_id]}: #{declaration[:hash]}"
+          cpl_errors = true
+        end
+      end
       intrinsic_duration = asset.xpath( "#{ cpl_ns_prefix }:IntrinsicDuration", asset_ns ).text.to_i
       entry_point = asset.xpath( "#{ cpl_ns_prefix }:EntryPoint", asset_ns ).text.to_i
-      duration = asset.xpath( "#{ cpl_ns_prefix }:Duration", asset_ns ).text.to_i
+      duration_node = asset.at_xpath("#{cpl_ns_prefix}:Duration", asset_ns)
+      duration = duration_node ? duration_node.text.to_i : intrinsic_duration - entry_point
+      timing_valid = true
+      %w[IntrinsicDuration EntryPoint Duration].each do |field|
+        node = asset.at_xpath("#{cpl_ns_prefix}:#{field}", asset_ns)
+        next if !node && field != 'IntrinsicDuration'
+        next unless Timing.units(node&.text).nil?
+
+        errors << "#{cpl_reel}: #{asset.node_name} #{field} must be a nonnegative integer ❌"
+        timing_valid = false
+        cpl_errors = true
+      end
       if asset.xpath( "#{ cpl_ns_prefix }:KeyId", asset_ns )
         cpl_key_id = asset.xpath( "#{ cpl_ns_prefix }:KeyId", asset_ns ).text.split( ':' ).last
       else
         cpl_key_id = nil
       end
 
-      # FIXME Timecode will die on edit_rate == 0
       cpl_asset_edit_rate_text = asset.xpath( "#{ cpl_ns_prefix }:EditRate", asset_ns ).text
-      n, d = cpl_asset_edit_rate_text.split( ' ' ).map { |num| num.to_i }
-      if n and d
-        edit_rate = Rational( n, d ).to_f
-      else
-        edit_rate = nil
+      edit_rate = Timing.rate(cpl_asset_edit_rate_text)
+      unless edit_rate
+        errors << "#{cpl_reel}: #{asset.node_name} invalid EditRate #{cpl_asset_edit_rate_text.inspect}: numerator and denominator must be positive integers ❌"
+        timing_valid = false
+        cpl_errors = true
       end
+      if duration <= 0 || entry_point >= intrinsic_duration || entry_point + duration > intrinsic_duration
+        errors << "#{cpl_reel}: #{asset.node_name} invalid playback interval: IntrinsicDuration #{intrinsic_duration}, EntryPoint #{entry_point}, Duration #{duration} ❌"
+        timing_valid = false
+        cpl_errors = true
+      end
+      timing_complete = false unless timing_valid
 
       case asset.node_name
       when 'MainMarkers'
@@ -1621,10 +1689,15 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
 
           if File.exist?( asset_file )
 
-            meta = MxfTools.mxf_inspect( asset_file )
+            meta = inspect_mxf( asset_file )
 
             # MXF?
             if meta
+
+              composition_immersive_ids << asset_id if meta['EssenceType'] == MStr::Atmos
+              media_result = inspect_media_headers(asset_file, meta)
+              media_failed = record_media_headers(media_result, "#{cpl_reel}: #{asset.node_name} #{asset_id}", errors, hints, report, inspection_run, cpl_model)
+              cpl_errors ||= media_failed
 
               # Check asset Id for RFC-4122 compliance. All assets except DCSubtitle require this
               if asset_id !~ MStr::Uuid_rfc4122_re
@@ -1633,12 +1706,40 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
               end
 
               # Get asset edit rate early
-              begin
-                n, d = ( meta[ 'EditRate' ] || meta[ 'SampleRate' ] ).split( '/' ).map { |num| num.to_i }
-                asset_edit_rate = Rational( n, d ).to_f
-              rescue Exception => e
+              asset_edit_rate = Timing.rate(meta['EditRate'] || meta['SampleRate'])
+              unless asset_edit_rate
                 errors << "#{ cpl_reel }: Could not scrounge edit rate from #{ asset.node_name } asset #{ asset_id } ❌"
                 cpl_errors = true
+              end
+              if edit_rate && asset_edit_rate && edit_rate != asset_edit_rate
+                errors << "#{cpl_reel}: #{asset.node_name} EditRate #{edit_rate} does not match asset EditRate #{asset_edit_rate} ❌"
+                cpl_errors = true
+              end
+              if %w[MainPicture MainStereoscopicPicture].include?(asset.node_name)
+                PictureRates.findings(meta, composition_type: cpl_type,
+                  stereoscopic: asset.node_name == 'MainStereoscopicPicture').each do |severity, message|
+                  message = "#{cpl_reel}: #{asset.node_name} #{asset_id}: #{message}"
+                  (severity == :error ? errors : hints) << message
+                  cpl_errors = true if severity == :error
+                  inspection_run.add_check(cpl_model, :picture_rate, severity, message,
+                    { asset_id: asset_id, edit_rate: meta['EditRate'], sample_rate: meta['SampleRate'], essence: meta['EssenceType'] }) if cpl_model
+                end
+                aspect_node = asset.at_xpath("#{cpl_ns_prefix}:ScreenAspectRatio", asset_ns)
+                if (aspect_finding = ScreenAspectRatio.finding(aspect_node, meta, composition_type: cpl_type))
+                  message = "#{cpl_reel}: #{asset.node_name} #{asset_id}: #{aspect_finding[:message]}"
+                  hints << message
+                  inspection_run.add_check(cpl_model, :screen_aspect_ratio, :hint, message,
+                    aspect_finding.merge(asset_id: asset_id, reel: reel_no)) if cpl_model
+                end
+                frame_node = asset.at_xpath("#{cpl_ns_prefix}:FrameRate", asset_ns)
+                if frame_node
+                  frame_rate = Timing.rate(frame_node.text)
+                  sample_rate = Timing.rate(meta['SampleRate'] || meta['EditRate'])
+                  if !frame_rate || !sample_rate || frame_rate != sample_rate
+                    errors << "#{cpl_reel}: #{asset.node_name} FrameRate #{frame_node.text.inspect} does not match asset SampleRate #{meta['SampleRate'] || meta['EditRate']} ❌"
+                    cpl_errors = true
+                  end
+                end
               end
 
               # Label types Interop/SMPTE
@@ -1656,6 +1757,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
               end
 
               # Encrypted essence?
+              observed_encrypted_assets << asset_id if meta['EncryptedEssence'] == 'Yes'
               if meta[ 'EncryptedEssence' ]
                 if meta[ 'EncryptedEssence' ] == 'Yes'
                   if meta[ 'CryptographicKeyID' ]
@@ -1683,7 +1785,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
               end
 
               # IntrinsicDuration / EntryPoint / Duration sane?
-              sane_IntrinsicDuration_EntryPoint_Duration = true
+              sane_IntrinsicDuration_EntryPoint_Duration = timing_valid
               if intrinsic_duration - entry_point < duration
                 errors << "#{ cpl_reel }: Duration #{ duration } in #{ asset.node_name } does not compute ❌: IntrinsicDuration #{ intrinsic_duration } - EntryPoint #{ entry_point } < Duration #{ duration }"
                 sane_IntrinsicDuration_EntryPoint_Duration = false
@@ -1713,7 +1815,9 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
               when 'MainPicture', 'MainStereoscopicPicture'
 
                 # decomposition levels
-                if meta[ 'DecompositionLevels' ]
+                if meta['EssenceType'] == MStr::Mpeg2
+                  # MPEG2 has no JPEG2000 decomposition levels.
+                elsif meta[ 'DecompositionLevels' ]
                   picture_decomposition_levels = meta[ 'DecompositionLevels' ].to_i
                   composition_picture_decomposition_levels << picture_decomposition_levels
                 else
@@ -1809,6 +1913,10 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
               # Check audio
               case asset.node_name
               when 'MainSound'
+                composition_sound_tracks << { asset_id: asset_id, reel: reel_no,
+                  essence: meta['EssenceType'], channels: meta['ChannelCount'],
+                  sample_rate: meta['AudioSamplingRate'], bits: meta['QuantizationBits'],
+                  channel_format: meta['ChannelFormat'], encrypted: meta['EncryptedEssence'] }
 
                 # channel format
                 if meta[ 'ChannelFormat' ]
@@ -1835,26 +1943,14 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                   cpl_errors = true
                 end
 
-                # Channel configuration
+                # Container channel count does not establish a soundfield.
                 audio_channel_count = meta[ 'ChannelCount' ].to_i
-                case audio_channel_count
-                when 1, 3, 4, 5, 7
-                  errors << "#{ cpl_reel }: MainSound has #{ amount( 'channel', audio_channel_count ) } ❌: Use 5.1, 7.1, 7.1DS or wild track (2.0 is expected to mostly work)"
-                  cpl_errors = true
-                  audio_channel_count_moniker = audio_channel_count.to_s
-                when 2
-                  hints << "#{ cpl_reel }: MainSound has 2 channels: Expected to mostly work. Use 5.1, 7.1, 7.1DS or wild track to make sure"
-                  audio_channel_count_moniker = '20'
-                when 6
-                  audio_channel_count_moniker = '51'
-                when 8
-                  audio_channel_count_moniker = '71'
-                when 12
-                  audio_channel_count_moniker = '11.1'
-                else
-                  audio_channel_count_moniker = audio_channel_count.to_s
+                AudioChannels.findings(meta).each do |severity, message|
+                  (severity == :error ? errors : hints) << "#{cpl_reel}: #{message}"
+                  cpl_errors = true if severity == :error
+                  inspection_run.add_check(cpl_model, :audio_channels, severity, "#{cpl_reel}: #{message}") if cpl_model
                 end
-                composition_sound_channel_counts << audio_channel_count_moniker
+                composition_sound_channel_counts << audio_channel_count.to_s
 
                 # Block align
                 audio_block_align = meta[ 'BlockAlign' ].to_i
@@ -1864,11 +1960,6 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                 end
 
                 # Edit rate
-                if asset_edit_rate != edit_rate
-                  errors << "#{ cpl_reel }: MainSound EditRate #{ edit_rate } does not match asset EditRate #{ asset_edit_rate } ❌"
-                  cpl_errors = true
-                end
-
                 # Audio characteristics (EBU R-128 loudness, peak levels, silent channels)
                 audio_stats[ asset_id ] ||= Hash.new
                 dkdms = Hash.new
@@ -1920,10 +2011,24 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
               end # Check audio (MainSound)
 
 
+              if meta['EssenceType'] == MStr::Timed_text
+                subtitle_result = inspect_embedded_subtitle(asset_file, meta, dict, {
+                  document_id: meta['AssetID'], descriptor_rate: asset_edit_rate,
+                  descriptor_namespace: meta['NamespaceName'],
+                  declared_resources: meta.select { |key, _value| TimedText::UUID.match?(key) },
+                  reel: reel_no, kind: asset.node_name, edit_rate: edit_rate,
+                  intrinsic: intrinsic_duration, entry_point: entry_point, duration: duration,
+                  pkl_id: context[:pkl_id], pkl_asset_ids: context[:pkl_asset_ids],
+                  resource_dict: context[:resource_dict]
+                }.merge(subtitle_picture))
+                failed = record_subtitle_findings(subtitle_result, "#{cpl_reel}: SMPTE timed text #{asset_id}", errors, hints, inspection_run, cpl_model)
+                cpl_errors ||= failed
+              end
+
               # This meta_report (and edit_rate) abomination below needs to go. Ugh
               meta_report = [
                 meta[ 'Label Set Type' ] || 'Label Set Type:' + MStr::AssetTypeUnknown,
-                meta[ 'ContainerDuration' ] ? meta[ 'EditRate' ] || meta[ 'SampleRate' ] ? Timecode.new( meta[ 'ContainerDuration' ].to_i, asset_edit_rate ).to_s : '[NaN]' : 'ContainerDuration:' + MStr::AssetTypeUnknown,
+                Timing.format_units(meta['ContainerDuration'], asset_edit_rate),
                 meta[ 'EncryptedEssence' ] ? meta[ 'EncryptedEssence' ] == 'Yes' ? 'encrypted' : 'plaintext' : 'Encrypted:' + MStr::AssetTypeUnknown,
                 asset.node_name =~ /Picture/ ? ( meta[ 'StoredWidth' ] || 'StoredWidth:' + MStr::AssetTypeUnknown ) + 'x' + ( meta[ 'StoredHeight' ] || 'StoredHeight:' + MStr::AssetTypeUnknown ) : '',
                 asset.node_name =~ /Picture/ ? meta[ 'Average BitRate' ] ? 'avg ' + meta[ 'Average BitRate' ] : 'avg [NaN Mb/s]' : '',
@@ -1946,380 +2051,16 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
                 cpl_referenced_assets << { asset_id => true }
                 cpl_referenced_assets_types << MStr::AssetTypeInterop
 
-                #
-                # DCSubtitle Schema validation
-                #
-                if options.schema_validate
-                  begin
-                    valid, errors, cpl_errors = schema_validation( errors, cpl_errors, xml, asset_file, asset_id, 'DCSubtitle' )
-                    report << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Schema check: #{ valid ? 'OK ✅' : "Errors ❌ (See #{ error_output })" }"
-                  rescue Exception => e
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Exception in Schema check ❌: #{ e.message }"
-                    cpl_errors = true
-                    report << errors.last
-                  end
-                end
-
-                #
-                # Check for content of ReelNumber element
-                #
-                if ( reelnumber_el = xml.xpath( '/DCSubtitle/ReelNumber' ) and reelnumber_el.size == 1 )
-                  if reelnumber_el.children.size == 1
-                    if reelnumber_el.children.first.class == Nokogiri::XML::Text
-                      reelnumber_el_content = reelnumber_el.children.first.content
-                      if reelnumber_el_content.strip =~ /\d+/
-                        if reelnumber_el_content.to_i != reel_no
-                          hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber '#{ reelnumber_el_content.to_i }' does not match its CPL reel number '#{ reel_no }'"
-                          report << hints.last
-                        end
-                      else
-                        hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber content is not numerical: #{ reelnumber_el_content.inspect }"
-                        report << hints.last
-                      end
-                    else
-                      errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber has unexpected content ❌: #{ reelnumber_el.children.first.class }"
-                      cpl_errors = true
-                      report << errors.last
-                    end
-                  else
-                    if reelnumber_el.children.size == 0
-                      hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber has no content"
-                      report << hints.last
-                    elsif reelnumber_el.children.size > 1 # Note that TI's DTD says CDATA (non-parsed character data)
-                      hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber has more than 1 subelement"
-                      report << hints.last
-                    end
-                  end
-                else
-                  if reelnumber_el.size == 0
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: ReelNumber element not found ❌"
-                    cpl_errors = true
-                    report << errors.last
-                  else
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: More than 1 ReelNumber element found ❌"
-                    cpl_errors = true
-                    report << errors.last
-                  end
-                end
-
-                #
-                # Check for content of Language element
-                #
-                if ( language_el = xml.xpath( '/DCSubtitle/Language' ) and language_el.size == 1 )
-                  if language_el.children.size == 1
-                    if language_el.children.first.class == Nokogiri::XML::Text
-                      language_el_content = language_el.children.first.content
-                      if ! ( language_el_content.strip =~ /[[:alpha:]]/ )
-                        hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language content contains unexpected characters: #{ language_el_content.inspect }"
-                        report << hints.last
-                      end
-                    else
-                      errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language has unexpected content ❌: #{ language_el.children.first.class }"
-                      cpl_errors = true
-                      report << errors.last
-                    end
-                  else
-                    if language_el.children.size == 0
-                      hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language has no content"
-                      report << hints.last
-                    elsif language_el.children.size > 1 # Note that TI's DTD says CDATA (non-parsed character data)
-                      hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language has more than 1 subelement"
-                      report << hints.last
-                    end
-                  end
-                else
-                  if language_el.size == 0
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Language element not found ❌"
-                    cpl_errors = true
-                    report << errors.last
-                  else
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: More than 1 Language element found ❌"
-                    cpl_errors = true
-                    report << errors.last
-                  end
-                end
-
-                xml.remove_namespaces!
-                if ( subtitles = xml.xpath( '//Subtitle' ) and subtitles.size > 0 )
-
-                  #
-                  # Check for TC range violations
-                  #
-                  subtitles.each do |sub|
-                    [ 'TimeIn', 'TimeOut' ].each do |tc_attr_name|
-                      tc_string = sub.attributes[ tc_attr_name ].value
-                      begin
-                        parse_dcsubtitle_tc_string( tc_string, edit_rate )
-                      rescue Exception => e
-                        spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : nil )
-                        errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Spot #{ spot_number }: #{ e.inspect }"
-                      end
-                    end
-                  end
-
-                  #
-                  # Scan all subtitles to find actual first_time_in and last_time_out
-                  # Last subtitle is not necessarily the last displayed
-                  # Scrounge content snippets along the way
-                  #
-                  # See CRAWL which sports empty Subtitle elements
-                  #
-                  # TI spec 2.9 Subtitle says
-                  #
-                  #   "The Subtitle element is a parent element. It includes [...] one or more child elements [...]"
-                  #
-                  # The XSD we're using right now (DCSubtitle.v1.mattsson.xsd), though, has
-                  #
-                  #     <xs:choice minOccurs="0" maxOccurs="unbounded">
-                  #       <xs:element minOccurs="0" maxOccurs="unbounded" ref="Font"/>
-                  #       <xs:element minOccurs="0" maxOccurs="unbounded" ref="Text"/>
-                  #       <xs:element ref="Image"/>
-                  #     </xs:choice>
-                  #
-                  # Correctness tbd
-                  #
-                  # First
-                  #
-                  first_time_in = subtitles.first.attributes[ 'TimeIn' ].value
-                  nodeset = subtitles.first.xpath( '*/Text|Text|*/Image|Image' )
-                  if nodeset.empty?
-                    first_time_in_text = '[No child element]'
-                    hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: First Subtitle element has neither Text nor Image"
-                  else
-                    first_time_in_text = truncate( nodeset.first.text.strip, 3 ) # first line
-                  end
-                  subtitles[ 1 .. -1 ].each do |sub|
-                    if first_time_in < sub.attributes[ 'TimeIn' ].value
-                      break
-                    end
-                    first_time_in = sub.attributes[ 'TimeIn' ].value
-                  end
-                  #
-                  # Last
-                  #
-                  last_time_out = subtitles.last.attributes[ 'TimeOut' ].value
-                  nodeset = subtitles.last.xpath( '*/Text|Text|*/Image|Image' )
-                  if nodeset.empty?
-                    last_time_out_text = '[No child element]'
-                    hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last Subtitle element has neither Text nor Image"
-                  else
-                    last_time_out_text = truncate( nodeset.last.text.strip, 3 )
-                  end
-                  subtitles.reverse[ 1 .. -1 ].each do |sub|
-                    if last_time_out > sub.attributes[ 'TimeOut' ].value
-                      break
-                    end
-                    last_time_out = sub.attributes[ 'TimeOut' ].value
-                    nodeset = sub.xpath( '*/Text|Text|*/Image|Image' )
-                    if nodeset.empty?
-                      last_time_out_text = '[No child element]'
-                      hints << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last to-be-displayed Subtitle element has neither Text nor Image"
-                    else
-                      last_time_out_text = truncate( nodeset.last.text.strip, 3 ) # last line
-                    end
-                  end
-
-                  begin
-                    first_time_in = parse_dcsubtitle_tc_string( first_time_in, edit_rate )
-                    last_time_out = parse_dcsubtitle_tc_string( last_time_out, edit_rate )
-                  rescue Exception => e
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Timecode: #{ e.message } ❌"
-                    cpl_errors = true
-                  end
-
-                  #
-                  # Cross-check duration/reel duration and last TimeOut
-                  # We don't have reel_duration yet so here's an indirect way to tell if something's wrong
-                  # FIXME
-                  # Boy-oh-boy, this an ugly hack which exposes nicely the essential design flaw
-                  #
-                  # duration (self) and last TimeOut
-                  #
-                  if last_time_out.to_i > duration
-                    errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut #{ last_time_out.to_s } exceeds MainSubtitle duration #{ Timecode.new( duration, edit_rate ).to_s } ❌"
-                    cpl_errors = true
-                  end
-                  #
-                  # reel duration (preliminary) and last TimeOut
-                  #
-                  if durations.size > 1 # Assume we have one previous asset duration
-                    begin
-                      reel_duration_prelim = Timecode.new( durations[ 0 .. -2 ].min, edit_rates[ 0 .. -2 ].min )
-                      if last_time_out > reel_duration_prelim
-                        errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Last TimeOut #{ last_time_out.to_s } exceeds reel duration #{ reel_duration_prelim } ❌"
-                        cpl_errors = true
-                      end
-                    rescue Exception => e
-                      errors << "#{ cpl_reel }: DCSubtitle #{ asset_id }: Timecode: #{ e.message }"
-                      cpl_errors = true
-                    end
-                  end
-
-
-                  #
-                  # Check for empty elements. Thanks to Mattias Mattsson, Lilian Lefranc and Johann Hohenwarter for the field feedback
-                  #
-                  empty_subtitles = 0
-                  subtitles.each do |sub|
-                    spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : nil )
-                    if sub.children.empty? or ( sub.children.size == 1 and sub.children.first.is_a? Nokogiri::XML::Text )
-                      empty_subtitles += 1
-                      errors << "#{ cpl_reel }: DCSubtitle: Empty Subtitle element#{ spot_number ? ': SpotNumber ' + spot_number : '' } ❌"
-                      cpl_errors = true
-                    elsif ( nodeset = sub.xpath( '*/Text|Text|*/Image|Image' ) )
-                      nodeset.each do |node|
-                        if node.text == ''
-                          empty_subtitles += 1
-                          hints << "#{ cpl_reel }: DCSubtitle: Empty #{ node.name } element#{ spot_number ? ': SpotNumber ' + spot_number : '' }. While not a specification error this can lead to playback problems in the field. Consider fixing"
-                        end
-                      end
-                    end
-                  end
-
-                  #
-                  # Check whether all referenced resources (font, subtitle images)
-                  # are in the dictionary and exist on the medium
-                  #
-                  text_elements = false
-                  text_elements_values = Array.new
-                  load_font_el = xml.xpath( '//LoadFont' )
-                  font_el = xml.xpath( '//Font' )
-
-                  subtitles.each do |sub|
-                    spot_number = ( sub.attributes[ 'SpotNumber' ] ? sub.attributes[ 'SpotNumber' ].value : nil )
-                    nodeset = sub.xpath( '*/Text|Text|*/Image|Image' )
-                    nodeset.each do |node|
-                      case node.name
-                      when 'Text'
-                        text_elements = true
-                        text_elements_values << { :number => spot_number, :text => node.text.strip }
-                      when 'Image'
-                        unless node.text.empty? # Checked above
-                          asset_name = File.join( asset_id, node.text )
-                          asset_pick = dict.select { |k, v| v =~ Regexp.new( asset_name ) }
-
-                          if asset_pick.empty?
-                            errors << "#{ cpl_reel }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not in AssetMap"
-                            cpl_errors = true
-                          else
-                            unless File.exist?( package asset_pick.values.first ) # FIXME
-                              errors << "#{ cpl_reel }: DCSubtitle: #{ spot_number ? 'SpotNumber ' + spot_number + ': ' : '' }Referenced subtitle image #{ asset_name.inspect } not found on the medium"
-                              cpl_errors = true
-                            end
-                          end
-
-                        end
-                      end
-                    end
-                  end
-
-                  # Check referenced font file
-                  if text_elements
-                    if load_font_el.empty?
-                      hints << "#{ cpl_reel }: DCSubtitle: No LoadFont element found. Playback will use a default font"
-                    else
-                      # FIXME 1 LoadFont element
-                      load_font_uri = load_font_el.first.attributes[ 'URI' ].value
-                      font_asset = File.join( asset_id, File.basename( load_font_uri ) )
-                      font_path = nil
-                      if dict.values.any? { |val| val =~ /#{ font_asset }$/ && font_path = val }
-                        font_asset = package font_path
-                        if File.exist?( font_asset )
-                          if font?( font_asset )
-                            # Check for font max size recommendation
-                            font_asset_size = File.size font_asset
-                            if font_asset_size > 655360 # 640 KB
-                              errors << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } size #{ font_asset_size.to_k } exceeds 640 KB ❌"
-                              cpl_errors = true
-                            end
-                            # Get font name
-                            begin
-                              # Scrounge font subfamily name
-                              font_fu = TTFunk::File.open font_asset
-                              begin
-                                font_unique_subfamily = font_fu.name.unique_subfamily[ 1 ].to_s # FIXME not always 2nd element. Why/how?
-                                info << "#{ cpl_reel }: DCSubtitle: Referenced font subfamily: #{ font_unique_subfamily }"
-                              rescue TypeError => e
-                                hints << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset }: Failed to extract internal name structure"
-                              end
-
-                              # Check if all glyphs can be rendered with provided font
-                              glyphs_missing = false
-                              text_elements_values.each do |spot|
-                                unless font_fu.provides_glyphs_for?( spot[ :text ] )
-                                  glyphs_missing = true
-                                  # pick the exact ones
-                                  glyphs_missing_list = Array.new
-                                  spot[ :text ].split( '' ).each do |char|
-                                    glyphs_missing_list << char unless font_fu.provides_glyphs_for?( char )
-                                  end
-                                  hints << "#{ cpl_reel }: DCSubtitle: SpotNumber #{ spot[ :number ] }: Font is missing #{ amount( 'glyph', glyphs_missing_list ) } to render #{ spot[ :text ].inspect } (#{ spot[ :text ].encoding }) ❌: #{ glyphs_missing_list.inspect }"
-                                end
-                              end
-                              if glyphs_missing
-                                hints << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } is missing some required glyphs ❌"
-                              end
-                            rescue NoMethodError => e
-                              errors << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset } not valid ❌: #{ e.message }"
-                              cpl_errors = true
-                            end
-                          else
-                            errors << "#{ cpl_reel }: DCSubtitle: Font #{ font_asset } referenced in LoadFont is neither #{ MStr::TTF } nor #{ MStr::OTF } ❌"
-                            cpl_errors = true
-                          end
-                        end
-                      else
-                        errors << "#{ cpl_reel }: DCSubtitle: Referenced font #{ font_asset } not in AssetMap ❌"
-                        cpl_errors = true
-                      end
-                      if load_font_el.size > 1
-                        hints << "#{ cpl_reel }: DCSubtitle: Found multiple LoadFont elements. Playback will use 1st: #{ load_font_uri }"
-                      end
-                    end
-                  end # text_elements
-
-                  # Check LoadFont / Font Id dependency
-                  # See https://github.com/wolfgangw/digital_cinema_tools_distribution/issues/15 for discussion
-                  # TI's Subtitle_Specification_TI_1.1.pdf: Font's attributes are all #IMPLIED (not required)
-                  font_ids = Array.new
-                  font_el.each do |el|
-                    font_ids << el.attributes[ 'Id' ].value if el.attributes[ 'Id' ]
-                  end
-                  font_ids.uniq!
-                  if font_ids.size > 1
-                    errors << "#{ cpl_reel }: DCSubtitle: Multiple Font Ids referenced ❌: #{ font_ids.inspect }"
-                    cpl_errors = true
-                  end
-                  if load_font_el.empty?
-                    if font_ids.size > 0
-                      errors << "#{ cpl_reel }: DCSubtitle: No Font Id declared via LoadFont but referenced Font Ids found ❌: #{ font_ids.inspect }"
-                      cpl_errors = true
-                    end
-                  else
-                    if load_font_el.first.attributes[ 'Id' ]
-                      load_font_id = load_font_el.first.attributes[ 'Id' ].value
-                      font_ids.each do |font_id|
-                        if font_id != load_font_id
-                          errors << "#{ cpl_reel }: DCSubtitle: Referenced font Id '#{ font_id }' does not match the Id '#{ load_font_id }' declared in LoadFont. Font cannot be loaded ❌"
-                          cpl_errors = true
-                        end
-                      end
-                    end
-                  end
-
-                  #
-                  # Check DCSubtitle's edit rate and nag about non-24-fps rates
-                  #
-                  if edit_rate != 24.0
-                    hints << "#{ cpl_reel }: DCSubtitle: EditRate != 24 fps: #{ edit_rate } fps. Playback may fail"
-                  end
-
-                  # DCSubtitle meta report
-                  meta_report = "DCSubtitle, #{ amount( 'subtitle', subtitles.to_a ) }, #{ first_time_in } '#{ first_time_in_text.nil? ? '[nil]' : first_time_in_text }' - #{ last_time_out } '#{ last_time_out_text.nil? ? '[nil]' : last_time_out_text }'#{ empty_subtitles > 0 ? ' Error: ' + empty_subtitles.to_s + ' empty Subtitle element' + ( empty_subtitles > 1 ? 's' : '' ) : '' }"
-
-                else
-                  meta_report = 'DCSubtitle, no Subtitle found'
-                end
+                subtitle_result = inspect_subtitle_document(xml, asset_file, dict, {
+                  document_id: asset_id, reel: reel_no, kind: asset.node_name,
+                  edit_rate: edit_rate, intrinsic: intrinsic_duration,
+                  entry_point: entry_point, duration: duration,
+                  pkl_id: context[:pkl_id], pkl_asset_ids: context[:pkl_asset_ids],
+                  resource_dict: context[:resource_dict]
+                }.merge(subtitle_picture))
+                failed = record_subtitle_findings(subtitle_result, "#{cpl_reel}: DCSubtitle #{asset_id}", errors, hints, inspection_run, cpl_model)
+                cpl_errors ||= failed
+                meta_report = "DCSubtitle, #{subtitle_result[:summary][:count]} subtitles; last TimeOut #{subtitle_result[:summary][:last_time_out]} s"
                 meta = { 'EssenceType' => MStr::Timed_text }
 
               else # No meta and not DCSubtitle either
@@ -2360,7 +2101,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
 
             cpl_referenced_assets << { asset_id => false }
             cpl_referenced_assets_types << MStr::AssetTypeUnknown
-            meta_report = "Referenced asset file not listed in #{ dict_label }: Supplemental/VF/External"
+            meta_report = "Referenced asset file not listed in #{ dict_label }; external dependency"
             hints << "#{ cpl_reel }: #{ asset.node_name }: #{ meta_report }"
             case asset.node_name
             when 'MainPicture', 'MainStereoscopicPicture'
@@ -2395,7 +2136,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
           :intrinsic_duration => intrinsic_duration,
           :entry_point => entry_point,
           :duration => duration,
-          :edit_rate => edit_rate,
+          :edit_rate => edit_rate&.to_f,
           :key_id => cpl_key_id,
           :details => meta_report,
           :resolved => asset_file_for_model ? File.exist?( asset_file_for_model ) : false
@@ -2403,7 +2144,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
       end
 
       begin
-        reels_report << "#{ "%6s" % duration }  #{ edit_rate.nil? ? 'EditRate funk' : Timecode.new( duration, edit_rate ) } @ #{ edit_rate }  Entry #{ Timecode.new( entry_point, edit_rate ) }  #{ asset_id.split( '-' ).first }  #{ asset.node_name }\t(#{ meta_report })"
+        reels_report << "#{ '%6s' % duration }  #{Timing.format_units(duration, edit_rate)} @ #{edit_rate}  Entry #{Timing.format_units(entry_point, edit_rate)}  #{asset_id.to_s.split('-').first}  #{asset.node_name}\t(#{meta_report})"
       rescue Exception => e
         errors << "#{ cpl_reel }: Duration #{ duration }: EditRate #{ edit_rate }: #{ e.message }"
         cpl_errors = true
@@ -2447,11 +2188,12 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     end # assets.each
 
     # Check reel's editrate sanity
-    if edit_rates.uniq.size != 1
+    if edit_rates.empty? || edit_rates.include?(nil) || edit_rates.uniq.size != 1
       reels_report << "\tEditRate mismatch ❌"
-      composition_edit_rates << edit_rates.max
+      composition_edit_rates << nil
       errors << "#{ cpl_reel }: EditRate mismatch ❌"
       cpl_errors = true
+      timing_complete = false
     else
       composition_edit_rates << edit_rates.min
     end
@@ -2461,9 +2203,11 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
       reels_report << "\tDuration mismatch ❌"
       errors << "#{ cpl_reel }: Duration mismatch ❌: #{ durations.inspect }"
       cpl_errors = true
-    else
-      reel_duration = durations.first / edit_rates.min # seconds. gets it done but ugh
+      timing_complete = false
+    elsif composition_edit_rates.last && durations.first.positive?
+      reel_duration = durations.first / composition_edit_rates.last
       total_duration += durations.first # frames
+      total_seconds += reel_duration
       if edit_rates.min > 0 and reel_duration < 1
         reels_report << "\tReel duration less than 1 second ❌"
         errors << "#{ cpl_reel }: Reel duration less than 1 second (#{ "%0.3f" % reel_duration } seconds, #{ amount( 'frame', durations.first.to_i ) }@#{ edit_rates.min } fps) ❌"
@@ -2483,27 +2227,29 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
 
 
   # Composition duration
-  if composition_edit_rates.uniq.size == 1
-    composition_edit_rate = composition_edit_rates.first
-  else
-    composition_edit_rate = 0
-  end
-  reels_report << 'Total duration:'
-  begin
-    total_duration_tc = Timecode.new( total_duration, composition_edit_rate )
-  rescue Exception => e
-    errors << "CPL #{ cpl_id }: Exception in reel report ❌: #{ e.message }"
-  end
-  if composition_edit_rate == 0
+  if composition_edit_rates.compact.uniq.size > 1
+    errors << "CPL #{cpl_id}: EditRate mismatch across reels ❌: #{composition_edit_rates.each_with_index.map { |rate, i| "Reel #{i + 1}: #{rate || '[invalid]'}" }.join(', ')}"
     cpl_errors = true
   end
-  reels_report << "#{ "%6s" % total_duration }  #{ composition_edit_rate == 0 ? 'EditRate funk' : total_duration_tc } @ #{ composition_edit_rate }" # FIXME edit_rate
-  if total_duration_tc
-    composition_summary[ :duration ] = total_duration_tc.to_s
-    composition_summary[ :edit_rate ] = "#{ composition_edit_rate } fps"
+  if composition_edit_rates.uniq.size == 1 && composition_edit_rates.first
+    composition_edit_rate = composition_edit_rates.first
+  else
+    composition_edit_rate = nil
+  end
+  reels_report << 'Total duration:'
+  if timing_complete && composition_edit_rate
+    composition_summary[:duration] = Timing.format_units(total_duration, composition_edit_rate)
+    composition_summary[:edit_rate] = Timing.format_rate(composition_edit_rate)
+  elsif timing_complete
+    composition_summary[:duration] = "#{format('%.3f', total_seconds)} s (multiple edit rates)"
   else
     composition_summary[ :duration ] = '[Duration does not compute] ❌'
   end
+  if timing_complete && total_seconds.positive?
+    composition_summary[:duration_seconds] = total_seconds.to_s
+    composition_summary[:duration] += " (#{format('%.2f', total_seconds / 60)} min)"
+  end
+  reels_report << composition_summary[:duration]
 
   # Cosmetics: Interleave reels_report
   reels_report.each do |rp|
@@ -2565,6 +2311,30 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     end
   else
     composition_summary[ :crypto ] = 'Plaintext'
+  end
+
+  if cpl_ns == MStr::Smpte_cpl && xml.xpath('//*[local-name()="Signature" and namespace-uri()="http://www.w3.org/2000/09/xmldsig#"]').empty? &&
+      (observed_encrypted_assets.any? || composition_references.any? { |ref| ref[:key_id] })
+    evidence = observed_encrypted_assets.any? ? 'observed encrypted essence' : 'KeyId declarations (essence encryption not confirmed)'
+    message = "CPL #{cpl_id}: Unsigned SMPTE CPL with #{evidence}. DCI DCSS 5.4.3.7 requires signing for encrypted essence. This CPL cannot satisfy a KDM ContentAuthenticator check; playback requirements depend on the intended KDM workflow. No KDM formulation inferred."
+    hints << message
+    report << message
+    inspection_run.add_check(cpl_model, :unsigned_encrypted, :hint, message) if cpl_model
+  end
+
+  # Eligibility is separate from signature/certificate compliance. The CLI does
+  # not consume a KDM, so it cannot verify which certificate a KDM selects.
+  encrypted_for_authenticator = composition_references.any? { |ref| ref[:key_id] } || !cpl_referenced_assets_encrypted.empty?
+  if encrypted_for_authenticator
+    authenticator = DcpInspect::Crypto::ContentAuthenticator.assess(signature_result&.crypto,
+      encrypted: true, signed: !!signature_result&.signed?)
+    message = "CPL #{cpl_id}: #{authenticator[:message]}"
+    report << message
+    if authenticator[:status] == :error
+      errors << message
+      cpl_errors = true
+    end
+    inspection_run.add_check(cpl_model, :dci_content_authenticator, authenticator[:status], message, authenticator) if cpl_model
   end
 
   # Monoscopic/Stereoscopic composition?
@@ -2629,12 +2399,7 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     if composition_picture_resolutions.uniq.size == 1
       case composition_picture_resolutions.first
       when '2K'
-        case composition_edit_rate
-        when 48.0
-          composition_picture_resolution = { :abbrev => '48' } # yeah, well. Look it up in 3.9, it's true :) (Changed in 8.2)
-        else
-          composition_picture_resolution = { :abbrev => '2K' }
-        end
+        composition_picture_resolution = { :abbrev => '2K' }
       when '4K'
         composition_picture_resolution = { :abbrev => '4K' }
       when 'HD'
@@ -2661,10 +2426,10 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
       composition_picture_bitrate_avg = ( composition_picture_bitrates_avg.map { |w| w[ :duration ] * w[ :picture_bitrate_avg_mbs ] }.inject( 0, :+ ) / composition_picture_bitrates_avg.map { |w| w[ :duration ] }.inject( 0, :+ ) ).round( 2 )
       composition_summary[ :picture_bitrate_avg ] = "Avg #{ composition_picture_bitrate_avg } Mb/s"
     else
-      composition_summary[ :picture_bitrate_avg ] = "Avg [NaN Mb/s]"
+      composition_summary[ :picture_bitrate_avg ] = 'Picture bitrate unknown'
     end
   else
-    composition_summary[ :picture_bitrate_avg ] = "Avg [NaN Mb/s]"
+    composition_summary[ :picture_bitrate_avg ] = 'Picture bitrate unknown'
   end
 
   # Check consistency of channel formats in sound essence
@@ -2693,6 +2458,21 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
     end
   end
 
+  marker_result = DcpInspect::Inspection::Markers.inspect(reels)
+  marker_result[:errors].each do |message|
+    errors << "CPL #{cpl_id}: #{message}"
+    cpl_errors = true
+  end
+  marker_result[:records].each do |marker|
+    report << "Marker #{marker[:label]}: reel #{marker[:reel]}, offset #{marker[:offset]}, " +
+      (marker[:seconds] ? "composition position #{marker[:seconds]} s" : 'outside playback window or timeline unavailable')
+  end
+  if cpl_model && (marker_result[:records].any? || marker_result[:errors].any?)
+    inspection_run.add_check(cpl_model, :markers, marker_result[:errors].empty? ? :ok : :error,
+      marker_result[:errors].empty? ? 'Composition markers checked' : marker_result[:errors].join('; '),
+      { markers: marker_result[:records] })
+  end
+
   # Check if reels reference both picture and sound. If not report an error for SMPTE CPL and a hint for Interop CPL
   # See SMPTE ST 429-2:2009 section 9.1 for the requirement
   reels_references.each_with_index do |reel_refs, index|
@@ -2716,15 +2496,48 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
   end
 
   # Fire off a hint wrt Interop composition and non-24 fps composition edit rate
-  if composition_type == 'Interop' && composition_edit_rate != 24.0
-    report << "Interop composition with non-24 fps edit rate (#{ composition_edit_rate })"
-    hints << "CPL #{ cpl_id }: Interop composition with non-24 fps edit rate (#{ composition_edit_rate }). Playback may fail on very old legacy systems"
+
+
+  title_claims = DcpInspect::Inspection::ContentTitle.parse(content_title_text)
+  declaring_ids = context[:pkl_asset_ids]
+  external_ids = declaring_ids && title_references.reject { |id| declaring_ids.include?(id) }
+  title_findings = DcpInspect::Inspection::ContentTitle.compare(title_claims, {
+    standard: cpl_type, dimension: composition_summary[:spatiality],
+    frame_rate: composition_edit_rate, resolution: composition_summary[:resolution],
+    external_ids: external_ids
+  })
+  title_findings.each { |message| hints << "CPL #{cpl_id}: #{message}" }
+  if cpl_model && title_claims[:recognized]
+    inspection_run.add_check(cpl_model, :naming, title_findings.empty? ? :info : :hint,
+      title_findings.empty? ? 'ContentTitleText naming claims parsed; no comparable mismatch found' : title_findings.join('; '),
+      { claims: title_claims, external_asset_ids: external_ids })
   end
+
+  if options.audio_analysis
+    measurement = composition_audio_measurement(composition_references, reels.size, dict, timing_complete)
+    audio_failed = record_composition_audio(measurement, cpl_id, report, errors, hints, inspection_run, cpl_model)
+    cpl_errors ||= audio_failed
+  end
+
+  composition_summary[:content_kind] = content_kind
+  composition_summary[:content_kind_scope] = content_kind_scope&.value
+  composition_summary[:kind_label] = "Kind: #{content_kind.empty? ? 'unknown' : content_kind}"
+  if content_kind_scope && !content_kind_scope_is_default
+    composition_summary[:kind_label] += " (scope #{content_kind_scope.value})"
+  end
+  composition_summary[:sound] = CompositionReporting.sound(composition_sound_tracks, composition_references, composition_immersive_ids)
+  composition_summary[:sound_label] = composition_summary[:sound][:text]
+  if measurement && !measurement[:skipped] && !measurement[:error]
+    composition_summary[:sound_label] += measurement[:silent] ? '; programme silent' : "; programme #{format('%.1f', measurement[:integrated_lufs])} LUFS"
+  end
+  composition_summary[:packages] = CompositionReporting.packages(cpl_model ? cpl_model.packing_lists : [])
+  composition_summary[:package_label] = CompositionReporting.package_text(composition_summary[:packages])
 
   # composition summary one-liner
   composition_summaries << composition_summary
   composition_summary_line = composition_summary_oneliner( composition_summary )
   report << composition_summary_line
+  cpl_model.summary_details = composition_summary if cpl_model
   cpl_model.summary = composition_summary_line.sub( /^CPL #{ cpl_id }(?: \([^)]+\))?: Composition summary: /, '' ) if cpl_model
 
   # Composition completeness
@@ -2735,9 +2548,9 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
       errors << "CPL #{ cpl_id }: Composition incomplete ❌"
       cpl_errors = true
     else
-      report << "Composition incomplete: Supplemental/VF/External"
+      report << "Composition assets unavailable in selected inspection context"
       cpl_model.complete = report.last if cpl_model
-      hints << "CPL #{ cpl_id }: #{ cpl_file }: Composition incomplete: Supplemental/VF/External"
+      hints << "CPL #{ cpl_id }: #{ cpl_file }: Composition assets unavailable in selected inspection context"
     end
   elsif cpl_reels_references_complete.include?( false )
     incomplete_reels = Array.new
@@ -2776,6 +2589,9 @@ def cpl_inspect_xml( xml, dict, audio_stats, package_dir, composition_summaries,
 end # cpl_inspect_xml
 
 
+include DcpInspect::Inspection::Runtime::CompositionAudioInspection
+include DcpInspect::Inspection::Runtime::MediaInspection
+include DcpInspect::Inspection::Runtime::SubtitleInspection
 include DcpInspect::Inspection::Runtime::Orchestrator
 
 def print_internal_error_backtrace( result )
@@ -2854,54 +2670,34 @@ def finish_tfs_dashboard( exit_code, wait = false )
 end
 
 
-def write_logfiles( options, args )
-  # Write autolog
+def write_logfiles(options, args, environment: ENV)
+  destinations = []
   if options.logfile_autolog
-    if ENV[ 'DCP_INSPECT_AUTOLOG_NAME_IS_BASENAME' ]
-      autologfile = File.join(
-        ENV[ 'DCP_INSPECT_DIR' ],
-        Pathname( args[ 0 ] ).basename.to_s
-      )
+    name = if environment['DCP_INSPECT_AUTOLOG_NAME_IS_BASENAME']
+      Pathname(args[0]).basename.to_s
     else
-      autologfile = File.join(
-        ENV[ 'DCP_INSPECT_DIR' ],
-        [
-          Pathname( args[ 0 ] ).realpath.to_s.gsub( '/', '___' ).gsub( /\s/, '_' ),
-          @run_datetime.to_s.gsub( /\D/, '-' ),
-          AppVersion.split( '.' ).join,
-          rand( 65536 ).to_s( 16 )
-        ].join( '_' ) + ".#{ AppName }"
-      )
+      [Pathname(args[0]).realpath.to_s.gsub('/', '___').gsub(/\s/, '_'),
+        @run_datetime.to_s.gsub(/\D/, '-'), AppVersion.delete('.'), rand(65_536).to_s(16)].join('_') + ".#{AppName}"
     end
-
+    destinations << [File.join(environment.fetch('DCP_INSPECT_DIR'), name), false, true, AUTOLOGFILE_WRITE_ERROR, 'autolog']
+  end
+  destinations << [options.logfile, false, options.overwrite_logfile, LOGFILE_WRITE_ERROR, 'logfile'] if options.logfile
+  destinations << [options.logfile_append, true, false, LOGFILE_WRITE_ERROR, 'logfile additions'] if options.logfile_append
+  failures = []
+  destinations.each do |path, append, overwrite, status, label|
     begin
-      File.write( autologfile, @logger.full_log_blob )
-      @logger.info "See autolog at #{ autologfile }"
-    rescue Exception => e
-      @logger.info e.message
-      raise DcpInspect::Inspection::Error.new(e.message, AUTOLOGFILE_WRITE_ERROR)
+      written = LogWriter.write(path, @logger.full_log_blob, append: append, overwrite: overwrite)
+      recovery = written[:recovered] ? " (shortened overlong filename requested as #{path.inspect})" : ''
+      @logger.info "See #{label} at #{written[:path]}#{recovery}"
+    rescue SystemCallError, IOError => error
+      message = "Cannot write #{label} at #{path.inspect}: #{error.message}"
+      @logger.info message
+      failures << DcpInspect::Inspection::Error.new(message, status)
     end
   end
-
-  # Write logfile
-  if options.logfile
-    begin
-      File.write( options.logfile, @logger.full_log_blob )
-      @logger.info "See logfile at #{ options.logfile }"
-    rescue Exception => e
-      @logger.info e.message
-      raise DcpInspect::Inspection::Error.new(e.message, LOGFILE_WRITE_ERROR)
-    end
-  end
-  if options.logfile_append
-    begin
-      File.open( options.logfile_append, 'a' ) { |logfile| logfile.write @logger.full_log_blob }
-      @logger.info "See additions to logfile at #{ options.logfile_append }"
-    rescue Exception => e
-      @logger.info e.message
-      raise DcpInspect::Inspection::Error.new(e.message, LOGFILE_WRITE_ERROR)
-    end
-  end
+  # Try every requested destination before reporting failure; this also retains
+  # partial logs at the other destinations when one write fails.
+  raise failures.first unless failures.empty?
 end
 
 #

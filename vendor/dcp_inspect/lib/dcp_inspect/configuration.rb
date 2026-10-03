@@ -4,13 +4,14 @@ module DcpInspect
   class Configuration
     VERBOSITY_CHOICES = %w[quiet errors hints siginfo info cpl debug dev trace_func].freeze
 
-    attr_accessor :check_hashes, :hash_limit, :image_analysis, :audio_analysis,
+    attr_accessor :check_hashes, :hash_limit, :skip_png_hashes, :image_analysis, :audio_analysis,
                   :schema_validate, :as_asset_store, :verbosity, :tui,
                   :dump_model
 
     def initialize(
       check_hashes: true,
       hash_limit: nil,
+      skip_png_hashes: false,
       image_analysis: false,
       audio_analysis: true,
       schema_validate: true,
@@ -21,6 +22,7 @@ module DcpInspect
     )
       @check_hashes = check_hashes
       @hash_limit = hash_limit
+      @skip_png_hashes = skip_png_hashes
       @image_analysis = image_analysis
       @audio_analysis = audio_analysis
       @schema_validate = schema_validate
@@ -38,6 +40,7 @@ module DcpInspect
     def cli_arguments
       arguments = []
       arguments << "--no-hash" unless check_hashes
+      arguments << "--no-png-hash" if skip_png_hashes
       arguments.concat(["--hash-limit", hash_limit.to_s]) if hash_limit
       arguments << "--no-image-analysis" unless image_analysis
       arguments << "--no-audio-analysis" unless audio_analysis

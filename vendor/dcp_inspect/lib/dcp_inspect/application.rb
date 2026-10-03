@@ -71,7 +71,7 @@ module DcpInspect
       return if @logfiles_attempted
 
       @logfiles_attempted = true
-      @runtime.write_logfiles(options, [path])
+      @runtime.write_logfiles(options, [path], environment: environment)
     end
 
     def preserve_partial_logfiles(options, path)

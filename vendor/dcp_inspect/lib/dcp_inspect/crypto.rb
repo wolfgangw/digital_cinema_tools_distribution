@@ -2,20 +2,25 @@
 
 require "base64"
 require "openssl"
+require_relative "crypto/signer_identity"
+require_relative "crypto/common_name"
+require_relative "crypto/content_authenticator"
 
 module DcpInspect
   module Crypto
     class SignerCompliance
       include DcpInspect::Support::TimeFormatting
-      attr_reader :context, :errors, :hints, :siginfo, :crypto_context_valid, :type
-      def initialize( certs )
+      attr_reader :context, :errors, :hints, :siginfo, :crypto_context_valid, :type, :chain_verified
+      def initialize(certs, desired_role: nil)
+        @desired_role = desired_role
         crypto_context( certs )
       end
 
       def crypto_context( certs )
-        @errors = Hash.new
-        @hints = Hash.new
-        @siginfo = Hash.new
+        @errors = { context: {}, pre_context: [] }
+        @hints = { context: {} }
+        @siginfo = { context: {}, expired_certs: [] }
+        @chain_verified = false
         @context, @errors[ :pre_context ] = find_crypto_context( certs )
         if @errors[ :pre_context ].empty?
           @errors[ :context ], @hints[ :context ], @siginfo[ :context ], @siginfo[ :expired_certs ], @types_seen = check_compliance()
@@ -25,6 +30,7 @@ module DcpInspect
               @crypto_context_valid = true
             else
               @type = 'Mixed'
+              @errors[:context][@context.first.subject.to_s] << 'Mixed Interop/SMPTE certificate-chain profile'
               @crypto_context_valid = false
             end
           else
@@ -44,6 +50,7 @@ module DcpInspect
       end
 
       def messages
+        return @errors[:pre_context] + ['Certificate-chain compliance unchecked: chain unavailable'] unless @errors[:pre_context].empty?
         msgs = Array.new
         @context.each_with_index do |cert, index|
           msgs << "Subject: #{ cert.subject.to_s }"
@@ -110,6 +117,7 @@ module DcpInspect
           key = tmp_list.last.subject.to_s
           child = issuer_map[ key ]
           while child
+            break if tmp_list.include?(child)
             tmp_list << child
             key = tmp_list.last.subject.to_s
             child = issuer_map[ key ]
@@ -356,43 +364,11 @@ module DcpInspect
             errors << 'OrganizationUnit name of subject empty ❌'
           end
 
-          # 2.1.14 Entity name and roles field
-          field_cn_issuer = find_field( 'CN', cert.issuer )
-          field_cn_subject = find_field( 'CN', cert.subject )
-          if field_cn_issuer.empty?
-            errors << 'CommonName field missing in issuer name ❌'
-          elsif field_cn_issuer.size > 1
-            errors << 'More than 1 CommonName field present in issuer name ❌'
-          end
-          if field_cn_subject.empty?
-            errors << 'CommonName field missing in subject name ❌'
-          elsif field_cn_subject.size > 1
-            errors << 'More than 1 CommonName field present in subject name ❌'
-          else
-            cn_subject = field_cn_subject.first[ 1 ]
-            cn_subject_roles = cn_subject.split( /\..+/ )
-            if cn_subject_roles.empty?
-              roles = nil
-            else
-              roles = cn_subject_roles.first.split( ' ' )
-            end
-          end
-
-          if index == 0 # leaf
-            case type
-            when :smpte
-              if cn_subject_roles.empty?
-                errors << 'Role title missing in CommonName field of leaf certificate subject name ❌'
-              else
-                errors << 'CS role missing in CommonName field of leaf certificate subject name  ❌' unless roles.include?( 'CS' )
-                errors << 'Superfluous roles present in CommonName field of leaf certificate subject name  ❌' unless roles.size == 1 and roles[ 0 ] == 'CS'
-              end
-            when :interop
-              # lax rules noop
-            end
-          else # ca's
-            errors << 'Role title present in CommonName field of authority certificate ❌' unless roles.nil?
-          end
+          # Certificate syntax/base role rules are separate from DCI KDM binding.
+          ca = cert.extensions.any? { |ext| ext.oid == 'basicConstraints' && ext.value.match?(/CA:TRUE/) }
+          cn = CommonName.findings(cert, type: type, leaf: !ca, desired_role: @desired_role)
+          errors.concat(cn[:errors])
+          hints.concat(cn[:hints])
 
           # 2.1.15 unrecognized x509v3 extensions not marked critical
           additional_oids.each do |x|
@@ -461,7 +437,8 @@ module DcpInspect
             context_errors[ cert.subject.to_s ] << 'Verification with issuer public key failed ❌' if check == false
             verification << check
           rescue Exception => e
-            verification << e
+            context_errors[cert.subject.to_s] << "Verification with issuer public key failed: #{e.message}"
+            verification << false
           end
         end
         if verification.uniq.size == 1 and verification.first == true
@@ -488,16 +465,18 @@ module DcpInspect
       end
 
       def total_errors
-        @errors[ :context ].values.flatten.size
+        @errors[:pre_context].size + @errors[:context].values.flatten.size
       end
     end # DC_Signer_Crypto_Compliance
 
 
     class SignatureVerification
-      attr_reader :messages, :signer_node, :signature_node, :crypto, :reference_digests_check, :signature_value_check
+      attr_reader :messages, :signer_node, :signature_node, :crypto, :reference_digests_check, :signature_value_check, :identity_errors
 
-      def initialize( doc )
+      def initialize(doc, desired_role: nil)
+        @desired_role = desired_role
         @messages = Array.new
+        @identity_errors = []
         @signer_node = nil
         @signature_node = nil
         @crypto = nil
@@ -518,7 +497,14 @@ module DcpInspect
       def check_status
         return :info unless signed?
 
-        verified? && @crypto.errors[ :context ].values.flatten.empty? ? :ok : :error
+        verified? && @identity_errors.empty? && @crypto&.valid? ? :ok : :error
+      end
+
+      def verification_details
+        { cryptographic_signature: signed? ? (verified? ? :ok : :error) : :unchecked,
+          certificate_compliance: @crypto ? (@crypto.valid? ? :ok : :error) : :unchecked,
+          signer_identity: @crypto && !@crypto.context.empty? && @crypto.errors[:pre_context].empty? ? (@identity_errors.empty? ? :ok : :error) : :unchecked,
+          desired_role: @desired_role }
       end
 
       def signer_name
@@ -560,7 +546,13 @@ module DcpInspect
 
           if @reference_digests_check and @signature_value_check
             @verified = true
-            @messages << 'Signature check: OK ✅'
+            @messages << if !@identity_errors.empty?
+              'Signature cryptographically verified; Signer identity mismatch ❌'
+            elsif !@crypto&.valid?
+              'Signature cryptographically verified; certificate/content-signer validation failed ❌'
+            else
+              'Signature check: OK ✅'
+            end
           else
             @verified = false
             @messages << 'Signature check: Verification failure ❌'
@@ -632,7 +624,7 @@ module DcpInspect
 
         # 3. Extract and check signer certs
         certs = extract_certs( doc, sig_ns, prefix )
-        @crypto = SignerCompliance.new( certs )
+        @crypto = SignerCompliance.new(certs, desired_role: @desired_role)
 
         if ! @crypto.valid?
           if ! @crypto.errors[ :pre_context ].empty?
@@ -656,6 +648,9 @@ module DcpInspect
         #
         # See 3 for @crypto validity hop-over
         #
+
+        @identity_errors = SignerIdentity.errors(@signer_node.first, @crypto.context.first)
+        @messages.concat(@identity_errors)
 
         # 4. Get signer's public key
         pub_k = @crypto.context.first.public_key

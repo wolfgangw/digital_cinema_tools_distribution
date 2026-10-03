@@ -21,6 +21,7 @@ module DcpInspect
       def self.from_configuration(configuration)
         options = defaults
         options.check_hashes = configuration.check_hashes
+        options.skip_png_hashes = configuration.skip_png_hashes
         options.check_hashes_limit = configuration.hash_limit || :no_limit
         options.image_analysis = configuration.image_analysis
         options.audio_analysis = configuration.audio_analysis
@@ -35,6 +36,7 @@ module DcpInspect
       def self.defaults
         OpenStruct.new(
           check_hashes: true,
+          skip_png_hashes: false,
           check_hashes_limit: :no_limit,
           image_analysis: false,
           audio_analysis: true,
@@ -58,6 +60,7 @@ module DcpInspect
         OptionParser.new do |parser|
           parser.banner = "#{program_name} v#{DcpInspect::VERSION}\nUsage: #{program_name} [options] <path>\n"
           parser.on("--nh", "--no-hash", "No asset hash checks") { options.check_hashes = false }
+          parser.on("--np", "--no-png-hash", "Skip hash checks for standalone PNG subtitle assets") { options.skip_png_hashes = true }
           parser.on("--hl", "--hash-limit limit", String, "Limit asset hash checks to assets smaller than limit") do |limit|
             options.check_hashes_limit = limit.downcase
           end
