@@ -257,6 +257,39 @@ dct_download() {
   fi
 }
 
+# Track only a standalone download, never an installed command or Git checkout.
+dct_track_setup_download() {
+  local source=$1 installed=$2 directory
+  [[ -f $source && ! -L $source && ${source##*/} == digital-cinema-tools-setup ]] || return 0
+  directory=$(cd "$(dirname "$source")" && pwd -P) || return 0
+  source="$directory/${source##*/}"
+  [[ ! $source -ef $installed ]] || return 0
+  if git -C "$directory" rev-parse --show-toplevel >/dev/null 2>&1; then return 0; fi
+  DCT_DOWNLOAD_SNAPSHOT=$(mktemp "${TMPDIR:-/tmp}/dct-download.XXXXXXXX") || return 0
+  if ! cp "$source" "$DCT_DOWNLOAD_SNAPSHOT"; then
+    rm -f -- "$DCT_DOWNLOAD_SNAPSHOT"
+    return 0
+  fi
+  DCT_DOWNLOAD_SOURCE=$source
+  DCT_DOWNLOAD_INSTALLED=$installed
+  trap 'dct_cleanup_setup_download "$?"' EXIT
+}
+
+dct_cleanup_setup_download() {
+  local status=$1
+  if [[ $status == 0 && -x $DCT_DOWNLOAD_INSTALLED && ! -L $DCT_DOWNLOAD_SOURCE ]] &&
+     [[ ! $DCT_DOWNLOAD_SOURCE -ef $DCT_DOWNLOAD_INSTALLED ]] &&
+     cmp -s "$DCT_DOWNLOAD_SOURCE" "$DCT_DOWNLOAD_SNAPSHOT"; then
+    if rm -- "$DCT_DOWNLOAD_SOURCE"; then
+      printf 'Removed downloaded setup: %s\n' "$DCT_DOWNLOAD_SOURCE"
+    else
+      printf 'Could not remove downloaded setup: %s\n' "$DCT_DOWNLOAD_SOURCE" >&2
+    fi
+  fi
+  rm -f -- "$DCT_DOWNLOAD_SNAPSHOT"
+  return "$status"
+}
+
 # Run in a subshell so temporary downloads are removed on success and failure.
 dct_update() (
   local mode=$1 source=$2 installed=$3 scratch revision current status
@@ -319,6 +352,8 @@ case ${1:-} in
   '') ;;
   *) echo 'Usage: digital-cinema-tools-setup [--check-update|--uninstall|--no-self-update]' >&2; exit 2 ;;
 esac
+
+dct_track_setup_download "${BASH_SOURCE[0]}" "$HOME/.digital_cinema_tools/.lib/digital_cinema_tools_distribution/digital-cinema-tools-setup"
 
 if [[ ${1:-} != --no-self-update ]]; then
   dct_update install "${BASH_SOURCE[0]}" "$HOME/.digital_cinema_tools/.lib/digital_cinema_tools_distribution"
