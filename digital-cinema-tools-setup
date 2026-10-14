@@ -659,7 +659,11 @@ then
   echo 'Could not add the tools to the shell PATH.' >&2
   exit 1
 fi
-exec_shell_required=true
+# Request a shell reload only if the session lacks the tools' PATH entry.
+case ":$PATH:" in
+  *":$bindir:"*) ;;
+  *) exec_shell_required=true ;;
+esac
 
 export PATH="$bindir:$PATH"
 
@@ -1000,7 +1004,12 @@ fi
 
 
 if $exec_shell_required; then
-  echo 'Open a new terminal to use the tools with your configured shell.'
+  case ${SHELL##*/} in
+    bash) echo 'To use the tools in this terminal, run: source ~/.bashrc' ;;
+    zsh) printf 'To use the tools in this terminal, run: source %q\n' "${ZDOTDIR:-$HOME}/.zshrc" ;;
+    *) echo 'To use the tools in this terminal, reload your shell configuration.' ;;
+  esac
+  echo 'If unsure, start a new terminal.'
 fi
 
 echo "$setup_basename ($setup_version): Done"
