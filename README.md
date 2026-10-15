@@ -4,7 +4,7 @@ Install or update the tools using [Setup](https://github.com/wolfgangw/digital_c
 
 ## dcp_inspect layout
 
-`dcp_inspect` is a launcher for the complete release in `vendor/dcp_inspect/`. That bundle contains the executable, `lib/`, `VERSION`, and its own `xsd/` store. Keep the bundle and launcher together. The distribution's root `xsd/` serves the other tools independently. `toollist` lists command entry points.
+`dcp_inspect` is a launcher for the complete release in `vendor/dcp_inspect/`. That bundle contains the executable, `lib/`, `VERSION`, and its own `xsd/` store. Keep the bundle and launcher together. The distribution's root `xsd/` retains legacy schemas for explicit use with `xsd-check.rb`; current tools do not load it automatically. `toollist` lists command entry points.
 
 dcp_inspect uses `nokogiri`, `ttfunk`, `base64`, Ruby OpenSSL, and `asdcp-info`. Audio analysis also uses `asdcp-unwrap`, FFmpeg (`ebur128` and `astats` filters), and `mkfifo`. Optional `fd`/`fdfind` accelerates discovery. `--nh --na` skips hashing and audio analysis; `--tfs` enables the fullscreen interface.
 

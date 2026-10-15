@@ -290,6 +290,17 @@ dct_cleanup_setup_download() {
   return "$status"
 }
 
+# The legacy catalog is installer-owned; older dcp_inspect rewrote it in place.
+# Reset both staged and unstaged changes before updating the distribution.
+dct_restore_legacy_catalog() {
+  local installed=$1
+  git -C "$installed" cat-file -e HEAD:xsd/catalog.xml 2>/dev/null || return 0
+  if ! git -C "$installed" checkout HEAD -- xsd/catalog.xml; then
+    echo 'Could not restore the legacy XML catalog; installation stopped.' >&2
+    return 1
+  fi
+}
+
 # Run in a subshell so temporary downloads are removed on success and failure.
 dct_update() (
   local mode=$1 source=$2 installed=$3 scratch revision current status
@@ -317,6 +328,7 @@ dct_update() (
     exit 0
   fi
   if [[ -n $current ]]; then
+    dct_restore_legacy_catalog "$installed" || exit 1
     if [[ -n $(git -C "$installed" status --porcelain) ]] ||
        ! git -C "$installed" fetch origin "$revision" ||
        ! git -C "$installed" merge-base --is-ancestor HEAD "$revision"; then
@@ -960,6 +972,7 @@ cd $libdir
 if location_is_git_repo $dist_dir
 then
   cd $dist_dir
+  dct_restore_legacy_catalog "$dist_dir" || exit 1
   echo "Digital cinema tools distribution: Pulling updates ..."
   if ! git fetch origin "${DCT_SETUP_REVISION:-master}" || ! git merge --ff-only FETCH_HEAD
   then

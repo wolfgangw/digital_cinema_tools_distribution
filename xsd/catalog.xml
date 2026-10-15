@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
-  <group prefer="public" xml:base="file:///home/wolfgang/opencinema/backports/xsd/">
+  <group prefer="public" xml:base="./">
 
     <public publicId="http://www.digicine.com/PROTO-ASDCP-AM-20040311#" uri="PROTO-ASDCP-AM-20040311.xsd"/>
     <public publicId="http://www.digicine.com/PROTO-ASDCP-PKL-20040311#" uri="PROTO-ASDCP-PKL-20040311.xsd"/>
