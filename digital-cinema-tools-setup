@@ -1,4 +1,46 @@
 #!/usr/bin/env bash
+setup_version='v2.2026.10.15'
+#
+# Usage:
+#
+#   * To install run
+#       wget https://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
+#     in a terminal
+#
+#
+#   * For updates or re-runs run
+#       digital-cinema-tools-setup
+#     in a terminal
+#
+#   * To uninstall run digital-cinema-tools-setup --uninstall
+#
+# This setup script will install everything required (batteries included) to run
+#
+#   * dcp_inspect:  Inspect and validate digital cinema packages (DCPs)
+#                   See https://github.com/wolfgangw/backports#readme
+#
+# and a number of other digital cinema-related tools:
+#
+#   * db_adjust_for_dolby_fader_ref.rb: Calculate adjustments for Dolby CP650/750 7.0 setting
+#   * dc_crypto_context.rb:             Check certificate chains for digital cinema compliance
+#   * decrypt_kdm.rb:                   Decrypt Interop/SMPTE KDMs
+#   * make-dc-certificate-chain.rb:     Generate an example digital cinema compliant certificate chain
+#   * public_key_thumbprint.rb:         Compute dnQualifier/public key thumbprint of a X.509 certificate
+#   * signature_check.rb:               Check XML signatures of DCP infrastructure documents
+#   * x509_extract.rb:                  Extract X.509 certificates from digital cinema documents
+#   * x509_inspect.rb:                  Inspect X.509 certificates
+#   * xsd-check.rb:                     Validate XML documents against Schema definitions
+#
+# This installer supports Omarchy / Arch / Debian / Ubuntu / Fedora / macOS
+# Needs a working network connection
+#
+# It tries hard not to break anything and to respect the existing environment.
+# You can run it multiple times, should anything go wrong during a setup run (network problems etc.)
+#
+# Wolfgang Woehl 2012-2026
+#
+#
+
 set -e
 
 # These functions are also sourced by the platform regression tests.
@@ -372,47 +414,6 @@ if [[ ${1:-} != --no-self-update ]]; then
   exit $?
 fi
 
-setup_version='v1.2026.10.02'
-#
-# Usage:
-#
-#   * To install run
-#       wget https://git.io/digital-cinema-tools-setup && bash digital-cinema-tools-setup
-#     in a terminal
-#
-#
-#   * For updates or re-runs run
-#       digital-cinema-tools-setup
-#     in a terminal
-#
-#   * To uninstall run digital-cinema-tools-setup --uninstall
-#
-# This setup script will install everything required (batteries included) to run
-#
-#   * dcp_inspect:  Inspect and validate digital cinema packages (DCPs)
-#                   See https://github.com/wolfgangw/backports#readme
-#
-# and a number of other digital cinema-related tools:
-#
-#   * db_adjust_for_dolby_fader_ref.rb: Calculate adjustments for Dolby CP650/750 7.0 setting
-#   * dc_crypto_context.rb:             Check certificate chains for digital cinema compliance
-#   * decrypt_kdm.rb:                   Decrypt Interop/SMPTE KDMs
-#   * make-dc-certificate-chain.rb:     Generate an example digital cinema compliant certificate chain
-#   * public_key_thumbprint.rb:         Compute dnQualifier/public key thumbprint of a X.509 certificate
-#   * signature_check.rb:               Check XML signatures of DCP infrastructure documents
-#   * x509_extract.rb:                  Extract X.509 certificates from digital cinema documents
-#   * x509_inspect.rb:                  Inspect X.509 certificates
-#   * xsd-check.rb:                     Validate XML documents against Schema definitions
-#
-# This installer supports Omarchy / Arch / Debian / Ubuntu / Fedora / macOS
-# Needs a working network connection
-#
-# It tries hard not to break anything and to respect the existing environment.
-# You can run it multiple times, should anything go wrong during a setup run (network problems etc.)
-#
-# Wolfgang Woehl 2012-2023
-#
-#
 # Location of self
 #
 setup_dirname=$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )
